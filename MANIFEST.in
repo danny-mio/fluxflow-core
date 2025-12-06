@@ -1,0 +1,12 @@
+include README.md
+include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+include pyproject.toml
+
+recursive-include src/fluxflow *.py
+recursive-include src/fluxflow py.typed
+
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
