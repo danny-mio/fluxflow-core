@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "FluxFlow Contributors"}
+    {name = "Daniele Camisani", email = "danny-mio@libero.it"}
 ]
 keywords = ["deep-learning", "text-to-image", "diffusion", "vae", "transformers", "pytorch"]
 classifiers = [
