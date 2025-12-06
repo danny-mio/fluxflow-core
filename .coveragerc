@@ -1,0 +1,14 @@
+[run]
+source = src/fluxflow
+omit =
+    */tests/*
+    */__pycache__/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    pass
+show_missing = true

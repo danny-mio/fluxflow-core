@@ -1,0 +1,15 @@
+# FluxFlow Core - Runtime Dependencies
+# Install with: pip install -r requirements.txt
+
+torch>=2.0.0
+torchvision>=0.15.0
+safetensors>=0.3.0
+transformers>=4.30.0
+diffusers>=0.20.0
+einops>=0.6.0
+pillow>=9.0.0
+numpy>=1.24.0
+matplotlib>=3.5.0
+orjson>=3.8.0
+pydantic>=2.0.0
+pyyaml>=6.0.0
