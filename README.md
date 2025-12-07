@@ -45,7 +45,13 @@ This creates a 3rd-degree polynomial manifold where each output dimension can fo
 pip install fluxflow
 ```
 
-**Note**: Check [PyPI](https://pypi.org/project/fluxflow/) for current availability. If not yet published, use development installation below.
+**What gets installed:**
+- `fluxflow` - Core model architectures and inference pipeline
+- Flow matching models, VAE, and text encoders
+- **Note**: Does NOT include training tools (use `fluxflow-training` for that)
+- **Note**: Does NOT include UI (use `fluxflow-ui` or `fluxflow-comfyui` for that)
+
+**Package available on PyPI**: [fluxflow v0.1.1](https://pypi.org/project/fluxflow/)
 
 ### Development Install
 
@@ -185,7 +191,7 @@ Traditional activations provide a single fixed transformation:
 - VAE training: 🔄 In progress
 - Flow training: ⏳ Pending VAE completion
 - Baseline comparison: ⏳ Pending both completions
-- Empirical results: 📊 Will be published to [MODEL_ZOO.md](../MODEL_ZOO.md)
+- Empirical results: 📊 Will be published to [MODEL_ZOO.md](https://github.com/danny-mio/fluxflow-core/blob/main/MODEL_ZOO.md)
 
 ### Strategic Activation Placement
 
