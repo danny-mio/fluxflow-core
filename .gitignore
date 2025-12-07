@@ -51,3 +51,7 @@ Thumbs.db
 # Model outputs
 outputs/
 checkpoints/
+
+# Allow published model checkpoints in models/checkpoints/
+!models/checkpoints/
+!models/checkpoints/*.safetensors
