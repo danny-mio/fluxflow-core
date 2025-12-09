@@ -70,6 +70,7 @@ class ResidualUpsampleBlock(nn.Module):
         Args:
             x: Input features [B, channels, H, W]
             context: Spatial context for SPADE [B, context_size, H', W']
+                     Pass None to disable SPADE conditioning
 
         Returns:
             Upsampled features [B, channels, 2*H, 2*W]
@@ -120,7 +121,7 @@ class ProgressiveUpscaler(nn.Module):
         Args:
             x: Input [B, channels, H, W]
             context: Spatial context [B, context_size, H, W]
-                     Pass same as x for self-modulation, or zeros to disable
+                     Pass same as x for self-modulation, or None to disable
 
         Returns:
             Upsampled output [B, channels, H*2^steps, W*2^steps]
@@ -500,7 +501,7 @@ class FluxExpander(nn.Module):
             if use_context:
                 ctx = feat  # [B, D, h, w] - spatial context
             else:
-                ctx = torch.zeros_like(feat)
+                ctx = None  # Disable SPADE conditioning entirely
 
             upscaled = self.upscale(feat, ctx)
             rgb = self.to_rgb_conv(upscaled)
@@ -520,7 +521,7 @@ class FluxExpander(nn.Module):
                 if use_context:
                     ctx_i = feat_i  # [1, D, h, w] - spatial context
                 else:
-                    ctx_i = torch.zeros_like(feat_i)
+                    ctx_i = None  # Disable SPADE conditioning entirely
 
                 upscaled = self.upscale(feat_i, ctx_i)
                 rgb = self.to_rgb_conv(upscaled)
