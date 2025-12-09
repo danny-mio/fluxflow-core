@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-## [0.2.0] - 2024-12-09
+## [0.2.1] - 2024-12-09
 
 ### Fixed
 - **SPADE context handling**: Use `None` instead of `torch.zeros_like(feat)` when SPADE disabled
