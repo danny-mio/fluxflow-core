@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2024-12-09
+
+### Fixed
+- **SPADE context handling**: Use `None` instead of `torch.zeros_like(feat)` when SPADE disabled
+  - More efficient - avoids unnecessary tensor allocation
+  - Semantically correct - `None` explicitly means 'no context'
+  - Already supported by `ResidualUpsampleBlock` (checks `context is not None`)
+  - Changes: `FluxExpander` now passes `ctx = None` when `use_context=False`
+  - Added 6 unit tests in `tests/unit/test_expander_context.py` to verify behavior
+  - All tests passing, linters clean
+
+### Changed
+- **FluxExpander docstrings**: Document that `context=None` disables SPADE conditioning
+
+## [0.1.1] - 2024-11-XX
+
 ### Added
 - **TrainableBezier activation** for per-channel learnable transformations
   - Optimized implementation with `torch.addcmul` (1.41× faster)
