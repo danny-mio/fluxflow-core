@@ -107,8 +107,10 @@ class ProgressiveUpscaler(nn.Module):
         steps=2,
         context_size=1024,
         use_spade=True,
+        use_gradient_checkpointing=True,
     ):
         super().__init__()
+        self.use_gradient_checkpointing = use_gradient_checkpointing
         self.layers = nn.ModuleList(
             [
                 ResidualUpsampleBlock(channels, context_size, use_spade=use_spade)
@@ -135,7 +137,10 @@ class ProgressiveUpscaler(nn.Module):
                 x = layer(x, context)
             return x
 
-        return checkpoint(partial(upscale_all), x, context, use_reentrant=False)
+        if self.use_gradient_checkpointing:
+            return checkpoint(partial(upscale_all), x, context, use_reentrant=False)
+        else:
+            return upscale_all(x, context)
 
 
 class FluxCompressor(nn.Module):
@@ -170,12 +175,14 @@ class FluxCompressor(nn.Module):
         attn_heads=8,
         attn_ff_mult=2,
         attn_dropout=0.0,
+        use_gradient_checkpointing=True,
     ):
         super().__init__()
         self.max_hw = max_hw
         self.downscales = downscales
         self.d_model = d_model
         self.attn_layers = attn_layers
+        self.use_gradient_checkpointing = use_gradient_checkpointing
         assert d_model % attn_heads == 0, "d_model must be divisible by attn_heads"
 
         # Progressive channel increase
@@ -376,7 +383,10 @@ class FluxCompressor(nn.Module):
                 x = self.encoder_z[i](x)
             return x
 
-        x = checkpoint(encode_block, img, use_reentrant=False)
+        if self.use_gradient_checkpointing:
+            x = checkpoint(encode_block, img, use_reentrant=False)
+        else:
+            x = encode_block(img)
 
         # Latent projections (small operations, no checkpoint needed)
         latent = self.latent_proj(x)
@@ -405,7 +415,10 @@ class FluxCompressor(nn.Module):
                 seq = blk(seq)
             return seq
 
-        img_seq = checkpoint(attn_block, img_seq, use_reentrant=False)
+        if self.use_gradient_checkpointing:
+            img_seq = checkpoint(attn_block, img_seq, use_reentrant=False)
+        else:
+            img_seq = attn_block(img_seq)
 
         # HW token (encodes spatial dimensions)
         hw_vec = torch.zeros((B, 1, D), device=z.device, dtype=z.dtype)
@@ -430,13 +443,13 @@ class FluxExpander(nn.Module):
         ctx_tokens: Number of tokens to use for context (default: 4)
     """
 
-    def __init__(self, d_model=128, upscales=4, max_hw=1024, ctx_tokens=4):
+    def __init__(self, d_model=128, upscales=4, max_hw=1024, ctx_tokens=4, use_gradient_checkpointing=True):
         super().__init__()
         self.max_hw = max_hw
         self.ctx_tokens = ctx_tokens
 
         self.upscale = ProgressiveUpscaler(
-            channels=d_model, steps=upscales, context_size=d_model, use_spade=True
+            channels=d_model, steps=upscales, context_size=d_model, use_spade=True, use_gradient_checkpointing=use_gradient_checkpointing
         )
 
         # Pool context from image tokens
