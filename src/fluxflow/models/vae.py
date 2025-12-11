@@ -443,13 +443,19 @@ class FluxExpander(nn.Module):
         ctx_tokens: Number of tokens to use for context (default: 4)
     """
 
-    def __init__(self, d_model=128, upscales=4, max_hw=1024, ctx_tokens=4, use_gradient_checkpointing=True):
+    def __init__(
+        self, d_model=128, upscales=4, max_hw=1024, ctx_tokens=4, use_gradient_checkpointing=True
+    ):
         super().__init__()
         self.max_hw = max_hw
         self.ctx_tokens = ctx_tokens
 
         self.upscale = ProgressiveUpscaler(
-            channels=d_model, steps=upscales, context_size=d_model, use_spade=True, use_gradient_checkpointing=use_gradient_checkpointing
+            channels=d_model,
+            steps=upscales,
+            context_size=d_model,
+            use_spade=True,
+            use_gradient_checkpointing=use_gradient_checkpointing,
         )
 
         # Pool context from image tokens
