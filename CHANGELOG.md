@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-12-12
+
+### Added
+- **Classifier-Free Guidance (CFG)** support for enhanced inference control
+  - New `use_cfg` parameter in generation pipeline for toggling CFG
+  - `guidance_scale` parameter (range 1.0-15.0) to control conditioning strength
+  - Negative prompts for better control over unwanted features
+  - Dual-pass sampling implementation for CFG inference
+  - Compatible with models trained with `cfg_dropout_prob > 0`
+- Infrastructure for CFG-aware model loading and validation
+- Enhanced configuration validation for CFG parameters
+
+### Changed
+- Updated version to 0.3.0 across all modules
+- Improved inference pipeline to support both standard and CFG sampling modes
+- Enhanced documentation with CFG usage examples
+
 ## [0.2.1] - 2024-12-09
 
 ### Fixed
