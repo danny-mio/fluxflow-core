@@ -125,6 +125,43 @@ for i, img in enumerate(result.images):
     img.save(f"output_{i}.png")
 ```
 
+### Classifier-Free Guidance (CFG)
+
+**New in v0.3.0**: FluxFlow supports Classifier-Free Guidance for enhanced generation control.
+
+#### What is CFG?
+
+CFG improves generation quality by amplifying the influence of text conditioning. It works by:
+1. Running two forward passes: one with text, one without
+2. Interpolating between conditional and unconditional predictions
+3. Producing images that more strongly follow the text prompt
+
+#### Using CFG
+
+```python
+from fluxflow.models import FluxFlowPipeline
+
+pipeline = FluxFlowPipeline.from_pretrained("path/to/checkpoint.safetensors")
+
+# Generate with CFG (requires model trained with cfg_dropout_prob > 0)
+image = pipeline(
+    prompt="a photorealistic portrait of a cat",
+    negative_prompt="blurry, distorted, low quality",  # Optional
+    num_inference_steps=50,
+    guidance_scale=5.0,  # Recommended: 3.0-7.0 for balanced results
+    height=512,
+    width=512,
+).images[0]
+```
+
+#### Guidance Scale Guidelines
+
+- **1.0**: No guidance (standard generation)
+- **3.0-7.0**: Moderate guidance (RECOMMENDED - balanced quality/creativity)
+- **7.0-15.0**: Strong guidance (may oversaturate or lose diversity)
+
+**Important**: CFG requires models trained with `cfg_dropout_prob > 0` (typically 0.10-0.15). See [fluxflow-training](https://github.com/danny-mio/fluxflow-training) for training details.
+
 ### Low-Level API
 
 For more control, use the base `FluxPipeline`:

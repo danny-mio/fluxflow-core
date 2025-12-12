@@ -1,6 +1,6 @@
 """FluxFlow: Text-to-image generation with VAE and flow-based diffusion transformers."""
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 # Import exceptions (always available)
 from .exceptions import (
