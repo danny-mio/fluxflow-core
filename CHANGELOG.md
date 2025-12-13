@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-12-13
+
+### Note
+- Re-release of 0.3.0 with corrected version number
+- v0.3.0 does not exist on PyPI due to release process issues
+- All features from 0.3.0 are included in this release
+
 ## [0.3.0] - 2025-12-12
 
 ### Added
