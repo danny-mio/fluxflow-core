@@ -261,11 +261,62 @@ Related repositories (separate packages):
 2. Update requirements.txt if needed for backward compatibility
 3. Document why the dependency is needed in your PR
 
+## Requesting Contributor Access
+
+### Public Contributors (No Access Needed)
+
+Anyone can contribute via pull requests! Just:
+
+1. Fork the repository
+2. Make changes in your fork
+3. Submit a pull request to the `develop` branch
+
+No special permissions needed!
+
+### Requesting Direct Repository Access
+
+If you want to contribute regularly and need direct access to the repository:
+
+1. **Start by contributing** - Submit 1-3 quality pull requests first to demonstrate:
+   - Code quality and adherence to standards
+   - Understanding of the project
+   - Commitment to contributing
+
+2. **Open a discussion** at https://github.com/danny-mio/fluxflow-core/discussions
+   
+3. **Use the title**: `Request: Contributor Access for [Your Name]`
+
+4. **Include in your request**:
+   - Your GitHub username
+   - Links to your merged PRs or planned contributions
+   - Areas you want to contribute to (e.g., models, utilities, documentation)
+   - Your availability (approximate hours per week)
+   - Your experience with Python/PyTorch/ML
+   - Why you want direct access vs continuing with forks
+
+**Review process:**
+- Repository owner will review your request
+- Typically reviewed within 7 days
+- May include a brief video call to discuss contribution plans and expectations
+
+**What you'll get with contributor access:**
+- ✅ Write access to create branches directly (no fork needed)
+- ✅ Ability to label and assign issues
+- ✅ Ability to merge PRs to `develop` (after CI passes)
+- ✅ Listed as a project contributor
+
+**Note**: Only the repository owner can merge `develop` → `main` for production releases
+
+## Security Issues
+
+For security vulnerabilities, please follow our [Security Policy](SECURITY.md) instead of opening public issues.
+
 ## Getting Help
 
 - **Questions**: Open a GitHub Discussion
 - **Bugs**: Open a GitHub Issue with reproduction steps
 - **Features**: Open a GitHub Issue to discuss before implementing
+- **Security**: See [SECURITY.md](SECURITY.md)
 
 ## Code of Conduct
 
