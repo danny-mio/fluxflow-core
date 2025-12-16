@@ -183,6 +183,66 @@ def generate_latent_images(
 
 
 @torch.no_grad()
+def _generate_with_cfg(
+    noised_latent: torch.Tensor,
+    text_embeddings: torch.Tensor,
+    null_embeddings: torch.Tensor,
+    diffuser: Any,
+    guidance_scale: float,
+    device: torch.device,
+    steps: int = 20,
+) -> torch.Tensor:
+    """
+    Generate with classifier-free guidance (CFG).
+
+    Args:
+        noised_latent: Initial noised latent [B, T+1, D]
+        text_embeddings: Conditional text embeddings [B, D_text]
+        null_embeddings: Null/unconditional embeddings [B, D_text]
+        diffuser: FluxPipeline model
+        guidance_scale: CFG strength (typically 5.0)
+        device: Device to run on
+        steps: Number of denoising steps
+
+    Returns:
+        Denoised latent [B, T+1, D]
+    """
+    scheduler = DPMSolverMultistepScheduler(
+        num_train_timesteps=1000,
+        algorithm_type="dpmsolver++",
+        solver_order=2,
+        prediction_type="v_prediction",
+        lower_order_final=True,
+        timestep_spacing="trailing",
+    )
+    scheduler.set_timesteps(steps, device=device)  # type: ignore[attr-defined]
+
+    hw_vec = noised_latent[:, -1:, :].clone()
+    lat = noised_latent[:, :-1, :].clone()
+
+    for t in scheduler.timesteps:  # type: ignore[attr-defined]
+        t_batch = torch.full((lat.size(0),), t.item(), device=device, dtype=torch.long)
+        full_input = torch.cat([lat, hw_vec], dim=1)
+
+        # Conditional prediction
+        v_cond = diffuser.flow_processor(full_input, text_embeddings, t_batch)
+        v_cond_lat = v_cond[:, :-1, :]
+
+        # Unconditional prediction
+        v_uncond = diffuser.flow_processor(full_input, null_embeddings, t_batch)
+        v_uncond_lat = v_uncond[:, :-1, :]
+
+        # Apply CFG: v_guided = v_uncond + w * (v_cond - v_uncond)
+        v_guided = v_uncond_lat + guidance_scale * (v_cond_lat - v_uncond_lat)
+
+        lat = scheduler.step(  # type: ignore[attr-defined]
+            model_output=v_guided, timestep=int(t.item()), sample=lat
+        ).prev_sample
+
+    return torch.cat([lat, hw_vec], dim=1)
+
+
+@torch.no_grad()
 def save_sample_images(
     diffuser: Any,
     text_encoder: Any,
@@ -193,6 +253,8 @@ def save_sample_images(
     sample_captions: List[str],
     batch_size: int = 1,
     sample_sizes: Optional[List[Union[int, Tuple[int, int]]]] = None,
+    use_cfg: bool = False,
+    guidance_scale: float = 5.0,
 ) -> None:
     """
     Generate and save sample images from text prompts.
@@ -210,6 +272,8 @@ def save_sample_images(
             - int: generates square image (e.g., 512 -> 512x512)
             - tuple (width, height): generates image with specific dimensions
             Defaults to [256, 384, 512, 1024] (square images)
+        use_cfg: Enable classifier-free guidance (default: False)
+        guidance_scale: CFG strength (default: 5.0, only used if use_cfg=True)
     """
     diffuser.eval()
     text_encoder.eval()
@@ -259,12 +323,37 @@ def save_sample_images(
             noised_img = scheduler.add_noise(img_seq, noise_img, t)  # type: ignore[attr-defined]
             noised_latent = torch.cat([noised_img, hw_vec], dim=1)
 
-            denoised_latent = generate_latent_images(
-                batch_z=noised_latent,
-                text_embeddings=text_embeddings,
-                diffuser=diffuser,
-                prediction_type="v_prediction",
-            )
+            # Denoise with or without CFG
+            if use_cfg and guidance_scale > 1.0:
+                # Generate null conditioning for CFG
+                null_text = [""] * B
+                null_encodings = tokenizer.batch_encode_plus(
+                    null_text,
+                    max_length=512,
+                    padding="max_length",
+                    truncation=True,
+                    return_tensors="pt",
+                )
+                null_input_ids = null_encodings["input_ids"].to(device)
+                null_attention_mask = (null_input_ids != tokenizer.pad_token_id).long().to(device)
+                null_embeddings = text_encoder(null_input_ids, attention_mask=null_attention_mask)
+
+                denoised_latent = _generate_with_cfg(
+                    noised_latent=noised_latent,
+                    text_embeddings=text_embeddings,
+                    null_embeddings=null_embeddings,
+                    diffuser=diffuser,
+                    guidance_scale=guidance_scale,
+                    device=device,
+                )
+            else:
+                # Standard generation without CFG
+                denoised_latent = generate_latent_images(
+                    batch_z=noised_latent,
+                    text_embeddings=text_embeddings,
+                    diffuser=diffuser,
+                    prediction_type="v_prediction",
+                )
 
             decoded_images = diffuser.expander(denoised_latent)
             for b, img in enumerate(decoded_images):

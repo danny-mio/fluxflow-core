@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **CFG Support in Sample Generation**
+  - Added `use_cfg` and `guidance_scale` parameters to `save_sample_images()` function
+  - New `_generate_with_cfg()` helper function for CFG-guided sample generation
+  - Enables classifier-free guidance during training sample generation
+  - Default guidance scale: 5.0 (balanced quality/creativity)
+  - Compatible with models trained with `cfg_dropout_prob > 0`
+  - **Files**: `src/fluxflow/utils/visualization.py`
+
 ## [0.3.1] - 2025-12-13
 
 ### Note
