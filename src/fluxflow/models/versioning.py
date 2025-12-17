@@ -409,9 +409,10 @@ def load_versioned_checkpoint(checkpoint_path: Path, device: Optional[str] = Non
                 f"Supported versions: {ModelVersionRegistry.list_versions()}"
             )
 
-    # Load checkpoint
+    # Load checkpoint (metadata can be None for legacy loaders)
     loader = loader_class()
-    model = loader.load_checkpoint(weights_path, metadata, device, **kwargs)
+    # Type check: metadata is Optional[ModelMetadata] for legacy loader compatibility
+    model = loader.load_checkpoint(weights_path, metadata, device, **kwargs)  # type: ignore[arg-type]
 
     logger.info(f"Successfully loaded model version {version}")
     return model
@@ -481,11 +482,11 @@ def save_versioned_checkpoint(
 def _is_newer_version(v1: str, v2: str) -> bool:
     """Compare semantic versions."""
 
-    def parse(v):
+    def parse(v: str) -> tuple:
         return tuple(int(x) for x in v.split("."))
 
     try:
-        return parse(v1) > parse(v2)
+        return bool(parse(v1) > parse(v2))
     except Exception:
         return False
 
