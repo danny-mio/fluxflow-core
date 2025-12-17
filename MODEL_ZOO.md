@@ -137,7 +137,8 @@ decoder = FluxExpander(d_model=128)
 # Load weights
 encoder.load_state_dict({k.replace('compressor.', ''): v for k, v in state_dict.items() if 'compressor' in k})
 decoder.load_state_dict({k.replace('expander.', ''): v for k, v in state_dict.items() if 'expander' in k})
-```text
+```
+
 ### Loading Full Pipeline
 
 ```python
@@ -156,7 +157,8 @@ image = pipeline(
 ).images[0]
 
 image.save("output.png")
-```text
+```
+
 ---
 
 ## Benchmark Comparisons (Planned)
@@ -193,7 +195,8 @@ Models released from this project should be cited as:
   note={Trained models from the FluxFlow project},
   url={https://github.com/danny-mio/fluxflow-core}
 }
-```text
+```
+
 ---
 
 ## License

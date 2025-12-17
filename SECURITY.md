@@ -25,7 +25,7 @@ Instead, please report security issues via one of these methods:
    - Click "Report a vulnerability"
    - Provide detailed information about the vulnerability
 
-1. **Email**
+2. **Email**
    - Send to: danny-mio@libero.it
    - Subject: "[SECURITY] FluxFlow Core - [Brief Description]"
    - Include detailed information (see below)
@@ -52,10 +52,10 @@ When reporting a vulnerability, please include:
 ### Security Update Process
 
 1. **Validation**: We verify and assess the vulnerability
-1. **Fix development**: We develop and test a fix
-1. **Coordinated disclosure**: We coordinate a release timeline with you
-1. **Release**: Security patch released with advisory
-1. **Public disclosure**: After users have time to update (typically 7-14 days)
+2. **Fix development**: We develop and test a fix
+3. **Coordinated disclosure**: We coordinate a release timeline with you
+4. **Release**: Security patch released with advisory
+5. **Public disclosure**: After users have time to update (typically 7-14 days)
 
 ## Security Best Practices
 
@@ -156,8 +156,8 @@ We recognize security researchers who help keep FluxFlow secure:
 ## Additional Resources
 
 - [OWASP Secure Coding Practices](https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/)
-- [Python Security Documentation](https://docs.python.org/3/library/security.html)
-- [PyTorch Security Considerations](https://pytorch.org/docs/stable/community/contribution_guide.html#security)
+- [Python Security](https://docs.python.org/3/library/security.html)
+- [PyTorch Community Guidelines](https://pytorch.org/docs/stable/community/contribution_guide.html)
 
 ---
 

@@ -22,7 +22,8 @@ python scripts/migrate_checkpoints.py \
     path/to/old_model.safetensors \
     path/to/new_model/ \
     --version 0.3.0
-```text
+```
+
 **Arguments:**
 - First argument: Input checkpoint file (`.safetensors` or `.pt`)
 - Second argument: Output directory for versioned checkpoint
@@ -47,7 +48,8 @@ python scripts/migrate_checkpoints.py \
     checkpoint.safetensors \
     output/ \
     --force
-```text
+```
+
 ### Method 2: Python API
 
 Migrate programmatically:
@@ -75,7 +77,8 @@ save_versioned_checkpoint(
         "original_source": "training_run_42"
     }
 )
-```text
+```
+
 ### Method 3: Batch Migration
 
 Migrate multiple checkpoints at once:
@@ -91,16 +94,18 @@ for checkpoint in checkpoints/*.safetensors; do
         "checkpoints_versioned/${basename}/" \
         --version 0.3.0
 done
-```text
+```
+
 ## What Gets Created?
 
 After migration, the new directory contains:
 
-```text
+```
 new_model/
 ├── model.safetensors      # Model weights (same as original)
 └── model_metadata.json    # New: version and architecture info
-```text
+```
+
 ### Example `model_metadata.json`:
 
 ```json
@@ -133,7 +138,8 @@ new_model/
     "weights_hash": "1a2b3c4d5e6f..."
   }
 }
-```text
+```
+
 ## Backward Compatibility
 
 **Important:** Legacy checkpoints still work without migration!
@@ -141,7 +147,8 @@ new_model/
 ```python
 # This still works - architecture is inferred automatically
 pipeline = FluxPipeline.from_pretrained("old_model.safetensors")
-```text
+```
+
 However, migration is recommended for:
 - Production deployments
 - Shared models
@@ -168,7 +175,8 @@ print(f"Checksum: {metadata.checksum.get('weights_hash', 'N/A')}")
 # Load model to verify it works
 model = load_versioned_checkpoint(metadata_path.parent, device="cpu")
 print("Model loaded successfully!")
-```text
+```
+
 ### Compare Weights
 
 Ensure weights are identical before and after migration:
@@ -189,7 +197,8 @@ for key in original:
         assert torch.allclose(original[key], migrated[key]), f"Mismatch in {key}"
 
 print("All weights match!")
-```text
+```
+
 ## Troubleshooting
 
 ### Error: "Could not detect VAE dimension from checkpoint"
@@ -207,7 +216,8 @@ state_dict = safetensors.torch.load_file("checkpoint.safetensors")
 print("Keys in checkpoint:")
 for key in sorted(state_dict.keys())[:20]:  # First 20 keys
     print(f"  {key}: {state_dict[key].shape}")
-```text
+```
+
 ### Migration Script Fails with Import Errors
 
 Ensure FluxFlow is installed:
@@ -215,13 +225,15 @@ Ensure FluxFlow is installed:
 pip install -e .  # If in fluxflow-core directory
 # or
 pip install fluxflow
-```text
+```
+
 ### Output Directory Already Exists
 
 Use `--force` to overwrite:
 ```bash
 python scripts/migrate_checkpoints.py input.safetensors output/ --force
-```text
+```
+
 ### Checksum Shows as "N/A"
 
 The checksum is computed during save. If missing:
@@ -234,7 +246,8 @@ with open("model/model.safetensors", "rb") as f:
     data = f.read()
     checksum = hashlib.sha256(data).hexdigest()
     print(f"SHA256: {checksum}")
-```text
+```
+
 ## Migration Checklist
 
 Before putting a migrated model into production:
@@ -260,7 +273,8 @@ python scripts/migrate_checkpoints.py /tmp/test.safetensors /tmp/test_out/
 # Verify it works
 python -c "from fluxflow.models.versioning import load_versioned_checkpoint; \
            load_versioned_checkpoint('/tmp/test_out/', device='cpu')"
-```text
+```
+
 ### 2. Keep Originals
 
 Don't delete original checkpoints immediately:
@@ -273,7 +287,8 @@ cp checkpoints/*.safetensors backups/
 for f in checkpoints/*.safetensors; do
     python scripts/migrate_checkpoints.py "$f" "versioned/${f##*/}/"
 done
-```text
+```
+
 ### 3. Document Migration
 
 Add migration info to your training logs:
@@ -284,7 +299,8 @@ training_info = {
     "migration_version": "0.3.1",
     "original_training_steps": 50000
 }
-```text
+```
+
 ### 4. Validate Architecture Detection
 
 If you know the architecture, verify it was detected correctly:
@@ -296,7 +312,8 @@ metadata = ModelMetadata.load("versioned_model/model_metadata.json")
 assert metadata.architecture["vae_dim"] == 128, "Wrong VAE dimension!"
 assert metadata.architecture["flow_dim"] == 128, "Wrong flow dimension!"
 assert metadata.architecture["downscales"] == 4, "Wrong downscales!"
-```text
+```
+
 ## Automated Migration in CI/CD
 
 Integrate migration into your deployment pipeline:
@@ -333,7 +350,8 @@ jobs:
         with:
           name: versioned-checkpoint
           path: checkpoints/versioned/
-```text
+```
+
 ## See Also
 
 - [VERSIONING.md](VERSIONING.md) - Versioning system overview

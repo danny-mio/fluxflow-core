@@ -9,9 +9,10 @@ FluxFlow targets **2-2.5× smaller models** with equivalent perceptual quality t
 ### Mathematical Foundation
 
 **Cubic Bezier Formula**:
-```text
+```
 B(t) = (1-t)³·p₀ + 3(1-t)²·t·p₁ + 3(1-t)·t²·p₂ + t³·p₃
-```text
+```
+
 **Representational Capacity**:
 - Standard activation: **Fixed function** applied identically to all dimensions
 - Bezier activation: **Cubic polynomial** with input-derived control points per dimension
@@ -19,9 +20,9 @@ B(t) = (1-t)³·p₀ + 3(1-t)²·t·p₁ + 3(1-t)·t²·p₂ + t³·p₃
 
 **Key Benefits** (theoretical targets based on architecture analysis):
 1. **Smaller models**: 50% fewer channels target for equivalent quality (FID ≤15 target)
-1. **Better gradients**: Smooth, continuous (C²) with reduced vanishing gradient issues
-1. **Adaptive**: Each dimension can follow different cubic transformation
-1. **Efficient**: 60% fewer parameters target, 38% faster inference target
+2. **Better gradients**: Smooth, continuous (C²) with reduced vanishing gradient issues
+3. **Adaptive**: Each dimension can follow different cubic transformation
+4. **Efficient**: 60% fewer parameters target, 38% faster inference target
 
 ### Strategic Activation Placement
 
@@ -39,14 +40,15 @@ B(t) = (1-t)³·p₀ + 3(1-t)²·t·p₁ + 3(1-t)·t²·p₂ + t³·p₃
 
 FluxFlow combines a Variational Autoencoder (VAE) with a flow-based diffusion model for text-to-image generation. The architecture consists of five main components:
 
-```text
+```
 Text → BertTextEncoder → embeddings
                             ↓
 Image → FluxCompressor → latent → FluxFlowProcessor → denoised → FluxExpander → output
            (VAE enc)       ↑            (flow)                      (VAE dec)
                            │
                     PatchDiscriminator (training only)
-```text
+```
+
 ### Detailed Architecture Diagram
 
 ```mermaid
@@ -157,7 +159,8 @@ graph TB
     class UNPACK,CTXPOOL,CTX,RESHAPE,UP1,UP2,UP3,UP4,SPADE1,SPADE2,SPADE3,SPADE4,RGBPROJ,RECON,Z0 decoder
     class DISC,GLOSS disc
     class KL,VLOSS,RECLOSS,VAELOSS,FLOWLOSS loss
-```text
+```
+
 **Color Legend** (parameter counts for default config: vae_dim=128, feat_dim=128):
 - **Blue**: VAE Encoder (FluxCompressor) - 12.6M params
 - **Orange**: VAE Decoder (FluxExpander) - 94.0M params
@@ -178,13 +181,13 @@ graph TB
 
 **Stages:**
 1. Coordinate channels (add normalized x,y)
-1. Progressive downsampling (4 stages, 2x each = 16x total)
-1. Channel expansion: 5 → `vae_dim`
-1. Reparameterization (μ, σ → z)
-1. Flatten to tokens [H_lat × W_lat, D]
-1. Hybrid positional encoding (fixed sinusoidal + content-based from latent)
-1. Self-attention (4 layers, 8 heads)
-1. Append HW vector [1, D] with normalized dimensions
+2. Progressive downsampling (4 stages, 2x each = 16x total)
+3. Channel expansion: 5 → `vae_dim`
+4. Reparameterization (μ, σ → z)
+5. Flatten to tokens [H_lat × W_lat, D]
+6. Hybrid positional encoding (fixed sinusoidal + content-based from latent)
+7. Self-attention (4 layers, 8 heads)
+8. Append HW vector [1, D] with normalized dimensions
 
 **Key Features:**
 - Bezier activations for nonlinearity
@@ -201,12 +204,12 @@ graph TB
 
 **Stages:**
 1. Timestep embedding (sinusoidal + MLP)
-1. Text injection via cross-attention
-1. Transformer blocks (default: 12 layers)
+2. Text injection via cross-attention
+3. Transformer blocks (default: 12 layers)
    - Rotary position embeddings (RoPE)
    - Parallel attention (Q from latent, KV from latent+text)
    - Bezier activation MLPs
-1. Output projection
+4. Output projection
 
 **Key Features:**
 - v-prediction (predicts velocity between noise and signal)
@@ -223,13 +226,13 @@ graph TB
 
 **Stages:**
 1. Unpack: Extract tokens and HW dimensions
-1. Context pooling (first K tokens → context vector)
-1. Reshape tokens to 2D [D, H_lat, W_lat]
-1. Progressive upsampling (4 stages, 2x each = 16x total)
+2. Context pooling (first K tokens → context vector)
+3. Reshape tokens to 2D [D, H_lat, W_lat]
+4. Progressive upsampling (4 stages, 2x each = 16x total)
    - SPADE conditioning at each stage
    - Transposed convolutions for upsampling
-1. RGB projection (D → 3 channels)
-1. Clamp to [-1, 1]
+5. RGB projection (D → 3 channels)
+6. Clamp to [-1, 1]
 
 **Key Features:**
 - SPADE (Spatially-Adaptive Denormalization) for context control
@@ -246,9 +249,9 @@ graph TB
 
 **Stages:**
 1. DistilBERT backbone (6 layers, 768 hidden)
-1. Mean pooling over sequence
-1. MLP projection (768 → 512 → D_text) with Bezier activations
-1. Xavier initialization
+2. Mean pooling over sequence
+3. MLP projection (768 → 512 → D_text) with Bezier activations
+4. Xavier initialization
 
 **Design Note:**
 The current implementation uses pre-trained DistilBERT as a practical starting point, allowing the project to focus on the core Bezier activation innovation in the VAE and flow components. This is a **temporary solution** - future development will replace this with a custom text encoder built from scratch using Bezier activations throughout, which will:
@@ -272,10 +275,10 @@ The current implementation uses pre-trained DistilBERT as a practical starting p
 
 **Stages:**
 1. Progressive downsampling (4 stages, 2x each)
-1. Spectral normalization (all conv layers)
-1. LeakyReLU activations (memory-efficient)
-1. Patch-level discrimination (not global)
-1. Optional projection conditioning (Miyato-style)
+2. Spectral normalization (all conv layers)
+3. LeakyReLU activations (memory-efficient)
+4. Patch-level discrimination (not global)
+5. Optional projection conditioning (Miyato-style)
 
 **Key Features:**
 - Hinge loss (non-saturating)
@@ -287,7 +290,7 @@ The current implementation uses pre-trained DistilBERT as a practical starting p
 
 ### Training (VAE Only)
 
-```text
+```
 Image [B,3,H,W]
   ↓
 Compressor
@@ -301,10 +304,11 @@ Reconstruction [B,3,H,W]
 L1 + MSE + β*KL(μ,σ)
   +
 Discriminator(real) vs Discriminator(fake)
-```text
+```
+
 ### Training (Flow Only)
 
-```text
+```
 Image → Compressor → Latent z₀
                       ↓ (add noise)
                     Noisy zₜ
@@ -315,10 +319,11 @@ Image → Compressor → Latent z₀
                       ↓
           MSE(v, v_target)
 where v_target = αₜ*noise - σₜ*z₀
-```text
+```
+
 ### Generation
 
-```text
+```
 Text → BertEncoder → embeddings
                         ↓
 Random latent z₁ ────→ FlowProcessor(z₁, text, t₁) → z₀.₉
@@ -331,7 +336,8 @@ Random latent z₁ ────→ FlowProcessor(z₁, text, t₁) → z₀.₉
                     Expander(z₀)
                         ↓
                     Image
-```text
+```
+
 ## Model Sizes
 
 ### Default Configuration (vae_dim=128, feat_dim=128)
@@ -368,19 +374,19 @@ Note: FluxExpander is asymmetrically larger than FluxCompressor due to progressi
 **Smaller (for limited VRAM):**
 ```python
 vae_dim=64, feat_dim=64
-```text
+```
 Estimated: ~70M parameters, ~4-5 GB VRAM (training)
 
 **Default (balanced):**
 ```python
 vae_dim=128, feat_dim=128
-```text
+```
 Measured: 183M parameters, ~7-8 GB VRAM (VAE training with GAN)
 
 **Larger (for better quality):**
 ```python
 vae_dim=256, feat_dim=256
-```text
+```
 Estimated: ~500M parameters, ~18-20 GB VRAM (training)
 
 Note: Parameter scaling is approximately O(D²) for attention and linear layers.
@@ -392,10 +398,11 @@ Note: Parameter scaling is approximately O(D²) for attention and linear layers.
 Bezier activations are the **core innovation** of FluxFlow, enabling 2-3× smaller models with equivalent quality.
 
 **Mathematical Advantage**:
-```text
+```
 Standard neuron: y = σ(Wx + b)        # σ is fixed (ReLU, GELU, etc.)
 Bezier neuron:   y = B(t; p₀,p₁,p₂,p₃) # B is learned per neuron
-```text
+```
+
 **Expressiveness Comparison**:
 - **ReLU**: 0 learnable parameters, piecewise linear
 - **GELU/SiLU**: 0 learnable parameters, fixed smooth curve
@@ -489,12 +496,14 @@ Unlike symmetric autoencoders:
 L_vae = L1(rec, real) + 0.1*MSE(rec, real) + β*KL(μ, σ)
 L_gan_d = hinge(D(real), D(rec))
 L_gan_g = -D(rec)
-```text
+```
+
 **Flow:**
 ```python
 L_flow = MSE(pred_v, target_v)
 where target_v = α_t * noise - σ_t * z₀
-```text
+```
+
 ### Schedulers
 
 **Learning rate**: Cosine annealing
@@ -517,16 +526,16 @@ where target_v = α_t * noise - σ_t * z₀
 ### Possible Improvements
 
 1. **Classifier-free guidance**: Add unconditional training
-1. **Multi-aspect ratios**: Dynamic latent sizes
-1. **Super-resolution**: Cascade larger sizes
-1. **Controlnet**: Spatial conditioning (edges, depth)
-1. **LoRA fine-tuning**: Efficient adaptation
-1. **Latent caching**: Pre-encode all images
+2. **Multi-aspect ratios**: Dynamic latent sizes
+3. **Super-resolution**: Cascade larger sizes
+4. **Controlnet**: Spatial conditioning (edges, depth)
+5. **LoRA fine-tuning**: Efficient adaptation
+6. **Latent caching**: Pre-encode all images
 
 ### Research Directions
 
 1. **Better attention**: Flash attention, memory-efficient
-1. **Faster sampling**: Distillation, consistency models
-1. **Better latents**: VQ-VAE, residual quantization
-1. **Multi-modal**: Image + text → image
-1. **Video generation**: Temporal consistency
+2. **Faster sampling**: Distillation, consistency models
+3. **Better latents**: VQ-VAE, residual quantization
+4. **Multi-modal**: Image + text → image
+5. **Video generation**: Temporal consistency

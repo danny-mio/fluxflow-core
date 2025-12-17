@@ -31,7 +31,8 @@ def load_versioned_checkpoint(
     device: Optional[str] = None,
     **kwargs
 ) -> Any
-```text
+```
+
 **Parameters:**
 - `checkpoint_path` (Path): Path to checkpoint file or directory
 - `device` (Optional[str]): Target device ('cuda', 'cpu', 'mps', or None for auto-detection)
@@ -55,7 +56,8 @@ pipeline = load_versioned_checkpoint("checkpoints/model.safetensors")
 
 # Specify device
 pipeline = load_versioned_checkpoint("checkpoints/model_v0.3.0/", device="cuda")
-```text
+```
+
 **Behavior:**
 - Auto-detects model version from `model_metadata.json`
 - Routes to appropriate version-specific loader
@@ -85,7 +87,8 @@ def from_pretrained(
     use_versioning: bool = False,
     **kwargs
 ) -> FluxPipeline
-```text
+```
+
 **Parameters:**
 - `checkpoint_path` (str): Path to checkpoint file or directory
 - `device` (Optional[str]): Device to load on ('cuda', 'cpu', 'mps', or None)
@@ -114,7 +117,8 @@ pipeline = FluxPipeline.from_pretrained(
     use_versioning=True,
     device="cuda"
 )
-```text
+```
+
 **Behavior:**
 - **Default (use_versioning=False)**: Legacy loading for backward compatibility
 - **Versioned (use_versioning=True)**: Delegates to `load_versioned_checkpoint()` for robust version handling
@@ -143,7 +147,8 @@ def save_versioned_checkpoint(
     training_info: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> None
-```text
+```
+
 **Parameters:**
 - `model` (Any): Model to save (FluxPipeline or FluxFlowPipeline)
 - `output_path` (Path): Directory to save checkpoint
@@ -194,7 +199,8 @@ save_versioned_checkpoint(
         "text_embed_dim": 768
     }
 )
-```text
+```
+
 **Behavior:**
 - Auto-detects architecture from model if not provided
 - Creates output directory if it doesn't exist
@@ -225,7 +231,8 @@ class ModelMetadata:
     training_info: Optional[Dict[str, Any]] = None  # Training metadata
     metadata_version: str = "1.0"   # Metadata schema version
     created_at: Optional[str] = None  # ISO timestamp
-```text
+```
+
 **Methods:**
 
 #### `load(path: Path) -> ModelMetadata`
@@ -237,7 +244,8 @@ from fluxflow.models.versioning import ModelMetadata
 metadata = ModelMetadata.load("checkpoints/model_metadata.json")
 print(f"Model version: {metadata.model_version}")
 print(f"VAE dim: {metadata.architecture['vae_dim']}")
-```text
+```
+
 #### `save(path: Path) -> None`
 Save metadata to JSON file.
 
@@ -251,13 +259,15 @@ metadata = ModelMetadata(
     components={"compressor": "FluxCompressor", "expander": "FluxExpander"}
 )
 metadata.save("outputs/model_metadata.json")
-```text
+```
+
 #### `to_dict() -> Dict[str, Any]`
 Convert metadata to dictionary.
 
 ```python
 metadata_dict = metadata.to_dict()
-```text
+```
+
 #### `from_dict(data: Dict[str, Any]) -> ModelMetadata`
 Create metadata from dictionary.
 
@@ -271,7 +281,8 @@ data = {
     "components": {}
 }
 metadata = ModelMetadata.from_dict(data)
-```text
+```
+
 **See Also:**
 - [VERSIONING.md#metadata-format](VERSIONING.md#metadata-format) - Metadata schema details
 
@@ -298,7 +309,8 @@ loader_class = ModelVersionRegistry.get_loader("0.3.0")
 if loader_class:
     loader = loader_class()
     # Use loader...
-```text
+```
+
 #### `register_loader(version: str, loader_class: Type[BaseModelLoader]) -> None`
 Register custom loader for version (advanced usage).
 
@@ -315,7 +327,8 @@ class CustomLoader(BaseModelLoader):
         pass
 
 ModelVersionRegistry.register_loader("0.4.0", CustomLoader)
-```text
+```
+
 **Registered Versions:**
 - `0.3.0` → `FluxModelLoader_v0_3_0`
 - `0.2.x` → `LegacyLoader`
@@ -334,18 +347,21 @@ ModelVersionRegistry.register_loader("0.4.0", CustomLoader)
 ```python
 from fluxflow.models.versioning import load_versioned_checkpoint
 pipeline = load_versioned_checkpoint("path/to/checkpoint/")
-```text
+```
+
 **Save with metadata:**
 ```python
 from fluxflow.models.versioning import save_versioned_checkpoint
 save_versioned_checkpoint(pipeline, "outputs/model/", model_version="0.3.0")
-```text
+```
+
 **Check metadata:**
 ```python
 from fluxflow.models.versioning import ModelMetadata
 metadata = ModelMetadata.load("path/to/model_metadata.json")
 print(f"Version: {metadata.model_version}, VAE dim: {metadata.architecture['vae_dim']}")
-```text
+```
+
 **Migrate from legacy:**
 ```python
 # Load legacy checkpoint
@@ -355,7 +371,8 @@ pipeline = FluxPipeline.from_pretrained("old_checkpoint.safetensors")
 # Save with versioning
 from fluxflow.models.versioning import save_versioned_checkpoint
 save_versioned_checkpoint(pipeline, "new_checkpoint/", model_version="0.3.0")
-```text
+```
+
 ---
 
 ## Error Handling
@@ -376,7 +393,8 @@ except CheckpointError as e:
     # Handle error (e.g., fallback to different checkpoint)
 except FileNotFoundError:
     print("Checkpoint not found")
-```text
+```
+
 ---
 
 ## Additional Resources

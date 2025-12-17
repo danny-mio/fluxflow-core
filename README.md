@@ -25,9 +25,10 @@ FluxFlow is a novel approach to text-to-image generation that targets 2-3× smal
 
 Traditional neural networks use fixed activations (ReLU, GELU, SiLU) that provide zero degrees of freedom. FluxFlow uses **Cubic Bezier curves** as activation functions, providing 4 learnable parameters per output dimension:
 
-```text
+```
 B(t) = (1-t)³·p₀ + 3(1-t)²·t·p₁ + 3(1-t)·t²·p₂ + t³·p₃
-```text
+```
+
 Where `t, p₀, p₁, p₂, p₃` are all derived from the input, creating a **dynamic, data-dependent activation function**.
 
 This creates a 3rd-degree polynomial manifold where each output dimension can follow a different cubic transformation, allowing:
@@ -42,7 +43,8 @@ This creates a 3rd-degree polynomial manifold where each output dimension can fo
 
 ```bash
 pip install fluxflow
-```text
+```
+
 **What gets installed:**
 - `fluxflow` - Core model architectures and inference pipeline
 - Flow matching models, VAE, and text encoders
@@ -57,7 +59,8 @@ pip install fluxflow
 git clone https://github.com/danny-mio/fluxflow-core.git
 cd fluxflow-core
 pip install -e ".[dev]"
-```text
+```
+
 ## Key Features
 
 - **Bezier Activations**: Learnable 3rd-degree (cubic) polynomial activation functions
@@ -90,7 +93,8 @@ image = pipeline(
 ).images[0]
 
 image.save("output.png")
-```text
+```
+
 ### Advanced Usage
 
 ```python
@@ -119,7 +123,8 @@ result = pipeline(
 # Save all generated images
 for i, img in enumerate(result.images):
     img.save(f"output_{i}.png")
-```text
+```
+
 ### Classifier-Free Guidance (CFG)
 
 **New in v0.3.0**: FluxFlow supports Classifier-Free Guidance for enhanced generation control.
@@ -128,8 +133,8 @@ for i, img in enumerate(result.images):
 
 CFG improves generation quality by amplifying the influence of text conditioning. It works by:
 1. Running two forward passes: one with text, one without
-1. Interpolating between conditional and unconditional predictions
-1. Producing images that more strongly follow the text prompt
+2. Interpolating between conditional and unconditional predictions
+3. Producing images that more strongly follow the text prompt
 
 #### Using CFG
 
@@ -147,7 +152,8 @@ image = pipeline(
     height=512,
     width=512,
 ).images[0]
-```text
+```
+
 #### Guidance Scale Guidelines
 
 - **1.0**: No guidance (standard generation)
@@ -177,7 +183,8 @@ text_embeddings = text_encoder(tokens["input_ids"])
 
 # Manual forward pass (requires implementing sampling loop)
 # See fluxflow-training for complete examples
-```text
+```
+
 ## Package Contents
 
 - `fluxflow.models` - Model architectures (VAE, Flow, Encoders, Discriminators)
@@ -278,7 +285,8 @@ Note: FluxExpander is asymmetrically larger due to progressive upsampling with S
 # Input: [t, p0, p1, p2, p3] concatenated
 # Output: B(t) = cubic Bezier interpolation
 BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu")
-```text
+```
+
 **Note**: SlidingBezierActivation (dimension-preserving variant) is deprecated and not used in the current architecture.
 
 **Pre-activation parameters**:
@@ -355,7 +363,8 @@ If you use FluxFlow in your research, please cite:
   note = {Inspired by Kolmogorov-Arnold Networks (KAN)},
   url = {https://github.com/danny-mio/fluxflow-core}
 }
-```text
+```
+
 **Key References:**
 ```bibtex
 @article{liu2024kan,
@@ -364,7 +373,8 @@ If you use FluxFlow in your research, please cite:
   journal={arXiv preprint arXiv:2404.19756},
   year={2024}
 }
-```text
+```
+
 ## License
 
 MIT License - see LICENSE file for details.

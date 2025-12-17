@@ -25,7 +25,7 @@
 
 ## Package Structure
 
-```text
+```
 fluxflow-core/
 ├── src/fluxflow/
 │   ├── __init__.py           # Package exports, version
@@ -56,7 +56,8 @@ fluxflow-core/
 ├── pyproject.toml            # Package configuration
 ├── Makefile                  # Development automation
 └── .pre-commit-config.yaml   # Code quality hooks
-```text
+```
+
 ## Build/Test Commands
 
 ```bash
@@ -76,7 +77,8 @@ mypy src/                     # Type checking
 
 # Pre-commit hooks (run before committing)
 pre-commit run --all-files
-```text
+```
+
 ## Code Style (Python ≥3.10)
 
 - **Formatting**: Black (line-length=100), isort (profile=black)
@@ -127,7 +129,8 @@ class TestBezierActivation:
         loss.backward()
         assert x.grad is not None
         assert not torch.isnan(x.grad).any()
-```text
+```
+
 ## Documentation Standards
 
 ### Markdown Files
@@ -175,16 +178,17 @@ def forward(self, x: torch.Tensor) -> torch.Tensor:
         >>> out.shape
         torch.Size([2, 1, 32, 32])
     """
-```text
+```
+
 ## Publishing Workflow (PyPI)
 
 **CRITICAL**: `fluxflow-core` publishes as `fluxflow` on PyPI. Other packages depend on it.
 
 **Publishing Order**:
 1. `fluxflow` (this repo) - NO dependencies on other FluxFlow packages
-1. `fluxflow-training` - depends on `fluxflow>=0.3.0`
-1. `fluxflow-ui` - depends on `fluxflow-training>=0.3.0`
-1. `fluxflow-comfyui` - depends on `fluxflow>=0.3.0` (parallel with ui)
+2. `fluxflow-training` - depends on `fluxflow>=0.3.0`
+3. `fluxflow-ui` - depends on `fluxflow-training>=0.3.0`
+4. `fluxflow-comfyui` - depends on `fluxflow>=0.3.0` (parallel with ui)
 
 **Release Process**:
 ```bash
@@ -204,7 +208,8 @@ git push origin v0.3.1
 
 # 5. Verify on PyPI (~5 min after CI completes)
 # https://pypi.org/project/fluxflow/
-```text
+```
+
 **Never publish dependent packages before this one is live on PyPI.**
 
 ## Common Tasks
@@ -212,36 +217,36 @@ git push origin v0.3.1
 ### Adding a New Model Component
 
 1. Create module in `src/fluxflow/models/`
-1. Add type hints and docstrings
-1. Add unit tests in `tests/unit/`
-1. Export from `src/fluxflow/models/__init__.py`
-1. Update `docs/ARCHITECTURE.md` if significant
-1. Run `make lint && make test && mypy src/`
+2. Add type hints and docstrings
+3. Add unit tests in `tests/unit/`
+4. Export from `src/fluxflow/models/__init__.py`
+5. Update `docs/ARCHITECTURE.md` if significant
+6. Run `make lint && make test && mypy src/`
 
 ### Fixing a Bug
 
 1. Create bugfix branch: `git checkout -b fix/issue-description`
-1. Write a test that reproduces the bug
-1. Fix the bug
-1. Verify test passes: `pytest tests/unit/test_your_fix.py -v`
-1. Run full test suite: `make test`
-1. Create PR to `main`
+2. Write a test that reproduces the bug
+3. Fix the bug
+4. Verify test passes: `pytest tests/unit/test_your_fix.py -v`
+5. Run full test suite: `make test`
+6. Create PR to `main`
 
 ### Updating Documentation
 
 1. Check for duplicate content across docs (avoid redundancy)
-1. Use cross-references instead of copy-pasting
-1. Verify all GitHub URLs resolve correctly
-1. Update CHANGELOG.md if user-facing change
-1. Run `pre-commit run --all-files` (checks Markdown linting)
+2. Use cross-references instead of copy-pasting
+3. Verify all GitHub URLs resolve correctly
+4. Update CHANGELOG.md if user-facing change
+5. Run `pre-commit run --all-files` (checks Markdown linting)
 
 ### Adding a Dependency
 
 1. Add to `dependencies` in `pyproject.toml`
-1. Pin minimum version if specific features required
-1. Document why dependency is needed in PR description
-1. Check for conflicts with `fluxflow-training`, `fluxflow-ui`
-1. Update setup-time dependencies in CI (`.github/workflows/`)
+2. Pin minimum version if specific features required
+3. Document why dependency is needed in PR description
+4. Check for conflicts with `fluxflow-training`, `fluxflow-ui`
+5. Update setup-time dependencies in CI (`.github/workflows/`)
 
 ## Security Best Practices
 
@@ -285,7 +290,8 @@ BezierActivation(t_pre_activation="silu", p_preactivation="tanh")
 
 # Transformer MLP (latent space)
 BezierActivation()  # No pre-activation, max flexibility
-```text
+```
+
 ## Training Status Awareness
 
 **Current Status**: Models are in Phase 1 validation training (December 2025).

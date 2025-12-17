@@ -29,7 +29,8 @@ save_versioned_checkpoint(
         "final_loss": 0.042
     }
 )
-```text
+```
+
 This creates:
 - `outputs/model_v0.3.0/model.safetensors` - Model weights
 - `outputs/model_v0.3.0/model_metadata.json` - Version and architecture info
@@ -48,7 +49,8 @@ pipeline = FluxPipeline.from_pretrained(
     "outputs/model_v0.3.0/",
     use_versioning=True
 )
-```text
+```
+
 ### Training Integration
 
 ```python
@@ -67,7 +69,8 @@ save_model(
         "learning_rate": 1e-4
     }
 )
-```text
+```
+
 ## Metadata Format
 
 `model_metadata.json` contains:
@@ -103,7 +106,8 @@ save_model(
     "weights_hash": "abc123..."
   }
 }
-```text
+```
+
 **Note**: Fields marked "Auto-detected" are discovered from the model structure. Only the core dimensional parameters (`vae_dim`, `flow_dim`, etc.) are strictly required for loading.
 
 ## Semantic Versioning
@@ -128,7 +132,8 @@ Legacy checkpoints (without metadata) continue to work:
 pipeline = FluxPipeline.from_pretrained("old_model.safetensors")
 
 # Internally uses architecture detection
-```text
+```
+
 To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
 
 ## Version Compatibility Matrix
@@ -149,7 +154,7 @@ To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
    save_versioned_checkpoint(model, path, model_version="0.3.0")
    ```
 
-1. **Include training metadata** for reproducibility:
+2. **Include training metadata** for reproducibility:
    ```python
    training_info = {
        "total_steps": steps,
@@ -158,7 +163,7 @@ To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
    }
    ```
 
-1. **Increment version** when changing architecture:
+3. **Increment version** when changing architecture:
    - Changed layer dimensions? → Bump MAJOR
    - Added optional feature? → Bump MINOR
    - Fixed bug? → Bump PATCH
@@ -170,7 +175,7 @@ To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
    pipeline = FluxPipeline.from_pretrained(path, use_versioning=True)
    ```
 
-1. **Check metadata** before loading:
+2. **Check metadata** before loading:
    ```python
    from fluxflow.models.versioning import ModelMetadata
    
@@ -179,7 +184,7 @@ To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
    print(f"Architecture: {metadata.architecture}")
    ```
 
-1. **Migrate legacy models** to versioned format:
+3. **Migrate legacy models** to versioned format:
    ```bash
    python scripts/migrate_checkpoints.py old_model.pt new_model/
    ```
@@ -197,14 +202,16 @@ Your FluxFlow version doesn't support this model version. Either:
 The model was created with a newer FluxFlow version. Upgrade:
 ```bash
 pip install --upgrade fluxflow
-```text
+```
+
 ### Warning: "Loading legacy checkpoint without version metadata"
 
 The checkpoint doesn't have metadata. Architecture will be inferred.  
 To fix, migrate the checkpoint:
 ```bash
 python scripts/migrate_checkpoints.py old.safetensors new/
-```text
+```
+
 ### Checksum Mismatch
 
 The model weights have been modified or corrupted.  
@@ -233,7 +240,8 @@ class ModelLoaderV04(ModelVersionLoader):
 
 # Register the loader
 ModelVersionRegistry.register(ModelLoaderV04)
-```text
+```
+
 ### Programmatic Version Checking
 
 ```python
@@ -246,7 +254,8 @@ if loader is None:
     print(f"Unsupported version: {metadata.model_version}")
 else:
     print(f"Supported by: {loader.__name__}")
-```text
+```
+
 ## See Also
 
 - [MIGRATION.md](MIGRATION.md) - Migrating legacy checkpoints

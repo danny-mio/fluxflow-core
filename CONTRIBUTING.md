@@ -20,7 +20,8 @@ pip install -e ".[dev]"
 
 # Install pre-commit hooks
 pre-commit install
-```text
+```
+
 ### 2. Development Workflow
 
 #### Before Making Changes
@@ -28,7 +29,8 @@ pre-commit install
 ```bash
 # Create a new branch
 git checkout -b feature/your-feature-name
-```text
+```
+
 #### During Development
 
 ```bash
@@ -43,7 +45,8 @@ mypy src/
 
 # Run tests
 make test
-```text
+```
+
 #### Before Committing
 
 Pre-commit hooks will automatically run when you commit. To run them manually:
@@ -51,7 +54,8 @@ Pre-commit hooks will automatically run when you commit. To run them manually:
 ```bash
 # Run all pre-commit checks
 pre-commit run --all-files
-```text
+```
+
 ### 3. Code Quality Standards
 
 FluxFlow uses several tools to maintain code quality:
@@ -69,7 +73,8 @@ make format     # Format code
 make lint       # Check linting
 mypy src/       # Check types
 make test       # Run tests
-```text
+```
+
 ## Code Style Guidelines
 
 ### Python Code
@@ -109,7 +114,8 @@ def process_data(input_path: str, output_path: Optional[str] = None) -> dict[str
     logger.info(f"Processing data from {input_path}")
     # Implementation here
     return {"processed": 42}
-```text
+```
+
 ### Configuration Files
 
 - Use YAML for configuration (not shell scripts for new configs)
@@ -130,7 +136,8 @@ All new code should include tests:
 ```bash
 # Create test file in appropriate directory
 tests/unit/test_your_feature.py
-```text
+```
+
 ### Test Structure
 
 ```python
@@ -153,7 +160,8 @@ class TestYourClass:
         """Test error handling."""
         with pytest.raises(ValueError):
             obj = YourClass(invalid_param="bad")
-```text
+```
+
 ### Running Tests
 
 ```bash
@@ -168,10 +176,11 @@ pytest tests/unit/test_your_feature.py::test_function_name -v
 
 # Specific test method in class
 pytest tests/unit/test_your_feature.py::TestClass::test_method -v
-```text
+```
+
 ## Project Structure
 
-```text
+```
 fluxflow-core/
 ├── src/fluxflow/
 │   ├── __init__.py           # Package init, version
@@ -199,7 +208,8 @@ fluxflow-core/
 ├── pyproject.toml            # Project configuration
 ├── Makefile                  # Build automation
 └── .pre-commit-config.yaml   # Pre-commit hooks
-```text
+```
+
 Related repositories (separate packages):
 - **fluxflow-training**: Training tools and scripts
 - **fluxflow-ui**: Web interface
@@ -208,9 +218,9 @@ Related repositories (separate packages):
 ## Pull Request Process
 
 1. **Create a branch** from `develop`
-1. **Make your changes** with tests and documentation
-1. **Run checks**: `make lint && make test && mypy src/`
-1. **Commit with clear messages**:
+2. **Make your changes** with tests and documentation
+3. **Run checks**: `make lint && make test && mypy src/`
+4. **Commit with clear messages**:
    ```bash
    git commit -m "Add feature: brief description
 
@@ -219,37 +229,37 @@ Related repositories (separate packages):
    - Specific change 1
    - Specific change 2"
    ```
-1. **Push and create PR** on GitHub
-1. **Address review feedback** if any
+5. **Push and create PR** on GitHub
+6. **Address review feedback** if any
 
 ## Common Tasks
 
 ### Adding a New Feature
 
 1. Create feature branch: `git checkout -b feature/name`
-1. Add implementation in appropriate module
-1. Add type hints and docstrings
-1. Add tests for the feature
-1. Update documentation if user-facing
-1. Run `make lint && make test` to verify quality
-1. Commit and create PR
+2. Add implementation in appropriate module
+3. Add type hints and docstrings
+4. Add tests for the feature
+5. Update documentation if user-facing
+6. Run `make lint && make test` to verify quality
+7. Commit and create PR
 
 ### Fixing a Bug
 
 1. Create bugfix branch: `git checkout -b fix/issue-description`
-1. Add a test that reproduces the bug
-1. Fix the bug
-1. Verify the test passes
-1. Run `make lint && make test`
-1. Commit and create PR
+2. Add a test that reproduces the bug
+3. Fix the bug
+4. Verify the test passes
+5. Run `make lint && make test`
+6. Commit and create PR
 
 ### Adding Dependencies
 
 1. Add to appropriate section in `pyproject.toml`:
    - Core dependencies -> `dependencies`
    - Dev dependencies -> `optional-dependencies.dev`
-1. Update requirements.txt if needed for backward compatibility
-1. Document why the dependency is needed in your PR
+2. Update requirements.txt if needed for backward compatibility
+3. Document why the dependency is needed in your PR
 
 ## Requesting Contributor Access
 
@@ -258,8 +268,8 @@ Related repositories (separate packages):
 Anyone can contribute via pull requests! Just:
 
 1. Fork the repository
-1. Make changes in your fork
-1. Submit a pull request to the `develop` branch
+2. Make changes in your fork
+3. Submit a pull request to the `develop` branch
 
 No special permissions needed!
 
@@ -272,11 +282,11 @@ If you want to contribute regularly and need direct access to the repository:
    - Understanding of the project
    - Commitment to contributing
 
-1. **Open a discussion** at https://github.com/danny-mio/fluxflow-core/discussions
+2. **Open a discussion** at https://github.com/danny-mio/fluxflow-core/discussions
    
-1. **Use the title**: `Request: Contributor Access for [Your Name]`
+3. **Use the title**: `Request: Contributor Access for [Your Name]`
 
-1. **Include in your request**:
+4. **Include in your request**:
    - Your GitHub username
    - Links to your merged PRs or planned contributions
    - Areas you want to contribute to (e.g., models, utilities, documentation)
