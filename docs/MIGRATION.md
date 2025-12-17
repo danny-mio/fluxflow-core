@@ -115,14 +115,14 @@ new_model/
   "architecture": {
     "vae_dim": 128,
     "flow_dim": 128,
+    "text_embed_dim": 768,          // Standardized order
     "downscales": 4,
     "upscales": 4,
     "vae_attn_layers": 2,
     "flow_transformer_layers": 10,
     "flow_attn_heads": 8,
     "max_hw": 1024,
-    "in_channels": 3,
-    "text_embed_dim": 768
+    "in_channels": 3
   },
   "components": {
     "compressor": "FluxCompressor",
@@ -355,4 +355,3 @@ jobs:
 ## See Also
 
 - [VERSIONING.md](VERSIONING.md) - Versioning system overview
-- [API Reference](API.md) - Full API documentation
