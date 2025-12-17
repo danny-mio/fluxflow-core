@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-12-17
+
+### Fixed
+- **CRITICAL: Image Color and Contrast Bug**
+  - Fixed incorrect image saving in `visualization.py` that caused severe contrast issues
+  - Expander outputs images in `[-1, 1]` range, but `save_image()` was treating them as `[0, 1]`
+  - This caused negative pixel values to be clamped to black, crushing 50% of the dynamic range
+  - Added `normalize=True` and `value_range=(-1, 1)` to all `save_image()` calls
+  - **Affected functions**: `safe_vae_sample()`, `save_sample_images()`
+  - **Impact**: All training sample images and generated images now have correct colors and contrast
+  - **Files**: `src/fluxflow/utils/visualization.py`
+  - **Note**: fluxflow-ui and fluxflow-comfyui were not affected (they handle conversion manually)
+
 ### Added
 - **Model Versioning System**
   - Explicit model version metadata stored alongside checkpoints
