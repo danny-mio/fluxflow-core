@@ -2,6 +2,18 @@
 
 __version__ = "0.3.1"
 
+# Import config classes
+from .config import (
+    DataConfig,
+    FluxFlowConfig,
+    ModelConfig,
+    OptimizationConfig,
+    OutputConfig,
+    TrainingConfig,
+    create_default_config,
+    load_config,
+)
+
 # Import exceptions (always available)
 from .exceptions import (
     CheckpointError,
@@ -32,18 +44,6 @@ from .exceptions import (
     SchedulerError,
     TrainingError,
     handle_exception,
-)
-
-# Import config classes
-from .config import (
-    DataConfig,
-    FluxFlowConfig,
-    ModelConfig,
-    OptimizationConfig,
-    OutputConfig,
-    TrainingConfig,
-    create_default_config,
-    load_config,
 )
 
 __all__ = [
