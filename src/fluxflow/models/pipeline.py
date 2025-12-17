@@ -4,7 +4,7 @@ FluxPipeline: Main wrapper combining VAE and flow models.
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, cast
 
 import safetensors.torch
 import torch
@@ -106,7 +106,10 @@ class FluxPipeline(nn.Module):
 
             from .versioning import load_versioned_checkpoint
 
-            return load_versioned_checkpoint(Path(checkpoint_path), device, **kwargs)
+            # Type assertion: load_versioned_checkpoint returns FluxPipeline
+            return cast(
+                "FluxPipeline", load_versioned_checkpoint(Path(checkpoint_path), device, **kwargs)
+            )
 
         # Legacy loading path (default for backward compatibility)
         if not os.path.exists(checkpoint_path):

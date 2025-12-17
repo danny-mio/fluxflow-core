@@ -100,6 +100,8 @@ def safe_vae_sample(
     save_image(
         out_img,
         os.path.join(output_path, f"vae_epoch_{epoch:04d}-{image_hash}-ctx.webp"),
+        normalize=True,
+        value_range=(-1, 1),
     )
 
     # Decode without context
@@ -107,16 +109,20 @@ def safe_vae_sample(
     save_image(
         out_img,
         os.path.join(output_path, f"vae_epoch_{epoch:04d}-{image_hash}-nc.webp"),
+        normalize=True,
+        value_range=(-1, 1),
     )
 
     # Noise test
     rnd_imgs = torch.randn_like(tensor_imgs.detach())
     rsave_path = os.path.join(output_path, f"vae_epoch_{epoch:04d}-{image_hash}_ns_i.webp")
-    save_image(rnd_imgs, rsave_path)
+    save_image(rnd_imgs, rsave_path, normalize=True, value_range=(-1, 1))
     rout_img = torch.clamp(diffuser(rnd_imgs.detach(), use_flow=False), min=-1, max=1)
     save_image(
         rout_img,
         os.path.join(output_path, f"vae_epoch_{epoch:04d}-{image_hash}_ns_o.webp"),
+        normalize=True,
+        value_range=(-1, 1),
     )
 
     # Random packet test
@@ -130,6 +136,8 @@ def safe_vae_sample(
     save_image(
         out_img,
         os.path.join(output_path, f"vae_epoch_{epoch:04d}-{image_hash}-nr_o.webp"),
+        normalize=True,
+        value_range=(-1, 1),
     )
 
 
@@ -362,4 +370,4 @@ def save_sample_images(
                     output_path,
                     f"samples_epoch_{epoch:04d}_caption_{global_idx}-{size_str}.webp",
                 )
-                save_image(img, save_path)
+                save_image(img, save_path, normalize=True, value_range=(-1, 1))

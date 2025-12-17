@@ -51,7 +51,7 @@ pip install fluxflow
 - **Note**: Does NOT include training tools (use `fluxflow-training` for that)
 - **Note**: Does NOT include UI (use `fluxflow-ui` or `fluxflow-comfyui` for that)
 
-**Package available on PyPI**: [fluxflow v0.1.1](https://pypi.org/project/fluxflow/)
+**Package available on PyPI**: [fluxflow v0.4.0](https://pypi.org/project/fluxflow/)
 
 ### Development Install
 

@@ -77,36 +77,38 @@ save_model(
 
 ```json
 {
-  "model_version": "0.3.0",
-  "library_version": "0.3.1",
-  "architecture": {
-    "vae_dim": 128,
-    "flow_dim": 128,
-    "text_embed_dim": 768,
-    "downscales": 4,
-    "upscales": 4,
-    "vae_attn_layers": 2,
-    "flow_transformer_layers": 10,
-    "flow_attn_heads": 8,
-    "max_hw": 1024,
-    "in_channels": 3
+  "model_version": "0.3.0",           // REQUIRED: Model version
+  "library_version": "0.3.1",         // REQUIRED: FluxFlow version used to save
+  "architecture": {                   // REQUIRED: Auto-detected from model
+    "vae_dim": 128,                   // REQUIRED
+    "flow_dim": 128,                  // REQUIRED
+    "text_embed_dim": 768,            // REQUIRED
+    "downscales": 4,                  // REQUIRED
+    "upscales": 4,                    // REQUIRED
+    "vae_attn_layers": 2,             // Auto-detected
+    "flow_transformer_layers": 10,    // Auto-detected
+    "flow_attn_heads": 8,             // Auto-detected
+    "max_hw": 1024,                   // Auto-detected
+    "in_channels": 3                  // Auto-detected
   },
-  "components": {
+  "components": {                     // REQUIRED: Component types
     "compressor": "FluxCompressor",
     "flow_processor": "FluxFlowProcessor",
     "expander": "FluxExpander"
   },
-  "training_info": {
+  "training_info": {                  // OPTIONAL: User-provided metadata
     "trained_on": "2025-01-15T10:30:00Z",
     "total_steps": 50000,
     "dataset": "COCO+OpenImages"
   },
-  "checksum": {
+  "checksum": {                       // OPTIONAL: For validation
     "algorithm": "sha256",
     "weights_hash": "abc123..."
   }
 }
 ```
+
+**Note**: Fields marked "Auto-detected" are discovered from the model structure. Only the core dimensional parameters (`vae_dim`, `flow_dim`, etc.) are strictly required for loading.
 
 ## Semantic Versioning
 
@@ -257,4 +259,3 @@ else:
 ## See Also
 
 - [MIGRATION.md](MIGRATION.md) - Migrating legacy checkpoints
-- [API Reference](API.md) - Full API documentation

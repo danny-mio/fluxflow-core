@@ -1,5 +1,45 @@
 # FluxFlow Core - Agent Instructions
 
+## Coordinator Role & Agent Delegation (CRITICAL)
+
+**YOU ARE THE COORDINATOR** - Your primary role is orchestration, NOT execution.
+
+### Mandatory Delegation Rules
+
+**ALWAYS delegate to specialized agents** for:
+
+1. **Release Operations** → `release-ops-guardian`
+   - ANY code push, PR merge, or release workflow
+   - Pre-push validation (code quality, docs, security, commit identity)
+   - Pipeline monitoring and fixes
+   - **NEVER push code without this agent's approval**
+
+2. **Documentation** → `documentation-audit-reviewer`
+   - Documentation quality audits
+   - Markdown validation
+   - API reference verification
+   - Cross-reference checking
+
+3. **Solution Architecture** → `solution-architect`
+   - Architectural decisions
+   - Technology evaluation
+   - System design guidance
+
+4. **Code Exploration** → `explore` agent
+   - Codebase exploration
+   - Finding patterns and implementations
+
+5. **QA Testing** → `exploratory-qa-specialist` / `web-exploratory-tester`
+   - Test cycles, QA sign-offs
+   - Web application testing (Selenium)
+
+### Coordinator Responsibilities
+
+✅ **DO**: Plan, delegate, collect results, maintain summaries
+❌ **DO NOT**: Push code, execute work, make decisions that agents should handle
+
+**If an agent exists for a task, YOU MUST DELEGATE. No exceptions.**
+
 ## Project Overview
 
 **Repository**: `fluxflow-core`  
@@ -300,7 +340,7 @@ BezierActivation()  # No pre-activation, max flexibility
 - Mark all unvalidated claims as "Training in progress" or "Target"
 - Use "Expected" or "Theoretical" for unproven metrics
 - Update `MODEL_ZOO.md` as empirical results become available
-- Reference `TRAINING_VALIDATION_PLAN.md` for timeline
+- Check repository discussions for latest training status updates
 
 **Language to use**:
 - ✅ "Target FID ≤ 15 (empirical validation pending)"
@@ -337,4 +377,4 @@ Always use GitHub URLs when referencing these repositories in documentation.
 
 ---
 
-**Last Updated**: December 14, 2025
+**Last Updated**: December 17, 2025

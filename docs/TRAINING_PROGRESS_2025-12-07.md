@@ -448,5 +448,4 @@ This initial training session validates our Phase 1 approach:
 
 **Training Platform**: Paperspace Gradient A6000 (Free Tier)  
 **Code Repository**: https://github.com/danny-mio/fluxflow-training  
-**Model Repository**: https://github.com/danny-mio/fluxflow-core  
-**Training Plan**: [TRAINING_VALIDATION_PLAN.md](https://github.com/danny-mio/fluxflow-core/blob/main/TRAINING_VALIDATION_PLAN.md)
+**Model Repository**: https://github.com/danny-mio/fluxflow-core
