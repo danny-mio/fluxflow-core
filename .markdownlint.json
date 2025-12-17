@@ -2,8 +2,13 @@
   "default": true,
   "MD013": false,
   "MD033": false,
+  "MD040": false,
   "MD041": false,
+  "MD024": {
+    "siblings_only": true
+  },
   "line-length": false,
   "no-inline-html": false,
-  "first-line-heading": false
+  "first-line-heading": false,
+  "fenced-code-language": false
 }
