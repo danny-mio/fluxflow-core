@@ -18,8 +18,7 @@ FluxFlow's Bezier activation functions were **inspired by KAN**, which demonstra
   year={2024},
   url={https://arxiv.org/abs/2404.19756}
 }
-```
-
+```text
 **Resources:**
 - Paper: [arXiv:2404.19756](https://arxiv.org/abs/2404.19756)
 - GitHub: [KindXiaoming/pykan](https://github.com/KindXiaoming/pykan)
@@ -41,8 +40,7 @@ Used in FluxFlow's VAE decoder for spatial conditioning.
   year={2019},
   url={https://arxiv.org/abs/1903.07291}
 }
-```
-
+```text
 **Resources:**
 - Paper: [arXiv:1903.07291](https://arxiv.org/abs/1903.07291)
 - Project: [NVIDIA GauGAN](https://nvlabs.github.io/SPADE/)
@@ -61,8 +59,7 @@ Conditioning technique used in FluxFlow for text-based feature modulation.
   year={2018},
   url={https://arxiv.org/abs/1709.07871}
 }
-```
-
+```text
 **Resources:**
 - Paper: [arXiv:1709.07871](https://arxiv.org/abs/1709.07871)
 
@@ -87,8 +84,7 @@ Training utilized a combination of COCO 2017 images with captions from both COCO
   organization={Springer},
   url={https://arxiv.org/abs/1405.0312}
 }
-```
-
+```text
 **Open Images V4:**
 ```bibtex
 @article{kuznetsova2018open,
@@ -97,8 +93,7 @@ Training utilized a combination of COCO 2017 images with captions from both COCO
   journal={arXiv preprint arXiv:1811.00982},
   year={2018}
 }
-```
-
+```text
 **Resources:**
 - COCO: [cocodataset.org](https://cocodataset.org/)
 - COCO Paper: [arXiv:1405.0312](https://arxiv.org/abs/1405.0312)
@@ -134,8 +129,7 @@ FluxFlow's VAE-based latent diffusion approach builds upon concepts from:
   year={2022},
   url={https://arxiv.org/abs/2112.10752}
 }
-```
-
+```text
 **Resources:**
 - Paper: [arXiv:2112.10752](https://arxiv.org/abs/2112.10752)
 - GitHub: [CompVis/latent-diffusion](https://github.com/CompVis/latent-diffusion)
@@ -153,8 +147,7 @@ Used in FluxFlow's transformer architecture for position encoding.
   year={2021},
   url={https://arxiv.org/abs/2104.09864}
 }
-```
-
+```text
 **Resources:**
 - Paper: [arXiv:2104.09864](https://arxiv.org/abs/2104.09864)
 
@@ -174,8 +167,7 @@ Used in FluxFlow's transformer architecture for position encoding.
   year={2017},
   url={https://arxiv.org/abs/1611.07004}
 }
-```
-
+```text
 **Spectral Normalization:**
 ```bibtex
 @inproceedings{miyato2018spectral,
@@ -185,8 +177,7 @@ Used in FluxFlow's transformer architecture for position encoding.
   year={2018},
   url={https://arxiv.org/abs/1802.05957}
 }
-```
-
+```text
 ---
 
 ## Additional Acknowledgments
@@ -227,8 +218,7 @@ If you use FluxFlow in your research, please cite:
   note={Inspired by Kolmogorov-Arnold Networks (KAN)},
   url={https://github.com/danny-mio/fluxflow-core}
 }
-```
-
+```text
 ---
 
 ## License

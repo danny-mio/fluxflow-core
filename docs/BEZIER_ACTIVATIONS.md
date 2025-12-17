@@ -7,12 +7,12 @@ FluxFlow extends KAN's concept of learnable activation functions by using Cubic 
 ## Table of Contents
 
 1. [The Core Intuition: Why Bezier Curves?](#the-core-intuition-why-bezier-curves)
-2. [Mathematical Foundation](#mathematical-foundation)
-3. [Representational Capacity Analysis](#representational-capacity-analysis)
-4. [Memory and Performance](#memory-and-performance)
-5. [Implementation Details](#implementation-details)
-6. [Configuration Guide](#configuration-guide)
-7. [Comparison with Standard Activations](#comparison-with-standard-activations)
+1. [Mathematical Foundation](#mathematical-foundation)
+1. [Representational Capacity Analysis](#representational-capacity-analysis)
+1. [Memory and Performance](#memory-and-performance)
+1. [Implementation Details](#implementation-details)
+1. [Configuration Guide](#configuration-guide)
+1. [Comparison with Standard Activations](#comparison-with-standard-activations)
 
 ---
 
@@ -26,8 +26,7 @@ Traditional activations (ReLU, GELU, SiLU) are **fixed functions** - the same cu
 # ReLU: Always max(0, x)
 # GELU: Always x * Φ(x) where Φ is Gaussian CDF
 # Problem: One-size-fits-all approach
-```
-
+```text
 **Limitation**: A single activation function cannot optimally handle:
 - Low-frequency features (smooth gradients, global structure)
 - High-frequency features (sharp transitions, fine details)
@@ -45,8 +44,7 @@ output = max(0, input)
 # Bezier learns a custom curve via 4 control points:
 output = bezier_curve(input, p0, p1, p2, p3)
 # where p0, p1, p2, p3 are learned parameters
-```
-
+```text
 **Why This Works**:
 
 1. **Expressiveness**: Cubic Bezier curves can approximate:
@@ -54,17 +52,17 @@ output = bezier_curve(input, p0, p1, p2, p3)
    - Smooth sigmoids (GELU-like)
    - Custom shapes (learned per neuron)
 
-2. **Parameter Efficiency**: Instead of adding more neurons to get more flexibility:
+1. **Parameter Efficiency**: Instead of adding more neurons to get more flexibility:
    - Traditional: Need 256 neurons with ReLU to model complex function
    - Bezier: Need 128 neurons with learned curves = same expressiveness, 50% fewer params
 
-3. **Gradient Flow**: Unlike ReLU (gradient = 0 for x < 0):
+1. **Gradient Flow**: Unlike ReLU (gradient = 0 for x < 0):
    - Bezier: Polynomial gradients are well-behaved, rarely zero
    - Better optimization, faster convergence
 
 ### Bezier Curve Visualization
 
-```
+```text
 Control Points:
                    p0 ●
                        ╲
@@ -81,24 +79,21 @@ The curve's shape is determined by learned control points.
 - Straight line: p0, p1, p2, p3 collinear (ReLU-like)
 - S-curve: control points arranged for sigmoid (GELU-like)  
 - Custom: any smooth shape the neuron needs
-```
-
+```text
 ### Visual Intuition
 
 Imagine modeling a complex signal:
 
 **Traditional Approach** (ReLU):
-```
+```text
 Need many neurons → Each applies same max(0,x) → Combine to approximate curve
 [Neuron 1: ReLU] + [Neuron 2: ReLU] + ... + [Neuron 256: ReLU] ≈ Complex Function
-```
-
+```text
 **Bezier Approach**:
-```
+```text
 Fewer neurons → Each learns custom curve → Direct representation
 [Neuron 1: Custom Bezier] + ... + [Neuron 128: Custom Bezier] = Complex Function
-```
-
+```text
 **Intuition**: Bezier activations let each neuron learn custom curves (like sculpting with clay) vs ReLU = same function everywhere (like LEGO bricks). 
 
 **See**: [INTUITION.md](INTUITION.md#part-3-the-analogy---lego-vs-clay) for detailed analogy.
@@ -110,10 +105,10 @@ Fewer neurons → Each learns custom curve → Direct representation
 1. **Smaller Models**: 2-2.5× fewer parameters for same capacity
    - *Target based on parameter counting - empirical validation pending*
 
-2. **Faster Inference**: Fewer layers, fewer operations
+1. **Faster Inference**: Fewer layers, fewer operations
    - *Target: 38% speedup - will measure during training*
 
-3. **Better Quality**: Neurons specialize to specific feature types
+1. **Better Quality**: Neurons specialize to specific feature types
    - *Target: FID ≤ 20 on COCO - will report actual results*
 
 ### Inspired by Kolmogorov-Arnold Networks (KAN)
@@ -134,10 +129,9 @@ Recent research (Liu et al., 2024, arXiv:2404.19756) showed that **learnable act
 
 The core of FluxFlow's activation functions is the cubic Bezier curve:
 
-```
+```text
 B(t) = (1-t)³·p₀ + 3(1-t)²·t·p₁ + 3(1-t)·t²·p₂ + t³·p₃
-```
-
+```text
 Where:
 - `t` ∈ [0, 1]: Interpolation parameter (typically transformed input)
 - `p₀, p₁, p₂, p₃`: Control points defining curve shape
@@ -146,23 +140,21 @@ Where:
 
 The Bezier curve uses Bernstein polynomials as basis functions:
 
-```
+```text
 B₀(t) = (1-t)³
 B₁(t) = 3(1-t)²·t
 B₂(t) = 3(1-t)·t²
 B₃(t) = t³
-```
-
+```text
 These form a partition of unity: `B₀(t) + B₁(t) + B₂(t) + B₃(t) = 1`
 
 ### Derivative (Gradient)
 
 The gradient of a Bezier curve is always smooth and well-defined:
 
-```
+```text
 dB/dt = 3(1-t)²(p₁-p₀) + 6(1-t)t(p₂-p₁) + 3t²(p₃-p₂)
-```
-
+```text
 **Key properties**:
 - C² smooth (continuous second derivative) - cubic polynomials have continuous first and second derivatives
 - Gradient typically non-zero (can be zero at isolated points depending on control point configuration)
@@ -175,17 +167,17 @@ dB/dt = 3(1-t)²(p₁-p₀) + 6(1-t)t(p₂-p₁) + 3t²(p₃-p₂)
 ### Degrees of Freedom
 
 **Standard Activation (e.g., ReLU)**:
-```
+```text
 f(x) = max(0, x)
-```
+```text
 - Degrees of freedom: **0** (fixed function)
 - Gradient: Binary (0 or 1)
 - Expressiveness: Piecewise linear
 
 **Bezier Activation**:
-```
+```text
 B(t; p₀, p₁, p₂, p₃) = Bezier curve with 4 control points
-```
+```text
 - Degrees of freedom: **4 per dimension**
 - Gradient: Smooth polynomial
 - Expressiveness: 3rd-degree (cubic) polynomial manifold
@@ -214,10 +206,9 @@ For a layer with `D` output dimensions:
 ### Variance Behavior
 
 **Standard activation variance**:
-```
+```text
 Var(ReLU(x)) ≈ (1/2) · Var(x)  # Due to zero-clipping (assumes zero-mean input)
-```
-
+```text
 **Bezier activation variance**:
 ⚠️ **Warning**: Variance propagation through Bezier activations is complex. Since all parameters (t, p₀, p₁, p₂, p₃) are derived from the same input, they are NOT independent. Simple variance formulas that assume independence are mathematically incorrect.
 
@@ -312,8 +303,7 @@ class BezierActivation(nn.Module):
         # Compute Bezier curve
         output = (1-t)**3 * p0 + 3*(1-t)**2*t * p1 + 3*(1-t)*t**2 * p2 + t**3 * p3
         return output
-```
-
+```text
 **Use cases**:
 - Channel expansion: `Conv(C, C*5)` → `BezierActivation` → C channels
 - Dimension reduction in projection layers
@@ -339,8 +329,7 @@ class TrainableBezier(nn.Module):
         # 1.41x faster than naive implementation
         output = bezier_curve(t, self.p0, self.p1, self.p2, self.p3)
         return output
-```
-
+```text
 **Use cases**:
 - Per-channel learnable transformations (latent bottlenecks, RGB outputs)
 - Adaptive color correction (VAE decoder RGB layer)
@@ -361,7 +350,7 @@ The `t_pre_activation` and `p_preactivation` parameters transform inputs before 
 **`"sigmoid"`** → bounds t to [0, 1]:
 ```python
 t = sigmoid(input)  # t ∈ [0, 1]
-```
+```text
 - **Use when**: Input should be normalized to unit interval
 - **Best for**: Image-space operations, when control points represent pixel intensities
 - **Math effect**: Forces Bezier curve to interpolate between control points
@@ -369,7 +358,7 @@ t = sigmoid(input)  # t ∈ [0, 1]
 **`"silu"`** (Swish) → smooth, unbounded:
 ```python
 t = silu(input) = input × sigmoid(input)
-```
+```text
 - **Use when**: Need smooth gating without bounding
 - **Best for**: Latent space operations, general-purpose activation
 - **Math effect**: Preserves input magnitude while adding smooth non-linearity
@@ -377,7 +366,7 @@ t = silu(input) = input × sigmoid(input)
 **`"tanh"`** → bounds t to [-1, 1]:
 ```python
 t = tanh(input)  # t ∈ [-1, 1]
-```
+```text
 - **Use when**: Need symmetric bounded activation
 - **Best for**: Normalized features, when control points are symmetric
 - **Math effect**: Similar to sigmoid but centered at 0
@@ -385,7 +374,7 @@ t = tanh(input)  # t ∈ [-1, 1]
 **`None`** → raw input:
 ```python
 t = input  # No transformation
-```
+```text
 - **Use when**: Input is already well-scaled
 - **Best for**: Dimension reduction (5→1), when input has specific meaning
 
@@ -414,21 +403,21 @@ t = input  # No transformation
 **VAE Encoder** (Image → Latent):
 ```python
 BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu")
-```
+```text
 - Sigmoid bounds input pixels [0,1]
 - SiLU provides smooth, stable control points
 
 **VAE Decoder (Early Layers)** (Latent → Features):
 ```python
 BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu")
-```
+```text
 - Latent space is bounded
 - Building up to image reconstruction
 
 **VAE Decoder (Final Layer)** (Features → Image):
 ```python
 BezierActivation(t_pre_activation="silu", p_preactivation="tanh")
-```
+```text
 - SiLU for unbounded latent features
 - Tanh constrains output to [-1, 1] for image pixels
 
@@ -436,14 +425,14 @@ BezierActivation(t_pre_activation="silu", p_preactivation="tanh")
 ```python
 BezierActivation()  # No pre-activation
 # Used with SiLU pre-activation in pillar layers
-```
+```text
 - Raw features for maximum flexibility
 - Pillar layers provide SiLU gating
 
 **Text Encoder Projection**:
 ```python
 BezierActivation()  # No pre-activation
-```
+```text
 - Embedding space is high-entropy
 - Let Bezier learn optimal mapping
 
@@ -464,24 +453,22 @@ BezierActivation()  # No pre-activation
 ### Gradient Quality
 
 **ReLU gradient distribution** (assuming zero-mean input):
-```
+```text
 P(∇ReLU = 0) ≈ 0.5   # Negative inputs (dead gradient)
 P(∇ReLU = 1) ≈ 0.5   # Positive inputs (active gradient)
 Variance: 0.25
 
 Note: After batch normalization, dead gradient ratio varies by layer.
-```
-
+```text
 **Bezier gradient distribution**:
-```
+```text
 ∇Bezier = 3(1-t)²(p₁-p₀) + 6(1-t)t(p₂-p₁) + 3t²(p₃-p₂)
 
 Properties:
 - Continuous, smooth (never discrete jumps)
 - Can be zero at isolated points depending on control point configuration
 - Empirically observed: gradient variance 2-4× higher than ReLU in VAE training
-```
-
+```text
 **Expected result** (12-layer VAE on COCO, batch size 32):
 - Convergence to FID=20: Target Bezier 45k steps vs ReLU 72k steps (37% reduction target)
 - Final gradient norm (layer 1): Target Bezier 0.82 vs ReLU 0.31 (2.6× higher signal target)
@@ -531,19 +518,19 @@ Properties:
 
 **If training is unstable**:
 1. Check pre-activation parameters (use sigmoid/tanh to bound)
-2. Ensure control points aren't diverging (add gradient clipping)
-3. Consider using SiLU pre-activation for stability
+1. Ensure control points aren't diverging (add gradient clipping)
+1. Consider using SiLU pre-activation for stability
 
 **If memory issues**:
 1. Use BezierActivation instead of SlidingBezierActivation where possible
-2. Consider gradient checkpointing
-3. Reduce batch size
-4. Use standard activations in non-critical layers
+1. Consider gradient checkpointing
+1. Reduce batch size
+1. Use standard activations in non-critical layers
 
 **If inference is slow**:
 1. Profile to identify bottleneck (likely not Bezier if model is smaller)
-2. Consider torch.jit.script compilation (20-30% speedup)
-3. Use mixed precision (fp16)
+1. Consider torch.jit.script compilation (20-30% speedup)
+1. Use mixed precision (fp16)
 
 ---
 
@@ -557,8 +544,7 @@ PyTorch JIT can compile Bezier forward pass for 20-30% speedup:
 @torch.jit.script
 def bezier_forward(t, p0, p1, p2, p3):
     return (1-t)**3 * p0 + 3*(1-t)**2*t * p1 + 3*(1-t)*t**2 * p2 + t**3 * p3
-```
-
+```text
 **Status**: Under investigation for cross-platform compatibility (CPU, CUDA, MPS)
 
 ### Knowledge Distillation
@@ -567,8 +553,8 @@ def bezier_forward(t, p0, p1, p2, p3):
 
 **Proposed approach** for production deployment on edge devices:
 1. Train with Bezier (max quality)
-2. Distill to equivalent model with GELU/SiLU (faster on mobile)
-3. Target: Preserve >90% of expressiveness (to be empirically validated)
+1. Distill to equivalent model with GELU/SiLU (faster on mobile)
+1. Target: Preserve >90% of expressiveness (to be empirically validated)
 
 **Use case**: Mobile inference where activation complexity is bottleneck
 
@@ -585,17 +571,17 @@ def bezier_forward(t, p0, p1, p2, p3):
 
 ### Mathematical Foundations
 
-2. De Casteljau's algorithm for Bezier curves
-3. Bernstein polynomial basis functions
-4. Kolmogorov-Arnold representation theorem
-5. Xavier/He initialization for Bezier control points
-6. Gradient flow analysis in deep networks
+1. De Casteljau's algorithm for Bezier curves
+1. Bernstein polynomial basis functions
+1. Kolmogorov-Arnold representation theorem
+1. Xavier/He initialization for Bezier control points
+1. Gradient flow analysis in deep networks
 
 ### Conditioning Mechanisms
 
-7. **SPADE**: Park, T., Liu, M.-Y., Wang, T.-C., Zhu, J.-Y. (2019). *Semantic Image Synthesis with Spatially-Adaptive Normalization*. CVPR 2019. [arXiv:1903.07291](https://arxiv.org/abs/1903.07291)
+1. **SPADE**: Park, T., Liu, M.-Y., Wang, T.-C., Zhu, J.-Y. (2019). *Semantic Image Synthesis with Spatially-Adaptive Normalization*. CVPR 2019. [arXiv:1903.07291](https://arxiv.org/abs/1903.07291)
 
-8. **FiLM**: Perez, E., Strub, F., de Vries, H., et al. (2018). *FiLM: Visual Reasoning with a General Conditioning Layer*. AAAI 2018. [arXiv:1709.07871](https://arxiv.org/abs/1709.07871)
+1. **FiLM**: Perez, E., Strub, F., de Vries, H., et al. (2018). *FiLM: Visual Reasoning with a General Conditioning Layer*. AAAI 2018. [arXiv:1709.07871](https://arxiv.org/abs/1709.07871)
 
 For complete references and acknowledgments, see [REFERENCES.md](../REFERENCES.md).
 
@@ -616,4 +602,4 @@ For complete references and acknowledgments, see [REFERENCES.md](../REFERENCES.m
   journal={arXiv preprint arXiv:2404.19756},
   year={2024}
 }
-```
+```text

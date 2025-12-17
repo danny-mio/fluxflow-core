@@ -48,8 +48,7 @@ feature_maps_dim: 128           # Flow processor features
 feature_maps_dim_disc: 128      # Discriminator features
 text_embedding_dim: 1024
 pretrained_bert_model: "distilbert-base-uncased"
-```
-
+```text
 ### Training Setup
 ```yaml
 training:
@@ -71,8 +70,7 @@ training:
   kl_beta: 0.0001               # Target beta
   kl_warmup_steps: 5000         # Gradual warmup
   kl_free_bits: 1024
-```
-
+```text
 ### Optimizer Configuration
 
 **Critical Discovery**: RMSprop with momentum outperformed Adam variants for VAE training.
@@ -105,8 +103,7 @@ training:
     }
   }
 }
-```
-
+```text
 ## Training Metrics
 
 ### Session Summary
@@ -127,9 +124,9 @@ training:
 
 **Key Observations**:
 1. **VAE loss decreased by 64%** - from 0.832 to 0.297, indicating successful learning
-2. **KL warmup at 22% progress** - beta reached only 11.5% of target (0.0001), preventing posterior collapse
-3. **Stable training** - no divergence, gradual loss reduction
-4. **Batch time**: 0.4-8.3 seconds per step (average ~4.3s)
+1. **KL warmup at 22% progress** - beta reached only 11.5% of target (0.0001), preventing posterior collapse
+1. **Stable training** - no divergence, gradual loss reduction
+1. **Batch time**: 0.4-8.3 seconds per step (average ~4.3s)
 
 #### Training Graphs
 
@@ -201,9 +198,9 @@ A template image (`template.png`) **not in the training dataset** was compressed
 
 This suggests the VAE is learning luminance/structure information faster than chromatic information. Possible causes:
 1. **L2 reconstruction loss** may prioritize brightness over color accuracy
-2. **Early in training** - color fidelity may improve with continued training
-3. **Missing LPIPS loss** - perceptual loss could help with color accuracy
-4. **Training data distribution** - COCO may have lower color saturation than template
+1. **Early in training** - color fidelity may improve with continued training
+1. **Missing LPIPS loss** - perceptual loss could help with color accuracy
+1. **Training data distribution** - COCO may have lower color saturation than template
 
 **Next Steps**: Monitor color accuracy progression; consider enabling LPIPS loss or adjusting loss weights.
 
@@ -244,26 +241,26 @@ This suggests the VAE is learning luminance/structure information faster than ch
 
 ### Immediate (Next 6-hour Session)
 1. **Continue training to 5,000 steps** - complete KL warmup cycle
-2. **Monitor VAE loss target**: Aim for < 0.15 (reconstruction quality threshold)
-3. **Save checkpoint every 500 steps** - track progression through warmup completion
-4. **Compare metrics at KL warmup milestones**: 50%, 75%, 100%
+1. **Monitor VAE loss target**: Aim for < 0.15 (reconstruction quality threshold)
+1. **Save checkpoint every 500 steps** - track progression through warmup completion
+1. **Compare metrics at KL warmup milestones**: 50%, 75%, 100%
 
 ### Short-Term (Week 2-3)
 1. **Extend to 10,000 steps** - observe post-warmup behavior
-2. **Evaluate reconstruction metrics**:
+1. **Evaluate reconstruction metrics**:
    - PSNR (target: > 25 dB)
    - LPIPS (target: < 0.10) - may need to enable LPIPS loss
-3. **Consider LPIPS integration** if pure L2 loss plateaus
-4. **Document optimal step count** for Phase 1 VAE training
+1. **Consider LPIPS integration** if pure L2 loss plateaus
+1. **Document optimal step count** for Phase 1 VAE training
 
 ### Medium-Term (Week 4 - Decision Gate)
 1. **Train ReLU baseline VAE** with identical config (except activation)
-2. **Compare Bezier vs ReLU**:
+1. **Compare Bezier vs ReLU**:
    - Reconstruction quality (PSNR, LPIPS, FID)
    - Training stability (loss curves)
    - Convergence speed (steps to target metrics)
    - Model size vs quality tradeoff
-3. **Prepare Week 4 decision brief** with empirical evidence
+1. **Prepare Week 4 decision brief** with empirical evidence
 
 ## Try the Checkpoint Yourself
 
@@ -274,8 +271,7 @@ Want to test this early VAE checkpoint? Here's how to download and run it:
 ```bash
 pip install torch torchvision pillow safetensors numpy
 pip install fluxflow  # Or install from source (see repo README)
-```
-
+```text
 **Minimum Versions**:
 - Python ≥ 3.10
 - PyTorch ≥ 2.0
@@ -302,14 +298,12 @@ cd fluxflow-core
 
 # Checkpoint will be automatically downloaded via Git LFS (427 MB)
 # Location: models/checkpoints/fluxflow-vae-phase1-step1100-20251207.safetensors
-```
-
+```text
 **Direct Download** (if you already have the repo):
 ```bash
 cd fluxflow-core
 git lfs pull --include="models/checkpoints/fluxflow-vae-phase1-step1100-20251207.safetensors"
-```
-
+```text
 **Verify Download**:
 ```bash
 # Check file size (should be ~427 MB, not a few KB pointer file)
@@ -317,8 +311,7 @@ ls -lh models/checkpoints/fluxflow-vae-phase1-step1100-20251207.safetensors
 
 # File should be 427 MB (448,056,632 bytes)
 # If file is <1 KB, Git LFS failed - see troubleshooting below
-```
-
+```text
 **Troubleshooting**:
 - If file is <1 KB: Git LFS didn't pull the binary. Run `git lfs pull` again.
 - If Git LFS is not installed: Install it first, then run `git lfs install && git lfs pull`.
@@ -374,8 +367,7 @@ reconstructed_img = (reconstructed[0].permute(1, 2, 0).numpy() * 255).astype(np.
 Image.fromarray(reconstructed_img).save("reconstructed.png")
 
 print("✓ Reconstruction saved to reconstructed.png")
-```
-
+```text
 **Expected Results**: 
 - Structural reconstruction should be recognizable
 - Colors will appear desaturated (as discussed in Color Observation section)
@@ -429,10 +421,10 @@ print("✓ Reconstruction saved to reconstructed.png")
 This initial training session validates our Phase 1 approach:
 
 1. **VAE-only training works** - no GAN required for initial compression learning
-2. **Configuration is stable** - smooth loss curves, no divergence
-3. **Bezier activations are training** - no unusual behavior vs standard activations
-4. **Checkpoint system works** - ready for 6-hour Paperspace sessions
-5. **Progression is visible** - qualitative improvement every 100 steps
+1. **Configuration is stable** - smooth loss curves, no divergence
+1. **Bezier activations are training** - no unusual behavior vs standard activations
+1. **Checkpoint system works** - ready for 6-hour Paperspace sessions
+1. **Progression is visible** - qualitative improvement every 100 steps
 
 **Confidence Level**: High confidence in continuing Phase 1 training to completion.
 
@@ -448,5 +440,4 @@ This initial training session validates our Phase 1 approach:
 
 **Training Platform**: Paperspace Gradient A6000 (Free Tier)  
 **Code Repository**: https://github.com/danny-mio/fluxflow-training  
-**Model Repository**: https://github.com/danny-mio/fluxflow-core  
-**Training Plan**: [TRAINING_VALIDATION_PLAN.md](https://github.com/danny-mio/fluxflow-core/blob/main/TRAINING_VALIDATION_PLAN.md)
+**Model Repository**: https://github.com/danny-mio/fluxflow-core

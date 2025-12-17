@@ -13,10 +13,9 @@ This document identifies mathematical errors, imprecise claims, and unsupported 
 **Location**: `docs/BEZIER_ACTIVATIONS.md:54`
 
 **Claim**:
-```
+```text
 - Always differentiable (C∞ smooth)
-```
-
+```text
 **Problem**: Cubic Bezier curves are **C² smooth**, not C∞.
 
 **Correct Statement**:
@@ -29,8 +28,7 @@ This document identifies mathematical errors, imprecise claims, and unsupported 
 - Twice continuously differentiable (C² smooth)
 - Continuous first and second derivatives
 - Smooth enough for gradient-based optimization
-```
-
+```text
 ---
 
 ### 2. **FALSE: "Non-zero gradient unless degenerate"**
@@ -38,21 +36,19 @@ This document identifies mathematical errors, imprecise claims, and unsupported 
 **Location**: Multiple files
 
 **Claim**:
-```
+```text
 - Non-zero unless all control points are equal (degenerate case)
 - No dead neurons (unlike ReLU which has zero gradient for x<0)
-```
-
+```text
 **Problem**: The derivative can be zero at specific points even when control points differ.
 
 **Counterexample**:
-```
+```text
 p₀ = 0, p₁ = 1, p₂ = 1, p₃ = 0
 dB/dt = 3(1-t)²(1-0) + 6(1-t)t(1-1) + 3t²(0-1)
       = 3(1-t)² - 3t²
       = 0 when t = 1/2
-```
-
+```text
 **Correct Statement**:
 - The gradient is **typically non-zero** for most parameter configurations
 - The gradient **can be zero** at isolated points depending on control point values
@@ -63,8 +59,7 @@ dB/dt = 3(1-t)²(1-0) + 6(1-t)t(1-1) + 3t²(0-1)
 - Gradient typically non-zero (unlike ReLU's systematic 50% dead gradient)
 - Can have isolated zero-gradient points depending on control point configuration
 - Smooth gradient flow reduces vanishing gradient issues
-```
-
+```text
 ---
 
 ### 3. **IMPRECISE: "4^D states" terminology**
@@ -72,10 +67,9 @@ dB/dt = 3(1-t)²(1-0) + 6(1-t)t(1-1) + 3t²(0-1)
 **Location**: `docs/BEZIER_ACTIVATIONS.md:337`
 
 **Claim**:
-```
+```text
 | **Bezier** | B(t; p₀, p₁, p₂, p₃) | Polynomial | No | **High** (4^D states) |
-```
-
+```text
 **Problem**: 
 - "States" is undefined for continuous parameters
 - This notation was removed elsewhere but remains in the table
@@ -89,8 +83,7 @@ dB/dt = 3(1-t)²(1-0) + 6(1-t)t(1-1) + 3t²(0-1)
 **Fix**:
 ```markdown
 | **Bezier** | B(t; p₀, p₁, p₂, p₃) | Polynomial | No | **High** (cubic polynomial) |
-```
-
+```text
 ---
 
 ### 4. **UNSUPPORTED: Variance propagation formula**
@@ -98,19 +91,18 @@ dB/dt = 3(1-t)²(1-0) + 6(1-t)t(1-1) + 3t²(0-1)
 **Location**: `docs/BEZIER_ACTIVATIONS.md:108-112`
 
 **Claim**:
-```
+```text
 Var(B(t)) = E[(1-t)⁶]·Var(p₀) + 9E[(1-t)⁴t²]·Var(p₁) 
            + 9E[(1-t)²t⁴]·Var(p₂) + E[t⁶]·Var(p₃)
            + Covariance terms
-```
-
+```text
 **Problems**:
 1. This assumes **independence** of (t, p₀, p₁, p₂, p₃), which is false for BezierActivation (all derived from input)
-2. The exponents are wrong: should be squared Bernstein basis, not sixth power
-3. "Covariance terms" is vague and unspecified
+1. The exponents are wrong: should be squared Bernstein basis, not sixth power
+1. "Covariance terms" is vague and unspecified
 
 **Correct Formula** (assuming independence, which FluxFlow doesn't satisfy):
-```
+```text
 Var(B(t)) = Σᵢ [Bᵢ(t)]² · Var(pᵢ) + covariance terms
 
 Where Bernstein basis:
@@ -121,12 +113,11 @@ B₃(t) = t³
 
 If t is also random:
 Var(B(t)) = E_t[Var_p(B(t)|t)] + Var_t(E_p[B(t)|p])  (law of total variance)
-```
-
+```text
 **Fix**: Either:
 1. **Remove this section** (recommended - the formula doesn't apply to FluxFlow's architecture)
-2. **Derive the correct formula** with dependencies between t and p₀...p₃
-3. **State empirically**: "Empirically observed to maintain variance 2-4× better than ReLU"
+1. **Derive the correct formula** with dependencies between t and p₀...p₃
+1. **State empirically**: "Empirically observed to maintain variance 2-4× better than ReLU"
 
 ---
 
@@ -135,20 +126,18 @@ Var(B(t)) = E_t[Var_p(B(t)|t)] + Var_t(E_p[B(t)|p])  (law of total variance)
 **Location**: `docs/BEZIER_ACTIVATIONS.md:115`
 
 **Claim**:
-```
+```text
 **Key insight**: Variance is modulated by 6 independent terms, allowing the network to maintain signal strength through deeper architectures.
-```
-
+```text
 **Problems**:
 1. The Bezier formula has **4 Bernstein basis functions**, not 6
-2. These terms are **not independent** in FluxFlow (t, p₀, p₁, p₂, p₃ all derived from same input)
-3. No evidence provided for "maintain signal strength through deeper architectures"
+1. These terms are **not independent** in FluxFlow (t, p₀, p₁, p₂, p₃ all derived from same input)
+1. No evidence provided for "maintain signal strength through deeper architectures"
 
 **Fix**:
 ```markdown
 **Key insight**: The cubic polynomial form provides smooth, adaptive non-linearity that empirically shows reduced variance collapse compared to ReLU in deep networks. Unlike ReLU's systematic 50% variance reduction per layer, Bezier activations can preserve or modulate variance based on learned control point relationships.
-```
-
+```text
 ---
 
 ### 6. **IMPRECISE: "Exponential increase in representational capacity"**
@@ -156,10 +145,9 @@ Var(B(t)) = E_t[Var_p(B(t)|t)] + Var_t(E_p[B(t)|p])  (law of total variance)
 **Location**: `README.md:19`
 
 **Claim**:
-```
+```text
 This creates a 3rd-degree polynomial manifold that increases representational capacity exponentially (4^D for D dimensions)
-```
-
+```text
 **Problem**:
 - This was partially fixed but the claim remains in README
 - "Exponential increase" is misleading without context
@@ -173,8 +161,7 @@ This creates a 3rd-degree polynomial manifold that increases representational ca
 **Fix**:
 ```markdown
 This creates a 3rd-degree polynomial manifold where each dimension can follow a different cubic transformation, compared to standard activations which apply the same fixed function everywhere.
-```
-
+```text
 ---
 
 ## Moderate Issues (Should Be Fixed)
@@ -184,11 +171,10 @@ This creates a 3rd-degree polynomial manifold where each dimension can follow a 
 **Location**: `docs/BEZIER_ACTIVATIONS.md:129-130`
 
 **Claim**:
-```
+```text
 | BezierActivation | Input×5 | Input×5 | **10× input** | Temp tensors for [t, p₀, p₁, p₂, p₃] |
 | SlidingBezierActivation | Input×9 | Input×9 | **18× input** | Circular padding + unfold |
-```
-
+```text
 **Problem**: These multipliers are not explained or derived.
 
 **Analysis**:
@@ -207,10 +193,9 @@ This creates a 3rd-degree polynomial manifold where each dimension can follow a 
 **Location**: Multiple locations
 
 **Claim**:
-```
+```text
 Variance: 2-4× higher than ReLU (empirically)
-```
-
+```text
 **Problem**:
 - "Gradient variance" is ambiguous (variance of what? gradients w.r.t. inputs? parameters?)
 - No reference to where this was measured
@@ -221,8 +206,7 @@ Variance: 2-4× higher than ReLU (empirically)
 Empirical observation: Gradient variance (measured as Var(∂Loss/∂θ) across training) shows 2-4× higher values compared to ReLU in VAE training experiments, reducing vanishing gradient issues in deep layers.
 
 [Reference: Internal experiments on COCO dataset, 12-layer VAE, batch size 32]
-```
-
+```text
 ---
 
 ### 9. **MISLEADING: ReLU gradient distribution**
@@ -230,13 +214,12 @@ Empirical observation: Gradient variance (measured as Var(∂Loss/∂θ) across 
 **Location**: `docs/BEZIER_ACTIVATIONS.md:342-346`
 
 **Claim**:
-```
+```text
 **ReLU gradient distribution**:
 P(∇ReLU = 0) = 0.5   # Dead gradient
 P(∇ReLU = 1) = 0.5   # Active gradient
 Variance: 0.25
-```
-
+```text
 **Problem**: This assumes **zero-mean input distribution**, which is not generally true after normalization or in deep layers.
 
 **Correct Statement**:
@@ -247,8 +230,7 @@ P(∇ReLU = 1) ≈ 0.5   # Positive inputs
 Variance: 0.25
 
 Note: After batch normalization or in practice, the dead gradient ratio varies by layer.
-```
-
+```text
 ---
 
 ### 10. **UNSUPPORTED: Efficiency claims**
@@ -256,7 +238,7 @@ Note: After batch normalization or in practice, the dead gradient ratio varies b
 **Location**: `docs/BEZIER_ACTIVATIONS.md:150-163`
 
 **Claim**:
-```
+```text
 **Standard model (D=256 channels)**:
 - Forward pass compute: 1.0× (baseline)
 - Parameters: 500M
@@ -270,13 +252,12 @@ Note: After batch normalization or in practice, the dead gradient ratio varies b
 **Measured inference time (512×512 image)**:
 - Standard: 1.0s
 - Bezier: 0.6s
-```
-
+```text
 **Problems**:
 1. No specification of "Standard model" architecture
-2. Parameters 500M → 200M is claimed, but what is the standard model?
-3. "Measured inference time" - on what hardware? What batch size?
-4. The calculation assumes linear scaling (0.5 × 1.2), but real systems have overhead
+1. Parameters 500M → 200M is claimed, but what is the standard model?
+1. "Measured inference time" - on what hardware? What batch size?
+1. The calculation assumes linear scaling (0.5 × 1.2), but real systems have overhead
 
 **Fix**:
 ```markdown
@@ -295,8 +276,7 @@ Inference time (NVIDIA A100, batch=1, 512×512, 50 steps):
 - Bezier: 1.12s ± 0.04s (38% faster)
 
 Note: Bezier model achieves equivalent quality with fewer channels due to increased per-neuron expressiveness. The activation overhead (1.15×) is more than compensated by reduced model width.
-```
-
+```text
 ---
 
 ### 11. **VAGUE: "Better gradient flow"**
@@ -304,10 +284,9 @@ Note: Bezier model achieves equivalent quality with fewer channels due to increa
 **Location**: Multiple locations
 
 **Claim**:
-```
+```text
 Result: Better gradient flow, faster convergence
-```
-
+```text
 **Problem**: "Better" and "faster" are subjective without quantification
 
 **Fix**:
@@ -315,8 +294,7 @@ Result: Better gradient flow, faster convergence
 Empirical result: In 12-layer VAE training experiments (COCO dataset):
 - Convergence to FID=20: Bezier 45k steps vs ReLU 72k steps (37% faster)
 - Final gradient norm (layer 1): Bezier 0.82 vs ReLU 0.31 (2.6× higher signal)
-```
-
+```text
 ---
 
 ### 12. **IMPRECISE: Model size equivalence table**
@@ -324,7 +302,7 @@ Empirical result: In 12-layer VAE training experiments (COCO dataset):
 **Location**: `docs/BEZIER_ACTIVATIONS.md:360-364`
 
 **Claim**:
-```
+```text
 To achieve equivalent expressiveness:
 
 | Activation | Channels Needed | Parameters | Memory | Inference Speed |
@@ -332,13 +310,12 @@ To achieve equivalent expressiveness:
 | ReLU | D = 256 | 100% | 100% | 100% |
 | GELU/SiLU | D = 256 | 100% | 100% | 100% |
 | **Bezier** | **D = 128** | **25%** | **40%** | **60%** |
-```
-
+```text
 **Problems**:
 1. "Equivalent expressiveness" is undefined
-2. Parameters: 25% assumes quadratic scaling (D²) which only applies to linear layers, not whole model
-3. Memory: 40% doesn't account for activation memory overhead
-4. Inference: 60% contradicts earlier claim of 0.6× (which is also 60%, so this is consistent but the table header is confusing)
+1. Parameters: 25% assumes quadratic scaling (D²) which only applies to linear layers, not whole model
+1. Memory: 40% doesn't account for activation memory overhead
+1. Inference: 60% contradicts earlier claim of 0.6× (which is also 60%, so this is consistent but the table header is confusing)
 
 **Fix**:
 ```markdown
@@ -355,8 +332,7 @@ Notes:
 - Parameter reduction > 0.25× (expected from D²) due to encoder/decoder asymmetry
 - Memory reduction less than activation overhead suggests due to smaller model size
 - Inference speedup despite 10× activation cost due to overall smaller model
-```
-
+```text
 ---
 
 ## Minor Issues (Nice to Fix)
@@ -370,8 +346,7 @@ Notes:
 **Fix**:
 ```markdown
 Unlike traditional fixed activations (ReLU, GELU), Bezier activations provide 3rd-degree polynomial transformations, increasing the expressiveness of each neuron.
-```
-
+```text
 ---
 
 ### 14. **UNSUPPORTED: "Better preservation of spatial details"**
@@ -379,11 +354,10 @@ Unlike traditional fixed activations (ReLU, GELU), Bezier activations provide 3r
 **Location**: `ARCHITECTURE.md:448`
 
 **Claim**:
-```
+```text
 SPADE (Spatially-Adaptive Denormalization) provides spatial control:
 - Better preservation of spatial details
-```
-
+```text
 **Problem**: Claim about SPADE's benefit not specific to FluxFlow's architecture
 
 **Fix**: Either cite SPADE paper or state "empirically observed in FluxFlow VAE"
@@ -395,57 +369,55 @@ SPADE (Spatially-Adaptive Denormalization) provides spatial control:
 **Location**: `docs/BEZIER_ACTIVATIONS.md:423-427`
 
 **Claim**:
-```
+```text
 For production deployment on edge devices:
 1. Train with Bezier (max quality)
-2. Distill to equivalent model with GELU/SiLU (faster)
-3. Preserve ~95% of expressiveness
-```
-
+1. Distill to equivalent model with GELU/SiLU (faster)
+1. Preserve ~95% of expressiveness
+```text
 **Problem**: "~95% expressiveness" - has this been tested?
 
 **Fix**:
 ```markdown
 For production deployment on edge devices:
 1. Train with Bezier (max quality)
-2. Distill to equivalent model with GELU/SiLU (faster inference)
-3. Expected to preserve significant expressiveness (to be empirically validated)
+1. Distill to equivalent model with GELU/SiLU (faster inference)
+1. Expected to preserve significant expressiveness (to be empirically validated)
 
 **Status**: Planned future work, not yet implemented
-```
-
+```text
 ---
 
 ## Summary of Required Changes
 
 ### Immediate (Critical)
 1. ❌ Fix "C∞ smooth" → "C² smooth"
-2. ❌ Fix "non-zero gradient" → "typically non-zero gradient"
-3. ❌ Remove or fix variance propagation formula
-4. ❌ Remove "6 independent terms" claim
-5. ❌ Remove "4^D states" from table
-6. ❌ Remove "exponential increase" from README
+1. ❌ Fix "non-zero gradient" → "typically non-zero gradient"
+1. ❌ Remove or fix variance propagation formula
+1. ❌ Remove "6 independent terms" claim
+1. ❌ Remove "4^D states" from table
+1. ❌ Remove "exponential increase" from README
 
 ### Important (Moderate)
-7. ⚠️ Add derivation or mark memory overhead as empirical
-8. ⚠️ Clarify gradient variance claims with methodology
-9. ⚠️ Add caveats to ReLU gradient distribution
-10. ⚠️ Add experimental details to efficiency claims
-11. ⚠️ Quantify "better gradient flow"
-12. ⚠️ Fix model size equivalence table with real data
+1. ⚠️ Add derivation or mark memory overhead as empirical
+1. ⚠️ Clarify gradient variance claims with methodology
+1. ⚠️ Add caveats to ReLU gradient distribution
+1. ⚠️ Add experimental details to efficiency claims
+1. ⚠️ Quantify "better gradient flow"
+1. ⚠️ Fix model size equivalence table with real data
 
 ### Optional (Minor)
-13. 💡 Remove marketing language ("dramatically")
-14. 💡 Add citations or mark as empirical
-15. 💡 Mark untested claims as "planned future work"
+1. 💡 Remove marketing language ("dramatically")
+1. 💡 Add citations or mark as empirical
+1. 💡 Mark untested claims as "planned future work"
 
 ---
 
 ## Recommendations
 
 1. **Add "Empirical Results" section**: Separate mathematical theory from experimental observations
-2. **Include error bars**: All performance claims should have statistical confidence
-3. **Specify experimental setup**: Hardware, dataset, hyperparameters for all benchmarks
-4. **Mark theoretical vs. empirical**: Clear distinction between proven mathematics and observations
-5. **Add references**: Cite sources for all non-original mathematical statements
+1. **Include error bars**: All performance claims should have statistical confidence
+1. **Specify experimental setup**: Hardware, dataset, hyperparameters for all benchmarks
+1. **Mark theoretical vs. empirical**: Clear distinction between proven mathematics and observations
+1. **Add references**: Cite sources for all non-original mathematical statements
 

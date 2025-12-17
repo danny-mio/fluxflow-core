@@ -2,7 +2,7 @@
 
 ## 🚧 Training In Progress
 
-**Status**: FluxFlow models are currently in systematic validation training following the [TRAINING_VALIDATION_PLAN.md](https://github.com/danny-mio/fluxflow-core/blob/develop/TRAINING_VALIDATION_PLAN.md).
+**Status**: FluxFlow models are currently in systematic validation training.
 
 **Expected Completion**: Late February 2026
 
@@ -137,8 +137,7 @@ decoder = FluxExpander(d_model=128)
 # Load weights
 encoder.load_state_dict({k.replace('compressor.', ''): v for k, v in state_dict.items() if 'compressor' in k})
 decoder.load_state_dict({k.replace('expander.', ''): v for k, v in state_dict.items() if 'expander' in k})
-```
-
+```text
 ### Loading Full Pipeline
 
 ```python
@@ -157,8 +156,7 @@ image = pipeline(
 ).images[0]
 
 image.save("output.png")
-```
-
+```text
 ---
 
 ## Benchmark Comparisons (Planned)
@@ -195,8 +193,7 @@ Models released from this project should be cited as:
   note={Trained models from the FluxFlow project},
   url={https://github.com/danny-mio/fluxflow-core}
 }
-```
-
+```text
 ---
 
 ## License
@@ -210,7 +207,7 @@ All models released will be under the MIT License, consistent with the FluxFlow 
 For questions about models:
 - **Issues**: [GitHub Issues](https://github.com/danny-mio/fluxflow-core/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/danny-mio/fluxflow-core/discussions)
-- **Training Status**: Check [TRAINING_VALIDATION_PLAN.md](https://github.com/danny-mio/fluxflow-core/blob/develop/TRAINING_VALIDATION_PLAN.md) for latest progress
+- **Training Status**: Check repository discussions for latest progress updates
 
 ---
 

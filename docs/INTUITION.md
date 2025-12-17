@@ -19,8 +19,7 @@ Traditional neural networks use the same activation function (like ReLU) for eve
 ```python
 def relu(x):
     return max(0, x)
-```
-
+```text
 **What it does**: Cuts off negative values, keeps positive values unchanged.
 
 **Why it's popular**:
@@ -51,17 +50,15 @@ Imagine you're building an image generator:
 **Core Question**: What if we let each neuron learn the activation function that works best for ITS specific job?
 
 **Traditional Approach**:
-```
+```text
 Input → [Neuron 1 (ReLU)] → [Neuron 2 (ReLU)] → ... → [Neuron 256 (ReLU)] → Output
          Fixed curve       Fixed curve              Fixed curve
-```
-
+```text
 **Bezier Approach**:
-```
+```text
 Input → [Neuron 1 (Custom Curve)] → [Neuron 2 (Custom Curve)] → ... → [Neuron 128 (Custom Curve)] → Output
          Learned via Bezier          Learned via Bezier                  Learned via Bezier
-```
-
+```text
 **Key Difference**: Half the neurons, but each one is more expressive.
 
 ### How Bezier Curves Enable This
@@ -74,8 +71,7 @@ Input → [Neuron 1 (Custom Curve)] → [Neuron 2 (Custom Curve)] → ... → [N
 # These are LEARNED during training, not fixed
 
 output = cubic_bezier(input, p0, p1, p2, p3)
-```
-
+```text
 **What the network learns**:
 - p0, p1: Control the curve's start and shape at low inputs
 - p2, p3: Control the curve's end and shape at high inputs
@@ -87,7 +83,7 @@ output = cubic_bezier(input, p0, p1, p2, p3)
 
 ### Bezier Curve Visualization
 
-```
+```text
 Control Points:
                    p0 ●
                        ╲
@@ -104,8 +100,7 @@ The curve's shape is determined by learned control points.
 - Straight line: p0, p1, p2, p3 collinear (ReLU-like)
 - S-curve: control points arranged for sigmoid (GELU-like)  
 - Custom: any smooth shape the neuron needs
-```
-
+```text
 ---
 
 ## Part 3: The Analogy - LEGO vs Clay
@@ -144,19 +139,17 @@ The curve's shape is determined by learned control points.
 ### Parameter Count Analysis
 
 **Traditional Network**:
-```
+```text
 Layer 1: 256 neurons × 256 inputs = 65,536 parameters
 Layer 2: 256 neurons × 256 inputs = 65,536 parameters
 Total: 131,072 parameters
-```
-
+```text
 **Bezier Network**:
-```
+```text
 Layer 1: 128 neurons × (128 inputs × 5 for Bezier) = 81,920 parameters
 Layer 2: 128 neurons × (128 inputs × 5 for Bezier) = 81,920 parameters
 Total: 163,840 parameters
-```
-
+```text
 **Wait, Bezier has MORE parameters?**
 
 **Not quite**: The "5×" accounts for (input + 4 control points), but control points are shared across spatial dimensions in CNNs. Actual overhead:
@@ -169,14 +162,13 @@ Total: 163,840 parameters
 ### Why Faster Inference?
 
 **Fewer neurons = fewer operations**:
-```
+```text
 ReLU network: 256 neurons × 256 inputs = 65,536 multiply-adds
 Bezier network: 128 neurons × 128 inputs = 16,384 multiply-adds
 Bezier overhead: 128 Bezier evaluations ≈ 2,000 extra ops
 
 Net speedup: (65,536 / 18,384) ≈ 3.5× for this layer
-```
-
+```text
 **Measured speedup target**: 38% end-to-end (training in progress)
 
 ---
@@ -188,17 +180,15 @@ Net speedup: (65,536 / 18,384) ≈ 3.5× for this layer
 **Paper**: Liu et al., 2024 ([arXiv:2404.19756](https://arxiv.org/abs/2404.19756))
 
 **Core Idea**: Traditional neural networks learn:
-```
+```text
 f(x) = activation(W·x + b)
 where W = weights, b = bias, activation = fixed (e.g., ReLU)
-```
-
+```text
 **KANs learn**:
-```
+```text
 f(x) = Σ φᵢ(xᵢ)
 where φᵢ = learnable function (not fixed)
-```
-
+```text
 **Key Insight**: Learning the activation functions (not just weights) can drastically improve efficiency.
 
 ### FluxFlow's Approach
@@ -279,8 +269,6 @@ FluxFlow is currently undergoing systematic validation:
 - 10-run stability test
 - Publish results to MODEL_ZOO.md
 
-**See**: [TRAINING_VALIDATION_PLAN.md](../../TRAINING_VALIDATION_PLAN.md)
-
 ---
 
 ## Part 8: Addressing Skepticism
@@ -311,7 +299,7 @@ FluxFlow is currently undergoing systematic validation:
 
 ## Part 9: How to Follow Progress
 
-**Training Status**: Check [MODEL_ZOO.md](../../MODEL_ZOO.md) for updates
+**Training Status**: Check [MODEL_ZOO.md](../MODEL_ZOO.md) for updates
 
 **When Results Are Ready**:
 - Trained checkpoints (VAE, Flow, Baselines)

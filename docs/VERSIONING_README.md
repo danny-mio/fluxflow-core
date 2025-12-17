@@ -21,8 +21,7 @@ save_versioned_checkpoint(
     model_version="0.3.0",
     training_info={"steps": 50000, "dataset": "COCO"}
 )
-```
-
+```text
 Creates:
 - `outputs/model/model.safetensors` - Weights
 - `outputs/model/model_metadata.json` - Version + config
@@ -41,8 +40,7 @@ pipeline = FluxPipeline.from_pretrained(
     "outputs/model/",
     use_versioning=True
 )
-```
-
+```text
 ### Migrate Legacy Checkpoints
 
 ```bash
@@ -50,8 +48,7 @@ python scripts/migrate_checkpoints.py \
     old_model.safetensors \
     versioned_model/ \
     --version 0.3.0
-```
-
+```text
 ## Documentation
 
 - [VERSIONING.md](VERSIONING.md) - Full versioning guide
