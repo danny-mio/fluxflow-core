@@ -107,7 +107,9 @@ class FluxPipeline(nn.Module):
             from .versioning import load_versioned_checkpoint
 
             # Type assertion: load_versioned_checkpoint returns FluxPipeline
-            return cast("FluxPipeline", load_versioned_checkpoint(Path(checkpoint_path), device, **kwargs))
+            return cast(
+                "FluxPipeline", load_versioned_checkpoint(Path(checkpoint_path), device, **kwargs)
+            )
 
         # Legacy loading path (default for backward compatibility)
         if not os.path.exists(checkpoint_path):
