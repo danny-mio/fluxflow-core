@@ -8,11 +8,11 @@ Contains:
 
 import os
 
+import safetensors.torch
 import torch
 import torch.nn as nn
 from torch.nn.utils import spectral_norm
 from transformers import DistilBertConfig, DistilBertModel
-import safetensors.torch
 
 from .activations import BezierActivation, xavier_init
 from .conditioning import SPADE, LeanContext2D
