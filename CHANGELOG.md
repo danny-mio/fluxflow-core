@@ -7,8 +7,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-<<<<<<< HEAD
-=======
 - **Model Versioning System**
   - Explicit model version metadata stored alongside checkpoints
   - Automatic version detection and routing to appropriate loaders
@@ -26,7 +24,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     - New functions: `load_versioned_checkpoint()`, `save_versioned_checkpoint()`
   - **Testing**: Comprehensive unit tests in `tests/unit/test_versioning.py`
 
->>>>>>> main
 - **CFG Support in Sample Generation**
   - Added `use_cfg` and `guidance_scale` parameters to `save_sample_images()` function
   - New `_generate_with_cfg()` helper function for CFG-guided sample generation
