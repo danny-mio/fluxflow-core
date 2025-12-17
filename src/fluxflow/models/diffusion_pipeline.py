@@ -98,6 +98,7 @@ class FluxFlowPipeline(DiffusionPipeline):
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: Optional[Union[str, os.PathLike]] = None,
+        use_versioning: bool = False,
         **kwargs,
     ):
         """
@@ -108,6 +109,7 @@ class FluxFlowPipeline(DiffusionPipeline):
                 Can be either:
                 - A path to a `.safetensors` or `.pt` checkpoint file
                 - A path to a directory containing pipeline components
+            use_versioning: Use versioned loading system (default: False for backward compatibility)
             **kwargs:
                 Additional arguments passed to the pipeline constructor.
 
@@ -118,8 +120,14 @@ class FluxFlowPipeline(DiffusionPipeline):
             ```python
             from fluxflow.models import FluxFlowPipeline
 
-            # Load from checkpoint
+            # Load from checkpoint (legacy method)
             pipeline = FluxFlowPipeline.from_pretrained("path/to/checkpoint.safetensors")
+
+            # Load with versioning for better compatibility
+            pipeline = FluxFlowPipeline.from_pretrained(
+                "path/to/checkpoint/",
+                use_versioning=True
+            )
 
             # Generate image
             image = pipeline(
@@ -131,6 +139,15 @@ class FluxFlowPipeline(DiffusionPipeline):
             image.save("output.png")
             ```
         """
+        # Note: Versioned loading currently supports FluxPipeline only
+        # FluxFlowPipeline requires additional components (text_encoder, tokenizer, scheduler)
+        # For now, versioning redirects to standard loading
+        if use_versioning:
+            logger.info(
+                "Versioned loading for FluxFlowPipeline currently uses standard loading path. "
+                "Full versioning support for FluxFlowPipeline will be added in a future release."
+            )
+
         # Check if it's a checkpoint file or directory
         if pretrained_model_name_or_path:
             path = str(pretrained_model_name_or_path)

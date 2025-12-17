@@ -29,6 +29,9 @@ def save_model(
     text_encoder: nn.Module,
     output_path: str,
     save_pretrained: bool = False,
+    save_metadata: bool = False,
+    model_version: str = "0.3.0",
+    training_info: Optional[Dict] = None,
 ) -> None:
     """
     Save FluxFlow pipeline and text encoder to safetensors.
@@ -40,7 +43,57 @@ def save_model(
         text_encoder: BertTextEncoder model
         output_path: Directory to save checkpoints
         save_pretrained: If True, save full text encoder (including language_model)
+        save_metadata: If True, save version metadata (recommended for future compatibility)
+        model_version: Model version string (used when save_metadata=True)
+        training_info: Optional training metadata dict (used when save_metadata=True)
+
+    Example:
+        >>> # Legacy save (backward compatible)
+        >>> save_model(diffuser, text_encoder, "outputs/model/")
+
+        >>> # Save with version metadata (recommended)
+        >>> save_model(
+        ...     diffuser,
+        ...     text_encoder,
+        ...     "outputs/model/",
+        ...     save_metadata=True,
+        ...     model_version="0.3.0",
+        ...     training_info={"total_steps": 50000, "dataset": "COCO"}
+        ... )
     """
+    if save_metadata:
+        # Use versioned save
+        from pathlib import Path
+
+        from fluxflow.models.versioning import save_versioned_checkpoint
+
+        save_versioned_checkpoint(
+            diffuser,
+            Path(output_path),
+            model_version=model_version,
+            training_info=training_info,
+        )
+
+        # Also save text encoder separately for compatibility
+        os.makedirs(output_path, exist_ok=True)
+        te_path = os.path.join(output_path, "text_encoder.safetensors")
+
+        if not save_pretrained:
+            te_state_dict = {
+                "text_encoder." + k: v.cpu()
+                for k, v in text_encoder.state_dict().items()
+                if not k.startswith("language_model.")
+            }
+        else:
+            te_state_dict = {
+                "text_encoder." + k: v.cpu() for k, v in text_encoder.state_dict().items()
+            }
+
+        safetensors.torch.save_file(te_state_dict, te_path)
+        print(f"\nModel saved with version metadata to {output_path}")
+        return
+
+    # Legacy save path (default for backward compatibility)
     os.makedirs(output_path, exist_ok=True)
     model_path = os.path.join(output_path, "flxflow_final.safetensors")
     model_path_bck = os.path.join(output_path, "flxflow_final.safetensors.bck")
