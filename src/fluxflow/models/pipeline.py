@@ -75,6 +75,7 @@ class FluxPipeline(nn.Module):
         cls,
         checkpoint_path: str,
         device: Optional[str] = None,
+        use_versioning: bool = False,
         **kwargs,
     ) -> "FluxPipeline":
         """
@@ -83,6 +84,7 @@ class FluxPipeline(nn.Module):
         Args:
             checkpoint_path: Path to .safetensors or .pt checkpoint file
             device: Device to load model on ('cuda', 'cpu', 'mps', or None for auto)
+            use_versioning: Use versioned loading system (default: False for backward compatibility)
             **kwargs: Additional arguments for model initialization
 
         Returns:
@@ -91,7 +93,22 @@ class FluxPipeline(nn.Module):
         Example:
             >>> pipeline = FluxPipeline.from_pretrained("path/to/checkpoint.safetensors")
             >>> image = pipeline(img, text_embeddings, timesteps)
+
+            >>> # Use versioned loading for better compatibility
+            >>> pipeline = FluxPipeline.from_pretrained(
+            ...     "path/to/checkpoint/",
+            ...     use_versioning=True
+            ... )
         """
+        # Use new versioned loading system if requested
+        if use_versioning:
+            from pathlib import Path
+
+            from .versioning import load_versioned_checkpoint
+
+            return load_versioned_checkpoint(Path(checkpoint_path), device, **kwargs)
+
+        # Legacy loading path (default for backward compatibility)
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 

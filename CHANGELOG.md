@@ -7,6 +7,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Model Versioning System**
+  - Explicit model version metadata stored alongside checkpoints
+  - Automatic version detection and routing to appropriate loaders
+  - Backward compatibility with legacy checkpoints (auto-detection)
+  - Forward compatibility detection (clear errors for newer models)
+  - Semantic versioning support (MAJOR.MINOR.PATCH)
+  - Architecture metadata eliminates config inference
+  - Checksum validation for integrity verification
+  - **Files**: `src/fluxflow/models/versioning.py`, `docs/VERSIONING.md`, `docs/MIGRATION.md`
+  - **Migration tool**: `scripts/migrate_checkpoints.py` for upgrading legacy checkpoints
+  - **API Changes**:
+    - `FluxPipeline.from_pretrained()` gains `use_versioning` parameter (opt-in, default: False)
+    - `FluxFlowPipeline.from_pretrained()` gains `use_versioning` parameter (opt-in, default: False)
+    - `save_model()` gains `save_metadata`, `model_version`, and `training_info` parameters
+    - New functions: `load_versioned_checkpoint()`, `save_versioned_checkpoint()`
+  - **Testing**: Comprehensive unit tests in `tests/unit/test_versioning.py`
+
 - **CFG Support in Sample Generation**
   - Added `use_cfg` and `guidance_scale` parameters to `save_sample_images()` function
   - New `_generate_with_cfg()` helper function for CFG-guided sample generation
