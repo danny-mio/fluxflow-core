@@ -1,6 +1,7 @@
 {
   "default": true,
   "MD013": false,
+  "MD029": false,
   "MD033": false,
   "MD040": false,
   "MD041": false,
@@ -10,5 +11,6 @@
   "line-length": false,
   "no-inline-html": false,
   "first-line-heading": false,
-  "fenced-code-language": false
+  "fenced-code-language": false,
+  "ol-prefix": false
 }
