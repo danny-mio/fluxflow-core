@@ -300,7 +300,7 @@ BezierActivation()  # No pre-activation, max flexibility
 - Mark all unvalidated claims as "Training in progress" or "Target"
 - Use "Expected" or "Theoretical" for unproven metrics
 - Update `MODEL_ZOO.md` as empirical results become available
-- Reference `TRAINING_VALIDATION_PLAN.md` for timeline
+- Check repository discussions for latest training status updates
 
 **Language to use**:
 - ✅ "Target FID ≤ 15 (empirical validation pending)"

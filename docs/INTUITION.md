@@ -279,8 +279,6 @@ FluxFlow is currently undergoing systematic validation:
 - 10-run stability test
 - Publish results to MODEL_ZOO.md
 
-**See**: [TRAINING_VALIDATION_PLAN.md](../../TRAINING_VALIDATION_PLAN.md)
-
 ---
 
 ## Part 8: Addressing Skepticism
@@ -311,7 +309,7 @@ FluxFlow is currently undergoing systematic validation:
 
 ## Part 9: How to Follow Progress
 
-**Training Status**: Check [MODEL_ZOO.md](../../MODEL_ZOO.md) for updates
+**Training Status**: Check [MODEL_ZOO.md](../MODEL_ZOO.md) for updates
 
 **When Results Are Ready**:
 - Trained checkpoints (VAE, Flow, Baselines)

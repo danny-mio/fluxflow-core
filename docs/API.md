@@ -402,7 +402,6 @@ except FileNotFoundError:
 - **[VERSIONING.md](VERSIONING.md)** - Versioning system architecture and design
 - **[MIGRATION.md](MIGRATION.md)** - Migration guides between model versions
 - **[fluxflow-training README](https://github.com/danny-mio/fluxflow-training)** - Training pipeline usage
-- **[Examples](https://github.com/danny-mio/fluxflow-core/tree/develop/examples)** - Code examples
 
 ---
 

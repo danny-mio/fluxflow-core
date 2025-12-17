@@ -2,7 +2,7 @@
 
 ## 🚧 Training In Progress
 
-**Status**: FluxFlow models are currently in systematic validation training following the [TRAINING_VALIDATION_PLAN.md](https://github.com/danny-mio/fluxflow-core/blob/develop/TRAINING_VALIDATION_PLAN.md).
+**Status**: FluxFlow models are currently in systematic validation training.
 
 **Expected Completion**: Late February 2026
 
@@ -210,7 +210,7 @@ All models released will be under the MIT License, consistent with the FluxFlow 
 For questions about models:
 - **Issues**: [GitHub Issues](https://github.com/danny-mio/fluxflow-core/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/danny-mio/fluxflow-core/discussions)
-- **Training Status**: Check [TRAINING_VALIDATION_PLAN.md](https://github.com/danny-mio/fluxflow-core/blob/develop/TRAINING_VALIDATION_PLAN.md) for latest progress
+- **Training Status**: Check repository discussions for latest progress updates
 
 ---
 
