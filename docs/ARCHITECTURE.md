@@ -26,15 +26,15 @@ B(t) = (1-t)³·p₀ + 3(1-t)²·t·p₁ + 3(1-t)·t²·p₂ + t³·p₃
 
 ### Strategic Activation Placement
 
-| Component | Activation | Rationale |
-|-----------|-----------|-----------|
-| VAE Encoder/Decoder | BezierActivation | Complex image↔latent mapping |
-| VAE Latent Bottleneck | TrainableBezier | Per-channel mu/logvar learning (1024 params) |
-| VAE RGB Output | TrainableBezier | Per-channel color correction (12 params) |
-| Flow Transformer | BezierActivation | Core generative model |
-| Text Encoder | BezierActivation | Semantic embedding space |
-| Discriminator | LeakyReLU | Memory efficiency (2× calls/batch) |
-| SPADE | ReLU | Simple affine transformation |
+| Component | Activation | Bezier Approach | Parameters | Rationale |
+|-----------|-----------|----------------|------------|-----------|
+| VAE Encoder/Decoder | BezierActivation | Input-Based | 0 activation (5× in Conv) | Complex image↔latent mapping, spatial dims |
+| VAE Latent Bottleneck | TrainableBezier | Trainable | 4×D (1024 for D=256) | Per-channel mu/logvar learning |
+| VAE RGB Output | TrainableBezier | Trainable | 12 (4×3 channels) | Per-channel color correction |
+| Flow Transformer | BezierActivation | Pillar-Based | 4×depth×D² (~198K/block) | Context-dependent per-token activations |
+| Text Encoder | BezierActivation | Input-Based | 0 activation (5× in Linear) | Semantic embedding space |
+| Discriminator | LeakyReLU | N/A | 0 | Memory efficiency (2× calls/batch) |
+| SPADE | ReLU | N/A | 0 | Simple affine transformation |
 
 ## Overview
 
@@ -395,54 +395,123 @@ Note: Parameter scaling is approximately O(D²) for attention and linear layers.
 
 ### Why Bezier Activations?
 
-Bezier activations are the **core innovation** of FluxFlow, enabling 2-3× smaller models with equivalent quality.
+Bezier activations are the **core innovation** of FluxFlow, providing adaptive cubic polynomial transformations through three distinct approaches.
 
-**Mathematical Advantage**:
+**Mathematical Foundation**:
 ```
 Standard neuron: y = σ(Wx + b)        # σ is fixed (ReLU, GELU, etc.)
-Bezier neuron:   y = B(t; p₀,p₁,p₂,p₃) # B is learned per neuron
+Bezier neuron:   y = B(t; p₀,p₁,p₂,p₃) # B uses cubic polynomial
 ```
 
-**Expressiveness Comparison**:
-- **ReLU**: 0 learnable parameters, piecewise linear
-- **GELU/SiLU**: 0 learnable parameters, fixed smooth curve
-- **Bezier**: 0 parameters (input-derived) or 4×D parameters (TrainableBezier), cubic polynomial
+All three approaches compute: `B(t) = (1-t)³p₀ + 3(1-t)²t·p₁ + 3(1-t)t²·p₂ + t³·p₃`
 
-**Key Advantage**:
-- Standard activations apply the same fixed function to all dimensions
-- Bezier activations derive control points from input, allowing each output to follow a different cubic curve
-- TrainableBezier learns optimal control points per dimension (4×D parameters)
+**What differs:** How (t, p₀, p₁, p₂, p₃) are obtained.
 
-**Primary Bezier Variant**:
+#### 1. Input-Based BezierActivation
 
-**BezierActivation** (5→1 dimension reduction):
-- Input: `[t, p₀, p₁, p₂, p₃]` concatenated along channel dim
-- Output: `B(t) = (1-t)³p₀ + 3(1-t)²t·p₁ + 3(1-t)t²·p₂ + t³·p₃`
-- Use case: Channel expansion/reduction in VAE
-- Memory: Input × 5 (temporary tensors)
+**Control point source:** Split from input channels (5→1 reduction)
 
-Note: SlidingBezierActivation (dimension-preserving variant) is deprecated and not used in current architecture.
+```python
+# Input: [B, 5C, H, W] → split into [t, p₀, p₁, p₂, p₃]
+# Output: [B, C, H, W] after Bezier computation
+BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu")
+```
 
-**Pre-activation Parameters**:
-- `t_pre_activation`: Transform input t (sigmoid→[0,1], silu, tanh→[-1,1], None)
-- `p_preactivation`: Transform control points (sigmoid, silu, tanh, None)
+**Parameter cost:**
+- Activation: 0 learnable parameters
+- Previous layer: Must output 5× channels (e.g., Conv2d(C, 5C))
+- Net effect: 5× parameters in previous layer
 
-**Current Configuration**:
-- **VAE encoding**: `BezierActivation(t_pre="sigmoid", p_pre="silu")`
-  - Sigmoid bounds t∈[0,1] for stable interpolation
-  - SiLU provides smooth, non-saturating control points
-- **VAE decoding (final)**: `BezierActivation(t_pre="silu", p_pre="tanh")`
-  - SiLU for t preserves gradient flow
-  - Tanh bounds output to [-1,1] for image pixels
-- **Flow transformer**: `BezierActivation()` with SiLU pre-activation in pillar layers
-  - No pre-activation on main Bezier for maximum flexibility
-  - SiLU in MLP pre-activation provides smooth gating
+**Memory cost:**
+- Peak: 5× intermediate tensors during forward pass
+- Gradient: 5× gradient memory during backward pass
 
-**Why Not Everywhere?**:
-- **Discriminator**: Uses LeakyReLU for memory efficiency
-  - 14 activation layers × 2 calls (real+fake) × 9× memory = 126× overhead
-  - Binary classification doesn't need complex activations
-- **SPADE normalization**: Uses ReLU for simple affine transformations
+**Use case:** VAE encoder/decoder
+- **Why here:** Convolutional layers benefit from 0 activation params
+- **Trade-off:** Accept 5× Conv weights for 0 activation params
+
+**Configuration:**
+- **VAE encoding:** `t_pre="sigmoid", p_pre="silu"` - bounds t∈[0,1], smooth control points
+- **VAE decoding (final):** `t_pre="silu", p_pre="tanh"` - preserve gradients, bound output to [-1,1]
+
+#### 2. TrainableBezier
+
+**Control point source:** Learned parameters (4 per dimension)
+
+```python
+# Input: [B, D] → t via sigmoid(input)
+# Control points: Learned tensors [D] each
+TrainableBezier((D,), channel_only=True, p0=-1.0, p3=1.0)
+```
+
+**Parameter cost:**
+- Activation: 4×D learnable parameters
+- Example: D=256 latent → 1024 params (4×256)
+- Overhead: Minimal vs Linear layers (D² params)
+
+**Memory cost:**
+- Minimal: Dimension-preserving (no channel expansion)
+
+**Use case:** VAE latent bottleneck, RGB output
+- **Why here:** Small D makes 4×D negligible; per-channel learning critical
+- **mu/logvar (D=256):** 1024 params for optimal latent distribution
+- **RGB output (D=3):** 12 params for per-channel color correction
+
+#### 3. Pillar-Based
+
+**Control point source:** Generated by 4 separate depth-3 MLP networks
+
+```python
+# 4 pillar networks (each: d_model → d_model → d_model)
+p0 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
+p1 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
+p2 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
+p3 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
+
+# Forward: sigmoid gate + pillar generation + Bezier
+g = torch.sigmoid(img_seq)
+BezierActivation(torch.cat([img_seq, p0(g), p1(g), p2(g), p3(g)], dim=-1))
+```
+
+**Parameter cost:**
+- Single pillar (depth=3, D=128): 49,536 params (3 × 16,512)
+- 4 pillars: 198,144 params
+- Activation: 0 params
+- **Total:** ~198K params per transformer block
+
+**Memory cost:**
+- Peak: 5× intermediate tensors + pillar activations
+- High but acceptable for transformers
+
+**Use case:** Flow transformer MLP layers
+- **Why here:** Context-dependent control points critical for generative quality
+- **Trade-off:** Accept 6× ReLU params for maximum expressiveness
+- **Rationale:** Amortized cost - replaces need for additional transformer layers
+
+**Sigmoid gating:** `g = sigmoid(img_seq)` bounds pillar inputs to [0,1] for stability
+
+#### Parameter Comparison (D=128, bias=True)
+
+| Approach | Activation Params | Auxiliary Params | Total | Memory Peak |
+|----------|------------------|------------------|-------|-------------|
+| ReLU baseline | 0 | 32,896 (2 layers) | 32,896 | 1× |
+| Input-Based | 0 | 82,560 (Linear 128→640) | 82,560 | 5× |
+| TrainableBezier | 512 (4×128) | 32,896 (Linear) | 33,408 | 1× |
+| Pillar-Based | 0 | 198,144 (4 pillars) | 198,144 | 5× + pillars |
+
+**Key insight:** Each approach trades parameters/memory for expressiveness differently:
+- **Input-Based:** Moderate params, high memory → default choice
+- **TrainableBezier:** Minimal params, minimal memory → small D
+- **Pillar-Based:** High params, high memory → transformers only
+
+#### Why Not Everywhere?
+
+- **Discriminator:** LeakyReLU for memory efficiency
+  - Called 2× per batch (real+fake)
+  - Binary classification doesn't benefit from Bezier complexity
+- **SPADE normalization:** ReLU for simple affine transformations
+  - Spatially-adaptive denormalization is already expressive
+  - Adding Bezier would complicate without clear benefit
 
 ### Why v-Prediction?
 
