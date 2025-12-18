@@ -863,6 +863,72 @@ BezierActivation()  # No pre-activation
 
 ---
 
+## Complete Approach Comparison
+
+| Aspect | Input-Based | Trainable | Pillar-Based |
+|--------|------------|-----------|--------------|
+| **Class** | `BezierActivation` | `TrainableBezier` | `pillarLayer` × 4 + `BezierActivation` |
+| **Code Location** | activations.py:74-134 | activations.py:137-203 | flow.py:23-53, 172-183 |
+| **Activation Parameters** | 0 | 4×D | 0 (BezierActivation) |
+| **Auxiliary Parameters** | 0 (cost in previous layer) | 0 | 4×depth×D² (pillars) |
+| **Total Parameter Cost** | 5× in previous layer | 4×D | 4×depth×D² + 5× input layer |
+| **Channel Expansion** | 5× in previous layer | None (dimension-preserving) | 5× in input preparation |
+| **Control Point Source** | Input channels (split into 5) | Learned (4 vectors per dim) | MLP-generated (4 networks) |
+| **Dimension Flow** | Input 5C → Output C | Input C → Output C | Complex (see pillar section) |
+| **Expressiveness** | Moderate (input-dependent) | Moderate (fixed per channel) | Very High (context-dependent) |
+| **Memory Cost (Forward)** | +5× intermediate tensors | Minimal | +5× intermediate + pillar activations |
+| **Inference Speed** | Baseline (1×) | Baseline (1×) | Slow (~0.6×, deeper MLPs) |
+| **Gradient Flow** | Good (smooth, 5 components) | Good (smooth) | Excellent (deep networks) |
+| **Primary Use Cases** | VAE conv layers, default choice | Bottlenecks, output layers | Transformer MLPs |
+| **Examples in Codebase** | FluxCompressor, FluxExpander | VAE mu/logvar, RGB output | FluxTransformerBlock |
+| **Verified Params (D=128)** | 0 activation (82,560 in prev Linear w/ bias) | 512 | 198,144 |
+
+### Mathematical Formulation (All Approaches)
+
+All three approaches compute the same cubic Bezier formula:
+
+```
+B(t) = (1-t)³·p₀ + 3(1-t)²·t·p₁ + 3(1-t)·t²·p₂ + t³·p₃
+```
+
+**What differs:** How (t, p₀, p₁, p₂, p₃) are obtained:
+
+1. **Input-Based:** All 5 components from input channels
+   - `t = x[:, 0::5, ...]`
+   - `p₀ = x[:, 1::5, ...]`
+   - `p₁ = x[:, 2::5, ...]`
+   - `p₂ = x[:, 3::5, ...]`
+   - `p₃ = x[:, 4::5, ...]`
+
+2. **Trainable:** t from input, p₀-p₃ learned
+   - `t = x` (input serves as t)
+   - `p₀, p₁, p₂, p₃` = learned parameters (shape: [D] or [D, H, W])
+
+3. **Pillar-Based:** t from input, p₀-p₃ from MLPs
+   - `t = img_seq` (original input)
+   - `g = sigmoid(img_seq)` (gated input)
+   - `p₀ = pillar₀(g)`
+   - `p₁ = pillar₁(g)`
+   - `p₂ = pillar₂(g)`
+   - `p₃ = pillar₃(g)`
+
+### Smoothness Properties (All Approaches)
+
+**Corrected claim:** Bezier activations are **C² smooth**, not C∞.
+
+- **C⁰:** Continuous (yes, cubic polynomials are continuous)
+- **C¹:** First derivative continuous (yes)
+- **C²:** Second derivative continuous (yes)
+- **C³:** Third derivative continuous (**no** - discontinuous at control point boundaries)
+
+Comparison:
+- ReLU: C⁰ (discontinuous derivative at x=0)
+- Leaky ReLU: C⁰ (discontinuous derivative at x=0)
+- GELU/SiLU: C∞ (infinitely differentiable)
+- Bezier (cubic): C² (smooth up to second derivative)
+
+---
+
 ## Comparison with Standard Activations
 
 ### Expressiveness
