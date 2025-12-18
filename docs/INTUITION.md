@@ -139,32 +139,191 @@ The curve's shape is determined by learned control points.
 
 ---
 
+## Part 3.5: Three Ways to Do Bezier - An Intuitive Guide
+
+Imagine you're drawing a curve on a canvas. Traditional activations (ReLU, GELU) are like using a ruler - rigid, predetermined shapes. Bezier activations let you bend the curve, but there are three ways to decide HOW to bend it:
+
+### Way 1: Input-Based (BezierActivation)
+**Analogy:** Your input data directly shapes the curve.
+
+Imagine you're a sculptor, and the clay (input data) tells you how to shape it:
+- The clay's color tells you where to start (t)
+- The clay's texture tells you the control points (p₀, p₁, p₂, p₃)
+
+```python
+# The input itself contains all the information
+input = [color, texture_1, texture_2, texture_3, texture_4]  # 5 channels
+output = bend_curve_using_this_data(input)  # 1 channel
+
+# Nothing is "learned" - the curve shape comes entirely from the input
+```
+
+**Real example:** In VAE encoder, each image pixel's 5-channel representation determines its own Bezier curve.
+
+**When to use:** When you want the activation to adapt to the input, without adding learnable parameters.
+
+### Way 2: Trainable (TrainableBezier)
+**Analogy:** The network learns fixed curves for each channel.
+
+Imagine you're a piano tuner, and you adjust each piano key to a specific curve:
+- Key 1 (channel 1) always uses curve shape A (learned p₀, p₁, p₂, p₃)
+- Key 2 (channel 2) always uses curve shape B (different learned control points)
+- Input data only provides "t" (where on the curve to evaluate)
+
+```python
+# Control points are learned parameters (same for all inputs)
+self.p0 = nn.Parameter(torch.randn(128))  # Learned
+self.p1 = nn.Parameter(torch.randn(128))  # Learned
+self.p2 = nn.Parameter(torch.randn(128))  # Learned
+self.p3 = nn.Parameter(torch.randn(128))  # Learned
+
+# Input only provides t
+output = bezier_curve(t=input, p0=self.p0, p1=self.p1, p2=self.p2, p3=self.p3)
+```
+
+**Real example:** VAE's mu/logvar layers learn optimal curves for mapping features to latent space.
+
+**When to use:** When you want per-channel learned transformations with minimal parameters (4×D).
+
+### Way 3: Pillar-Based (FluxTransformerBlock)
+**Analogy:** Deep networks generate custom curves based on context.
+
+Imagine you're a movie director with 4 AI assistants:
+- Each assistant (pillar MLP) watches the scene (input) and suggests a control point
+- The 4 suggestions are combined to create a unique curve for this scene
+- Different scenes get different curves (context-dependent)
+
+```python
+# 4 deep networks generate control points from input
+g = sigmoid(input)  # Prepare input
+p0 = deep_network_0(g)  # MLP with 3 layers
+p1 = deep_network_1(g)  # MLP with 3 layers
+p2 = deep_network_2(g)  # MLP with 3 layers
+p3 = deep_network_3(g)  # MLP with 3 layers
+
+# Each input gets custom control points
+output = bezier_curve(t=input, p0=p0, p1=p1, p2=p2, p3=p3)
+```
+
+**Real example:** Flow transformer uses context to generate unique activation curves for each token.
+
+**When to use:** When you need maximum expressiveness and can afford many parameters (4×depth×D²).
+
+### Quick Comparison
+
+| Approach | Input Determines... | Network Learns... | Parameters | Expressiveness |
+|----------|-------------------|-------------------|------------|----------------|
+| Input-Based | Everything (t, p₀, p₁, p₂, p₃) | Nothing for activation | 0 | Medium |
+| Trainable | Position (t only) | Fixed curves (p₀, p₁, p₂, p₃) | 4×D | Medium |
+| Pillar-Based | Position (t only) | How to generate curves | 4×depth×D² | Very High |
+
+**Think of it as:**
+- **Input-Based:** "Let the data decide"
+- **Trainable:** "Learn once, use everywhere"
+- **Pillar-Based:** "Compute the perfect curve for each situation"
+
+---
+
 ## Part 4: Why This Should Work - The Math (Simplified)
 
-### Parameter Count Analysis
+### Parameter Count Analysis: The Real Story
 
-**Traditional Network**:
+**Common misconception:** "Bezier activations reduce parameters."  
+**Reality:** It depends on which Bezier approach you use.
+
+#### Verified Calculations (2-Layer Network)
+
+Let's compare a simple 2-layer network: 256 inputs → 128 hidden → 128 outputs
+
+**Baseline: ReLU**
+
 ```
-Layer 1: 256 neurons × 256 inputs = 65,536 parameters
-Layer 2: 256 neurons × 256 inputs = 65,536 parameters
-Total: 131,072 parameters
+Layer 1: Linear(256, 128) = 256 × 128 + 128 = 32,896 params
+         ReLU()           = 0 params
+Layer 2: Linear(128, 128) = 128 × 128 + 128 = 16,512 params
+         ReLU()           = 0 params
+
+Total: 49,408 parameters
 ```
 
-**Bezier Network**:
+**Option A: Input-Based BezierActivation**
+
 ```
-Layer 1: 128 neurons × (128 inputs × 5 for Bezier) = 81,920 parameters
-Layer 2: 128 neurons × (128 inputs × 5 for Bezier) = 81,920 parameters
-Total: 163,840 parameters
+Layer 1: Linear(256, 640) = 256 × 640 + 640 = 164,480 params (5× channels)
+         BezierActivation() = 0 params → outputs 128 channels
+Layer 2: Linear(128, 640) = 128 × 640 + 640 = 82,560 params (5× channels)
+         BezierActivation() = 0 params → outputs 128 channels
+
+Total: 247,040 parameters (5.0× MORE than ReLU)
 ```
 
-**Wait, Bezier has MORE parameters?**
+**Why more parameters?**  
+BezierActivation has 0 learnable params, but requires previous layer to output 5× channels. The parameter cost shifts to the Linear layers.
 
-**Not quite**: The "5×" accounts for (input + 4 control points), but control points are shared across spatial dimensions in CNNs. Actual overhead:
+**So why use it?**  
+Hypothesis: A 2-layer Bezier network might be as expressive as a 4-layer ReLU network, resulting in net parameter savings. (Empirical validation needed)
 
-- Bezier: 128 channels × 4 control points per layer = 512 extra params
-- Saved: (256 - 128) neurons × all connections = 65,536 fewer params
+**Option B: TrainableBezier**
 
-**Net**: Bezier uses ~50% fewer total parameters for equivalent expressiveness.
+```
+Layer 1: Linear(256, 128) = 256 × 128 + 128 = 32,896 params
+         TrainableBezier(128) = 4 × 128 = 512 params
+Layer 2: Linear(128, 128) = 128 × 128 + 128 = 16,512 params
+         TrainableBezier(128) = 4 × 128 = 512 params
+
+Total: 50,432 parameters (1.02× more than ReLU, basically same)
+```
+
+**Why nearly the same?**  
+TrainableBezier adds 4×D parameters, which is minimal compared to Linear layer costs (D² parameters).
+
+**Option C: Pillar-Based**
+
+```
+Layer 1: Linear(256, 128) = 256 × 128 + 128 = 32,896 params
+Layer 2: 4 × pillarLayer(128, 128, depth=3)
+         - pillar_0: 3 × (128 × 128 + 128) = 49,536 params
+         - pillar_1: 49,536 params
+         - pillar_2: 49,536 params  
+         - pillar_3: 49,536 params
+         - BezierActivation() = 0 params
+
+Total: 231,040 parameters (4.7× MORE than ReLU)
+```
+
+**Why so many parameters?**  
+Each pillar is a depth-3 MLP (3 Linear layers), and we have 4 pillars. This is intentional - transformers benefit from highly expressive activations.
+
+#### Visual Comparison
+
+```
+Parameter Count:
+ReLU            ████████ 49K
+TrainableBezier █████████ 50K  (basically same)
+Input-Based     ████████████████████████████████████████ 247K  (5× more)
+Pillar-Based    ██████████████████████████████████████ 231K  (4.7× more)
+
+Expressiveness (qualitative):
+ReLU            ██████ (baseline)
+TrainableBezier ████████████ (learned curves)
+Input-Based     ████████████████ (input-adaptive curves)
+Pillar-Based    ████████████████████████ (deep network-generated curves)
+```
+
+#### The Trade-Off
+
+**Bezier activations don't reduce parameters per layer - they increase expressiveness per layer.**
+
+**Analogy:**
+- ReLU network: Need 4 cheap layers to learn complex function
+- Bezier network: Need 2 expensive layers to learn same function
+
+**Net effect:**
+- ReLU (4 layers): 4 × 50K = 200K params
+- Bezier (2 layers): 2 × 250K = 500K params ❌ WORSE
+- **OR** Bezier enables deeper layers: 2 × 100K = 200K params ✅ SAME params, fewer layers
+
+**Bottom line:** Parameter efficiency claim requires empirical validation with baseline model comparison.
 
 ### Why Faster Inference?
 
