@@ -190,12 +190,14 @@ class TestFlowProcessorCreation:
         assert hasattr(flow, "transformer_blocks")
         assert len(flow.transformer_blocks) == 12  # Bezier uses 12 blocks
 
-    def test_create_baseline_flow_processor_not_implemented(self):
-        """Test Baseline Flow processor raises NotImplementedError (Phase 1.2)."""
+    def test_create_baseline_flow_processor(self):
+        """Test Baseline Flow processor creation (Phase 1.2 complete)."""
         factory = ModelFactory(model_type="baseline", baseline_flow_blocks=17)
+        flow = factory.create_flow_processor()
 
-        with pytest.raises(NotImplementedError, match="BaselineFluxFlowProcessor"):
-            factory.create_flow_processor()
+        assert flow is not None
+        assert hasattr(flow, "transformer_blocks")
+        assert len(flow.transformer_blocks) == 17  # Baseline uses 17 blocks
 
 
 class TestBaselineUpsamplerHelper:
@@ -256,14 +258,17 @@ class TestConvenienceFunctions:
         assert hasattr(flow, "transformer_blocks")
         assert len(flow.transformer_blocks) == 12
 
-    def test_create_baseline_models_partial(self):
-        """Test create_baseline_models() returns partial set (Phase 1.1 complete)."""
+    def test_create_baseline_models_complete(self):
+        """Test create_baseline_models() returns complete set (Phase 1.2 complete)."""
         vae_encoder, vae_decoder, flow, text_encoder = create_baseline_models()
 
         assert vae_encoder is not None
-        assert vae_decoder is not None  # Now implemented!
-        assert flow is None  # Not implemented yet (Phase 1.2)
+        assert vae_decoder is not None
+        assert flow is not None  # Now implemented!
         assert text_encoder is not None
+
+        # Verify baseline has 17 flow blocks
+        assert len(flow.transformer_blocks) == 17
 
 
 class TestParameterMatching:

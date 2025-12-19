@@ -20,7 +20,12 @@ from .vae import (
     BaselineResidualUpsampleBlock,
     ResidualUpsampleBlock,
 )
-from .flow import FluxFlowProcessor, FluxTransformerBlock, BaselineFluxTransformerBlock
+from .flow import (
+    FluxFlowProcessor,
+    BaselineFluxFlowProcessor,
+    FluxTransformerBlock,
+    BaselineFluxTransformerBlock,
+)
 from .encoders import BertTextEncoder
 
 
@@ -323,15 +328,18 @@ class ModelFactory:
         """
         Create baseline variant of FluxFlowProcessor.
 
-        This is a modified version that uses BaselineFluxTransformerBlock (17 blocks)
-        instead of FluxTransformerBlock (12 blocks).
-
-        TODO: For now, placeholder. Will be properly implemented in Phase 1.2.
+        Uses BaselineFluxFlowProcessor with BaselineFluxTransformerBlock.
         """
-        raise NotImplementedError(
-            "Baseline Flow processor requires BaselineFluxFlowProcessor class. "
-            "This will be implemented in Phase 1.2. "
-            "For now, use FluxFlowProcessor with n_layers=17 (will use Bezier blocks)."
+        return BaselineFluxFlowProcessor(
+            d_model=d_model,
+            vae_dim=vae_dim,
+            embedding_size=embedding_size,
+            n_head=n_head,
+            n_layers=n_layers,
+            max_hw=max_hw,
+            ctx_tokens=ctx_tokens,
+            baseline_activation=self.baseline_activation,
+            ffn_expansion=self.baseline_flow_ffn_expansion,
         )
 
     def create_text_encoder(
@@ -468,9 +476,8 @@ def create_baseline_models(
     )
 
     vae_encoder = factory.create_vae_encoder()
-    vae_decoder = factory.create_vae_decoder()  # Now implemented!
-    # flow = factory.create_flow_processor()  # NotImplementedError - Phase 1.2
+    vae_decoder = factory.create_vae_decoder()
+    flow = factory.create_flow_processor()  # Now implemented!
     text_encoder = factory.create_text_encoder(embed_dim=flow_embedding_size)
 
-    # For now, return flow=None
-    return vae_encoder, vae_decoder, None, text_encoder
+    return vae_encoder, vae_decoder, flow, text_encoder
