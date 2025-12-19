@@ -746,6 +746,7 @@ class BaselineFluxExpander(nn.Module):
     ):
         """Create progressive upscaler using baseline blocks."""
         from functools import partial
+
         from torch.utils.checkpoint import checkpoint
 
         class BaselineProgressiveUpscaler(nn.Module):

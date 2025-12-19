@@ -8,26 +8,18 @@ This module provides a unified interface for building either:
 The factory ensures proper component compatibility and parameter matching.
 """
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import torch.nn as nn
 
+from .encoders import BertTextEncoder
+from .flow import BaselineFluxFlowProcessor, FluxFlowProcessor
 from .vae import (
+    BaselineFluxExpander,
+    BaselineResidualUpsampleBlock,
     FluxCompressor,
     FluxExpander,
-    BaselineFluxExpander,
-    ProgressiveUpscaler,
-    BaselineResidualUpsampleBlock,
-    ResidualUpsampleBlock,
 )
-from .flow import (
-    FluxFlowProcessor,
-    BaselineFluxFlowProcessor,
-    FluxTransformerBlock,
-    BaselineFluxTransformerBlock,
-)
-from .encoders import BertTextEncoder
-
 
 ModelType = Literal["bezier", "baseline"]
 ActivationType = Literal["silu", "gelu", "relu"]
@@ -226,6 +218,7 @@ class ModelFactory:
         """
         # Create progressive upscaler with baseline blocks
         from functools import partial
+
         from torch.utils.checkpoint import checkpoint
 
         class BaselineProgressiveUpscaler(nn.Module):
@@ -372,14 +365,14 @@ class ModelFactory:
 
         return encoder
 
-    def get_config(self) -> dict:
+    def get_config(self) -> dict[str, Any]:
         """
         Get current factory configuration.
 
         Returns:
             Configuration dictionary
         """
-        config = {
+        config: dict[str, Any] = {
             "model_type": self.model_type,
             "vae_dim": self.vae_dim,
             "feature_maps_dim": self.feature_maps_dim,
@@ -407,7 +400,7 @@ class ModelFactory:
         return config
 
     @staticmethod
-    def from_config(config: dict) -> "ModelFactory":
+    def from_config(config: dict[str, Any]) -> "ModelFactory":
         """
         Create factory from configuration dictionary.
 
@@ -481,3 +474,38 @@ def create_baseline_models(
     text_encoder = factory.create_text_encoder(embed_dim=flow_embedding_size)
 
     return vae_encoder, vae_decoder, flow, text_encoder
+
+
+def create_models_from_config(model_config) -> tuple:
+    """
+    Create models from a ModelConfig object (from fluxflow.config).
+
+    Args:
+        model_config: ModelConfig instance from fluxflow.config
+
+    Returns:
+        (vae_encoder, vae_decoder, flow_processor, text_encoder)
+
+    Example:
+        >>> from fluxflow.config import load_config
+        >>> config = load_config("config.yaml")
+        >>> models = create_models_from_config(config.model)
+    """
+    if model_config.model_type == "bezier":
+        return create_bezier_models(
+            vae_dim=model_config.vae_dim,
+            flow_d_model=model_config.feature_maps_dim,
+            flow_embedding_size=model_config.text_embedding_dim,
+        )
+    elif model_config.model_type == "baseline":
+        return create_baseline_models(
+            vae_dim=model_config.vae_dim,
+            flow_d_model=model_config.feature_maps_dim,
+            flow_embedding_size=model_config.text_embedding_dim,
+            activation=model_config.baseline_activation,
+            vae_width_mult=model_config.baseline_vae_width_mult,
+            vae_depth_mult=model_config.baseline_vae_depth_mult,
+            flow_blocks=model_config.baseline_flow_blocks,
+        )
+    else:
+        raise ValueError(f"Unknown model_type: {model_config.model_type}")

@@ -63,9 +63,7 @@ class TestTextEncoderCompatibility:
             output1 = text_encoder(sample_tokens)
             output2 = text_encoder(sample_tokens)
 
-        torch.testing.assert_close(
-            output1, output2, msg="Frozen encoder should be deterministic"
-        )
+        torch.testing.assert_close(output1, output2, msg="Frozen encoder should be deterministic")
 
     def test_encoder_no_gradient_flow(self, text_encoder, sample_tokens):
         """Verify gradients don't flow through frozen encoder."""
@@ -76,9 +74,7 @@ class TestTextEncoderCompatibility:
 
         # Verify no parameters require grad
         for name, param in text_encoder.named_parameters():
-            assert (
-                not param.requires_grad
-            ), f"Frozen encoder param {name} should not require grad"
+            assert not param.requires_grad, f"Frozen encoder param {name} should not require grad"
 
     def test_encoder_architecture_has_bezier_activations(self, text_encoder):
         """
@@ -174,9 +170,7 @@ class TestTextEncoderSharedCheckpoint:
 
         # Verify no non-tensor objects (safetensors requirement)
         for name, value in state_dict.items():
-            assert isinstance(
-                value, torch.Tensor
-            ), f"State dict entry {name} is not a tensor"
+            assert isinstance(value, torch.Tensor), f"State dict entry {name} is not a tensor"
 
 
 class TestCrossModelCompatibility:
