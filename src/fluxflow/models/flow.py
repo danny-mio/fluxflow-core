@@ -535,8 +535,8 @@ class BaselineFluxTransformerBlock(nn.Module):
             sin_txt, cos_txt: Rotary embeddings for text tokens
 
         Returns:
-            Updated img_seq [B, T_img, D]
-            (No control points - those are Bezier-specific)
+            tuple: (updated img_seq [B, T_img, D], updated text_seq [B, T_txt, D], None)
+            Third element is None (no control points - those are Bezier-specific)
         """
         # Self-attention on image tokens
         normed_img_seq = self.norm1(img_seq)
@@ -558,4 +558,5 @@ class BaselineFluxTransformerBlock(nn.Module):
         # Standard FFN (no pillars, no Bezier)
         img_seq = img_seq + self.ffn(self.norm3(img_seq))
 
-        return img_seq  # No control points returned
+        # Return img_seq, text_seq (unchanged), None (no control points)
+        return img_seq, text_seq, None
