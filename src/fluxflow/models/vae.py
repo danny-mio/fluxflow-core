@@ -661,3 +661,201 @@ class BaselineResidualUpsampleBlock(nn.Module):
         # Residual connection with upsampling
         identity_up = self.skip_upsample(identity)
         return x + 0.1 * identity_up
+
+
+# ============================================================================
+# BASELINE EXPANDER (experimental/baseline-no-bezier branch)
+# Baseline variant of FluxExpander using standard activations
+# ============================================================================
+
+
+class BaselineFluxExpander(nn.Module):
+    """
+    Baseline decoder that expands latent tokens to images via progressive upsampling.
+
+    This is the baseline variant of FluxExpander that uses BaselineResidualUpsampleBlock
+    instead of ResidualUpsampleBlock (Bezier). Uses standard activations (SiLU/GELU/ReLU).
+
+    Args:
+        d_model: Latent dimension (default: 128)
+        upscales: Number of 2x upsampling stages (default: 4)
+        max_hw: Maximum spatial dimension for denormalization (default: 1024)
+        ctx_tokens: Number of tokens to use for context (default: 4)
+        baseline_activation: Activation function ("silu", "gelu", "relu")
+        width_multiplier: VAE width multiplier (4.5 matches Bezier's 5.0)
+        depth_multiplier: VAE depth multiplier (1.0 = single layer)
+        use_gradient_checkpointing: Enable gradient checkpointing
+    """
+
+    def __init__(
+        self,
+        d_model=128,
+        upscales=4,
+        max_hw=1024,
+        ctx_tokens=4,
+        baseline_activation="silu",
+        width_multiplier=4.5,
+        depth_multiplier=1.0,
+        use_gradient_checkpointing=True,
+    ):
+        super().__init__()
+        self.max_hw = max_hw
+        self.ctx_tokens = ctx_tokens
+
+        # Create baseline upscaler using BaselineResidualUpsampleBlock
+        self.upscale = self._create_baseline_upscaler(
+            channels=d_model,
+            steps=upscales,
+            context_size=d_model,
+            baseline_activation=baseline_activation,
+            width_multiplier=width_multiplier,
+            depth_multiplier=depth_multiplier,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+        )
+
+        # Pool context from image tokens (same as Bezier)
+        self.context_mixer = ContextAttentionMixer(
+            d_model, n_head=max(4, d_model // 64), use_cls=True
+        )
+
+        # Final RGB conversion - same as Bezier but with standard activations
+        # Wide channels (96 -> 48) preserve color information
+        self.to_rgb_conv = nn.Sequential(
+            nn.Conv2d(d_model, 96, kernel_size=3, padding=1),
+            nn.GroupNorm(8, 96),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(96, 48, kernel_size=3, padding=1),
+            nn.GroupNorm(8, 48),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(48, 3, kernel_size=1, padding=0),
+        )
+
+        # Use standard Tanh for RGB output (instead of TrainableBezier)
+        # Maps to [-1, 1] range like Bezier but without learnable curves
+        self.rgb_activation = nn.Tanh()
+
+    def _create_baseline_upscaler(
+        self,
+        channels,
+        steps,
+        context_size,
+        baseline_activation,
+        width_multiplier,
+        depth_multiplier,
+        use_gradient_checkpointing,
+    ):
+        """Create progressive upscaler using baseline blocks."""
+        from functools import partial
+        from torch.utils.checkpoint import checkpoint
+
+        class BaselineProgressiveUpscaler(nn.Module):
+            """Progressive upscaler using BaselineResidualUpsampleBlock."""
+
+            def __init__(
+                self,
+                channels,
+                steps,
+                context_size,
+                baseline_activation,
+                width_multiplier,
+                depth_multiplier,
+                use_gradient_checkpointing,
+            ):
+                super().__init__()
+                self.use_gradient_checkpointing = use_gradient_checkpointing
+                self.layers = nn.ModuleList(
+                    [
+                        BaselineResidualUpsampleBlock(
+                            channels=channels,
+                            context_size=context_size,
+                            use_spade=True,
+                            baseline_activation=baseline_activation,
+                            width_multiplier=width_multiplier,
+                            depth_multiplier=depth_multiplier,
+                        )
+                        for _ in range(steps)
+                    ]
+                )
+
+            def forward(self, x, context=None):
+                def upscale_all(x, context):
+                    for layer in self.layers:
+                        x = layer(x, context)
+                    return x
+
+                if self.use_gradient_checkpointing:
+                    return checkpoint(partial(upscale_all), x, context, use_reentrant=False)
+                else:
+                    return upscale_all(x, context)
+
+        return BaselineProgressiveUpscaler(
+            channels=channels,
+            steps=steps,
+            context_size=context_size,
+            baseline_activation=baseline_activation,
+            width_multiplier=width_multiplier,
+            depth_multiplier=depth_multiplier,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+        )
+
+    def unpack(self, packed):
+        """Extract image tokens and spatial dimensions from packed representation."""
+        img_seq = packed[:, :-1, :].contiguous()  # [B, T, D]
+        H = (packed[:, -1, 0] * self.max_hw).round().clamp(min=1).long()
+        W = (packed[:, -1, 1] * self.max_hw).round().clamp(min=1).long()
+        return img_seq, H, W
+
+    def forward(self, packed, use_context=True):
+        """
+        Args:
+            packed: Latent representation [B, T+1, D]
+            use_context: Enable context conditioning (default: True)
+
+        Returns:
+            Generated images [B, 3, H, W]
+        """
+        img_seq, H, W = self.unpack(packed)
+        B, L, D = img_seq.shape
+
+        # Check if all samples have same H, W for batch optimization
+        if B > 1 and (H == H[0]).all() and (W == W[0]).all():
+            # Fast path: all samples have same dimensions, can batch process
+            h, w = H[0].item(), W[0].item()
+            t_valid = h * w
+            assert t_valid <= L, f"Mismatch: tokens {L} < h*w {t_valid}"
+
+            # Batch process all samples
+            feat = rearrange(img_seq[:, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
+
+            # Use feat itself as spatial context for SPADE (spatially-adaptive)
+            # This provides rich spatial information instead of a pooled vector
+            if use_context:
+                ctx = feat  # [B, D, h, w] - spatial context
+            else:
+                ctx = None  # Disable SPADE conditioning entirely
+
+            upscaled = self.upscale(feat, ctx)
+            rgb = self.to_rgb_conv(upscaled)
+            return self.rgb_activation(rgb)
+
+        else:
+            # Slow path: variable dimensions, must process individually
+            outputs = []
+            for i in range(B):
+                h, w = H[i].item(), W[i].item()
+                t_valid = h * w
+                assert t_valid <= L, f"Mismatch: tokens {L} < h*w {t_valid}"
+
+                # Single sample processing
+                feat = rearrange(img_seq[i : i + 1, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
+
+                if use_context:
+                    ctx = feat
+                else:
+                    ctx = None
+
+                upscaled = self.upscale(feat, ctx)
+                rgb = self.to_rgb_conv(upscaled)
+                outputs.append(self.rgb_activation(rgb))
+
+            return torch.cat(outputs, dim=0)

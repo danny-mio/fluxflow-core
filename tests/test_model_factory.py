@@ -7,6 +7,7 @@ Bezier and Baseline variants.
 
 import pytest
 import torch
+import torch.nn as nn
 
 from fluxflow.models.factory import (
     ModelFactory,
@@ -147,12 +148,13 @@ class TestVAEDecoderCreation:
 
         assert decoder is not None
 
-    def test_create_baseline_vae_decoder_not_implemented(self):
-        """Test Baseline VAE decoder raises NotImplementedError (Phase 1.1)."""
+    def test_create_baseline_vae_decoder(self):
+        """Test Baseline VAE decoder creation (Phase 1.1 complete)."""
         factory = ModelFactory(model_type="baseline", vae_dim=128)
+        decoder = factory.create_vae_decoder()
 
-        with pytest.raises(NotImplementedError, match="BaselineFluxExpander"):
-            factory.create_vae_decoder()
+        assert decoder is not None
+        assert isinstance(decoder, nn.Module)
 
     def test_bezier_decoder_forward(self):
         """Test Bezier VAE decoder forward pass."""
@@ -255,12 +257,12 @@ class TestConvenienceFunctions:
         assert len(flow.transformer_blocks) == 12
 
     def test_create_baseline_models_partial(self):
-        """Test create_baseline_models() returns partial set (Phase 1.0)."""
+        """Test create_baseline_models() returns partial set (Phase 1.1 complete)."""
         vae_encoder, vae_decoder, flow, text_encoder = create_baseline_models()
 
         assert vae_encoder is not None
-        assert vae_decoder is None  # Not implemented yet
-        assert flow is None  # Not implemented yet
+        assert vae_decoder is not None  # Now implemented!
+        assert flow is None  # Not implemented yet (Phase 1.2)
         assert text_encoder is not None
 
 

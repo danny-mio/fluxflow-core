@@ -15,6 +15,7 @@ import torch.nn as nn
 from .vae import (
     FluxCompressor,
     FluxExpander,
+    BaselineFluxExpander,
     ProgressiveUpscaler,
     BaselineResidualUpsampleBlock,
     ResidualUpsampleBlock,
@@ -184,19 +185,17 @@ class ModelFactory:
         """
         Create baseline variant of FluxExpander.
 
-        This is a modified version that uses BaselineResidualUpsampleBlock
-        instead of ResidualUpsampleBlock.
-
-        TODO: For now, return a modified version. In Phase 1.1, we'll create
-        a proper BaselineFluxExpander class.
+        Uses BaselineFluxExpander with BaselineResidualUpsampleBlock.
         """
-        # For Phase 1.0, we'll use the existing FluxExpander but note that
-        # it needs to be modified to use baseline blocks.
-        # This is a placeholder - will be properly implemented in task 1.1
-        raise NotImplementedError(
-            "Baseline VAE decoder requires BaselineFluxExpander class. "
-            "This will be implemented in Phase 1.1. "
-            "For now, use create_baseline_upsampler() to get baseline upsampling blocks."
+        return BaselineFluxExpander(
+            d_model=d_model,
+            upscales=upscales,
+            max_hw=max_hw,
+            ctx_tokens=ctx_tokens,
+            baseline_activation=self.baseline_activation,
+            width_multiplier=self.baseline_vae_width_mult,
+            depth_multiplier=self.baseline_vae_depth_mult,
+            use_gradient_checkpointing=use_gradient_checkpointing,
         )
 
     def create_baseline_upsampler(
@@ -451,9 +450,8 @@ def create_baseline_models(
     """
     Convenience function to create full Baseline model set.
 
-    NOTE: This currently raises NotImplementedError for decoder and flow.
-    Use the factory methods create_vae_encoder() and create_text_encoder()
-    which are fully functional.
+    NOTE: Flow processor still raises NotImplementedError (Phase 1.2).
+    VAE encoder and decoder are fully functional.
 
     Returns:
         (vae_encoder, vae_decoder, flow_processor, text_encoder)
@@ -470,9 +468,9 @@ def create_baseline_models(
     )
 
     vae_encoder = factory.create_vae_encoder()
-    # vae_decoder = factory.create_vae_decoder()  # NotImplementedError - Phase 1.1
+    vae_decoder = factory.create_vae_decoder()  # Now implemented!
     # flow = factory.create_flow_processor()  # NotImplementedError - Phase 1.2
     text_encoder = factory.create_text_encoder(embed_dim=flow_embedding_size)
 
-    # For now, return encoder and text_encoder only
-    return vae_encoder, None, None, text_encoder
+    # For now, return flow=None
+    return vae_encoder, vae_decoder, None, text_encoder
