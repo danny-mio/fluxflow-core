@@ -626,11 +626,11 @@ Parameter ratio: 6.02× more than ReLU baseline
 
 ### Decision Matrix
 
-| Approach | Best For | Avoid When | Parameter Cost | Memory Cost | Typical Speedup |
-|----------|----------|-----------|----------------|-------------|-----------------|
-| **Input-Based** | Conv layers, VAE encoder/decoder | Memory-constrained, small D | 0 activation + 5× prev layer | 5× peak during activation | 1× (baseline) |
-| **TrainableBezier** | Bottlenecks (mu/logvar), output layers (RGB) | Variable spatial dims | 4×D activation params | Minimal (dimension-preserving) | 1× |
-| **Pillar-Based** | Transformer MLPs, context-dependent activations | Parameter budget tight, simple nets | 4×depth×D² | 5× peak + pillar weights | 0.6× (slower) |
+| Approach | Best For | Avoid When | Parameter Cost | Activation Memory Peak | Typical Speedup |
+|----------|----------|-----------|----------------|------------------------|-----------------|
+| **Input-Based** | Conv layers, VAE encoder/decoder | Memory-constrained, small D | 0 activation + 5× prev layer | 5× (B×T×D) | 1× (baseline) |
+| **TrainableBezier** | Bottlenecks (mu/logvar), output layers (RGB) | Variable spatial dims | 4×D activation params | 1× (B×T×D) | 1× |
+| **Pillar-Based** | Transformer MLPs, context-dependent activations | Parameter budget tight, simple nets | 4×depth×D² (pillars) | 10× (B×T×D) | 0.6× (slower) |
 
 ### Decision Tree
 
@@ -876,7 +876,7 @@ BezierActivation()  # No pre-activation
 | **Control Point Source** | Input channels (split into 5) | Learned (4 vectors per dim) | MLP-generated (4 networks) |
 | **Dimension Flow** | Input 5C → Output C | Input C → Output C | Complex (see pillar section) |
 | **Expressiveness** | Moderate (input-dependent) | Moderate (fixed per channel) | Very High (context-dependent) |
-| **Memory Cost (Forward)** | +5× intermediate tensors | Minimal | +5× intermediate + pillar activations |
+| **Memory Cost (Forward)** | 5× (B×T×D) intermediate | Minimal (~1×) | 10× (B×T×D) peak |
 | **Inference Speed** | Baseline (1×) | Baseline (1×) | Slow (~0.6×, deeper MLPs) |
 | **Gradient Flow** | Good (smooth, 5 components) | Good (smooth) | Excellent (deep networks) |
 | **Primary Use Cases** | VAE conv layers, default choice | Bottlenecks, output layers | Transformer MLPs |
