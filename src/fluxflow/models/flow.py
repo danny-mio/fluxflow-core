@@ -446,3 +446,116 @@ class FluxFlowProcessor(nn.Module):
                 outputs.append(packed_i)
 
             return torch.cat(outputs, dim=0)
+
+
+# ============================================================================
+# BASELINE MODELS (experimental/baseline-no-bezier branch)
+# These models replace Pillar-Based BezierActivation with standard FFN
+# Strategy: Use MORE transformer blocks with STANDARD FFN (4× expansion)
+# ============================================================================
+
+
+class BaselineFluxTransformerBlock(nn.Module):
+    """
+    Baseline transformer block without pillar-based Bezier.
+
+    Replaces Bezier's pillar architecture with standard 2-layer FFN:
+    - Bezier: 4 pillars @ depth=3 (12 MLP layers) + FFN = 281,656 params/block
+    - Baseline: 2-layer FFN @ 4× expansion = 198,712 params/block
+    - Compensation: Use MORE blocks (17 vs 12) to match total parameters
+
+    This respects: "pillar architecture is not possible without bezier and
+    the closest standard solution is to be picked (remembering point 1)"
+
+    Args:
+        d_model: Model dimension
+        n_head: Number of attention heads
+        baseline_activation: Activation function ("silu" or "gelu")
+        ffn_expansion: FFN hidden dim expansion factor (default: 4.0)
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        n_head: int,
+        baseline_activation: str = "silu",
+        ffn_expansion: float = 4.0,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.n_head = n_head
+
+        # Layer normalization
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+
+        # Attention layers (same as FluxTransformerBlock)
+        self.self_attn = ParallelAttention(d_model, n_head)
+        self.cross_attn = ParallelAttention(d_model, n_head)
+
+        # Standard FFN (replaces 4 pillars + FFN)
+        # 2-layer FFN @ 4× expansion (standard transformer)
+        hidden_dim = int(d_model * ffn_expansion)
+
+        activation: nn.Module
+        if baseline_activation == "silu":
+            activation = nn.SiLU()
+        elif baseline_activation == "gelu":
+            activation = nn.GELU()
+        else:
+            raise ValueError(f"Unknown activation: {baseline_activation}")
+
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, hidden_dim),
+            activation,
+            nn.Linear(hidden_dim, d_model),
+        )
+
+        # Rotary positional encoding (same as Bezier)
+        self.rotary_pe = RotaryPositionalEmbedding(d_model // n_head)
+
+        # Initialize weights (Xavier like Bezier)
+        self.apply(xavier_init)
+
+    def forward(
+        self,
+        img_seq,
+        text_seq,
+        sin_img,
+        cos_img,
+        sin_txt,
+        cos_txt,
+    ):
+        """
+        Args:
+            img_seq: Image token sequence [B, T_img, D]
+            text_seq: Text token sequence [B, T_txt, D]
+            sin_img, cos_img: Rotary embeddings for image tokens
+            sin_txt, cos_txt: Rotary embeddings for text tokens
+
+        Returns:
+            Updated img_seq [B, T_img, D]
+            (No control points - those are Bezier-specific)
+        """
+        # Self-attention on image tokens
+        normed_img_seq = self.norm1(img_seq)
+        img_seq = img_seq + self.self_attn(
+            normed_img_seq,
+            normed_img_seq,
+            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
+            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
+        )
+
+        # Cross-attention with text tokens
+        img_seq = img_seq + self.cross_attn(
+            self.norm2(img_seq),
+            self.norm2(text_seq),
+            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
+            lambda x: self.rotary_pe.apply_rotary(x, sin_txt, cos_txt),
+        )
+
+        # Standard FFN (no pillars, no Bezier)
+        img_seq = img_seq + self.ffn(self.norm3(img_seq))
+
+        return img_seq  # No control points returned

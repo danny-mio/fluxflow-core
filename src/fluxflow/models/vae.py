@@ -548,3 +548,116 @@ class FluxExpander(nn.Module):
                 outputs.append(out)
 
             return torch.cat(outputs, dim=0)
+
+
+# ============================================================================
+# BASELINE MODELS (experimental/baseline-no-bezier branch)
+# These models replace BezierActivation with standard activations (SiLU/GELU)
+# Strategy: Use MORE layers at LOWER width to match Bezier's parameter count
+# ============================================================================
+
+
+class BaselineResidualUpsampleBlock(nn.Module):
+    """
+    Baseline version of ResidualUpsampleBlock using standard activations.
+
+    Replaces Bezier's 5× channel expansion + BezierActivation with:
+    - Modest width expansion (2-3×)
+    - MORE convolutional layers (depth multiplication)
+
+    This respects the parameter-layer tradeoff:
+    "moving from bezier to other activations we decrease the parameters but increase the layers"
+
+    Args:
+        channels: Base number of channels
+        context_size: Context dimensionality for SPADE
+        use_spade: Enable SPADE conditioning (default: True)
+        baseline_activation: Which activation to use ("silu", "gelu", "relu")
+        depth_multiplier: How many conv layers to stack (e.g., 20-50)
+        width_multiplier: Channel expansion factor (e.g., 2-3, NOT Bezier's 5)
+    """
+
+    def __init__(
+        self,
+        channels: int,
+        context_size: int = 1024,
+        use_spade: bool = True,
+        baseline_activation: str = "silu",
+        depth_multiplier: float = 30.0,
+        width_multiplier: float = 2.5,
+    ):
+        super().__init__()
+        self.use_spade = use_spade
+        self.channels = channels
+
+        if self.use_spade:
+            self.spade = SPADE(context_size, channels)
+
+        # Select activation function
+        activation: nn.Module
+        if baseline_activation == "silu":
+            activation = nn.SiLU()
+        elif baseline_activation == "gelu":
+            activation = nn.GELU()
+        elif baseline_activation == "relu":
+            activation = nn.ReLU()
+        else:
+            raise ValueError(f"Unknown activation: {baseline_activation}")
+
+        # Build network: modest width, high depth
+        intermediate_channels = int(channels * width_multiplier)
+
+        layers: list[nn.Module] = []
+
+        # Upsample layer (matches Bezier's ConvTranspose2d)
+        layers.append(
+            nn.ConvTranspose2d(
+                channels,
+                intermediate_channels,
+                kernel_size=16,
+                stride=2,
+                padding=7,
+            )
+        )
+        layers.append(activation)
+
+        # Stack many Conv2d layers at modest width (depth compensation)
+        num_depth_layers = int(depth_multiplier)
+        for i in range(num_depth_layers):
+            layers.append(
+                nn.Conv2d(
+                    intermediate_channels,
+                    intermediate_channels,
+                    kernel_size=3,
+                    padding=1,
+                )
+            )
+            layers.append(activation)
+
+        # Final projection back to base channels
+        layers.append(nn.Conv2d(intermediate_channels, channels, kernel_size=3, padding=1))
+
+        self.conv_sequence = nn.Sequential(*layers)
+
+        # Residual path (same as Bezier)
+        self.skip_upsample = nn.Upsample(scale_factor=2, mode="nearest")
+
+    def forward(self, x, context=None):
+        """
+        Args:
+            x: Input features [B, channels, H, W]
+            context: Spatial context for SPADE [B, context_size, H', W']
+
+        Returns:
+            Upsampled features [B, channels, 2*H, 2*W]
+        """
+        identity = x
+
+        if self.use_spade and context is not None:
+            x = self.spade(x, context)
+
+        x = self.conv_sequence(x)
+
+        # Residual connection with upsampling
+        identity_up = self.skip_upsample(identity)
+        return x + 0.1 * identity_up
