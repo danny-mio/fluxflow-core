@@ -235,7 +235,7 @@ output = bezier_curve(t=input, p0=p0, p1=p1, p2=p2, p3=p3)
 
 Let's compare a simple 2-layer network: 256 inputs → 128 hidden → 128 outputs
 
-**Baseline: ReLU**
+### Baseline: ReLU
 
 ```
 Layer 1: Linear(256, 128) = 256 × 128 + 128 = 32,896 params
@@ -246,7 +246,7 @@ Layer 2: Linear(128, 128) = 128 × 128 + 128 = 16,512 params
 Total: 49,408 parameters
 ```
 
-**Option A: Input-Based BezierActivation**
+### Option A: Input-Based BezierActivation
 
 ```
 Layer 1: Linear(256, 640) = 256 × 640 + 640 = 164,480 params (5× channels)
@@ -263,7 +263,7 @@ BezierActivation has 0 learnable params, but requires previous layer to output 5
 **So why use it?**  
 Hypothesis: A 2-layer Bezier network might be as expressive as a 4-layer ReLU network, resulting in net parameter savings. (Empirical validation needed)
 
-**Option B: TrainableBezier**
+### Option B: TrainableBezier
 
 ```
 Layer 1: Linear(256, 128) = 256 × 128 + 128 = 32,896 params
@@ -277,7 +277,7 @@ Total: 50,432 parameters (1.02× more than ReLU, basically same)
 **Why nearly the same?**  
 TrainableBezier adds 4×D parameters, which is minimal compared to Linear layer costs (D² parameters).
 
-**Option C: Pillar-Based**
+### Option C: Pillar-Based
 
 ```
 Layer 1: Linear(256, 128) = 256 × 128 + 128 = 32,896 params

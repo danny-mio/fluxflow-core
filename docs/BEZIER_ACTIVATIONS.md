@@ -667,7 +667,7 @@ START: Need Bezier activation?
 
 ### Parameter Efficiency Trade-offs
 
-**Scenario: 2-layer network, 256 → 128 → 128 output**
+### Scenario: 2-layer network, 256 → 128 → 128 output
 
 ```
 ReLU Baseline (bias=True):

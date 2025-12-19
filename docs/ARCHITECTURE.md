@@ -497,7 +497,7 @@ BezierActivation(torch.cat([img_seq, p0(g), p1(g), p2(g), p3(g)], dim=-1))
   (verified in scripts/measure_pillar_memory.py)
 - High but acceptable for transformers
 
-**Use case:** Flow transformer MLP layers
+### Use case: Flow transformer MLP layers
 - **Why here:** Context-dependent control points critical for generative quality
 - **Trade-off:** Accept 6× ReLU params for maximum expressiveness
 - **Rationale:** Amortized cost - replaces need for additional transformer layers
