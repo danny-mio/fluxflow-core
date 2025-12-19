@@ -26,7 +26,7 @@ Instead, please report security issues via one of these methods:
    - Provide detailed information about the vulnerability
 
 2. **Email**
-   - Send to: danny-mio@libero.it
+   - Use GitHub Security Advisories (preferred method above)
    - Subject: "[SECURITY] FluxFlow Core - [Brief Description]"
    - Include detailed information (see below)
 
@@ -149,7 +149,7 @@ We recognize security researchers who help keep FluxFlow secure:
 
 ## Contact
 
-- **Security issues**: danny-mio@libero.it (use [SECURITY] prefix)
+- **Security issues**: Use GitHub Security Advisories (see "How to Report" above)
 - **General questions**: https://github.com/danny-mio/fluxflow-core/discussions
 - **Bug reports**: https://github.com/danny-mio/fluxflow-core/issues
 
