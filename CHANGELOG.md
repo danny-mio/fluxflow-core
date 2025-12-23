@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-12-23
+
+### Added
+- **Bezier Activation Performance Optimizations**
+  - Expanded JIT compilation from 6 to 25 pre-activation combinations (417% increase)
+  - LRU-cached power computations for 5-15% speedup on repeated forward passes
+  - Comprehensive benchmark suite for performance validation
+  - TorchScript export support for production deployment
+  - 29 new optimization tests, all passing
+  - 100% backward compatibility maintained
+
+- **Baseline Model Architecture**
+  - Added baseline models using standard activations (ReLU, GELU, SiLU) for comparative evaluation
+  - Model factory system for creating Bezier vs Baseline models
+  - Parameter-matched baseline variants for fair comparison
+  - Integration tests for baseline training pipeline
+
+- **Enhanced Documentation**
+  - Complete FluxFlowPipeline API documentation
+  - Comprehensive system requirements (CUDA, CPU, MPS)
+  - Consolidated duplicate content into single source of truth
+  - All code examples verified against source
+  - Version references standardized to 0.5.0
+
+### Fixed
+- Mathematical accuracy in BEZIER_ACTIVATIONS.md (C∞ → C² smoothness)
+- Module exports for optimization functions
+- Cross-platform compatibility (CPU, CUDA, MPS)
+
+### Changed
+- Version numbering from 0.4.0 to 0.5.0
+
 ## [0.4.0] - 2025-12-17
 
 ### Fixed

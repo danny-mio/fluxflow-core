@@ -2,11 +2,14 @@
 
 from .activations import (
     BezierActivation,
+    BezierActivationModule,
     Flip,
     Rot90,
     TrainableBezier,
     xavier_init,
 )
+from .bezier_jit import get_jit_bezier_function
+from .bezier_power_cache import get_cache_stats, get_power_computation_fn, reset_cache_stats
 from .conditioning import (
     DEFAULT_CONFIG_VALUE,
     SPADE,
@@ -46,10 +49,16 @@ from .vae import (
 __all__ = [
     # Activations
     "BezierActivation",
+    "BezierActivationModule",
     "TrainableBezier",
     "Flip",
     "Rot90",
     "xavier_init",
+    # JIT and optimizations
+    "get_jit_bezier_function",
+    "get_power_computation_fn",
+    "get_cache_stats",
+    "reset_cache_stats",
     # Conditioning
     "FiLM",
     "SPADE",

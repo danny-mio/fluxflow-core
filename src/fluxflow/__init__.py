@@ -1,6 +1,6 @@
 """FluxFlow: Text-to-image generation with VAE and flow-based diffusion transformers."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # Import config classes
 from .config import (
