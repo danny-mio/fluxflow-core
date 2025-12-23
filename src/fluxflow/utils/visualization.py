@@ -53,6 +53,7 @@ def safe_vae_sample(
     output_path: str,
     epoch: int,
     device: torch.device,
+    filename_prefix: Optional[str] = None,
 ) -> None:
     """
     Test VAE reconstruction and save debug outputs.
@@ -70,6 +71,7 @@ def safe_vae_sample(
         output_path: Directory to save outputs
         epoch: Current training epoch
         device: Device to run on
+        filename_prefix: Custom filename prefix (default: "vae_epoch_{epoch:04d}")
     """
     if image_address in _VAE_SAMPLE_CACHE:
         tensor_imgs, image_hash = _VAE_SAMPLE_CACHE[image_address]
@@ -95,11 +97,14 @@ def safe_vae_sample(
     ) as ptz:
         ptz.write(buffer.getbuffer())
 
+    # Use custom prefix if provided, otherwise use default pattern
+    prefix = filename_prefix if filename_prefix else f"vae_epoch_{epoch:04d}"
+
     # Decode with context
     out_img = torch.clamp(diffuser.expander(out_latent, True), min=-1, max=1)
     save_image(
         out_img,
-        os.path.join(output_path, f"vae_epoch_{epoch:04d}-{image_hash}-ctx.webp"),
+        os.path.join(output_path, f"{prefix}-{image_hash}-ctx.webp"),
         normalize=True,
         value_range=(-1, 1),
     )
@@ -108,19 +113,19 @@ def safe_vae_sample(
     out_img = torch.clamp(diffuser.expander(out_latent, False), min=-1, max=1)
     save_image(
         out_img,
-        os.path.join(output_path, f"vae_epoch_{epoch:04d}-{image_hash}-nc.webp"),
+        os.path.join(output_path, f"{prefix}-{image_hash}-nc.webp"),
         normalize=True,
         value_range=(-1, 1),
     )
 
     # Noise test
     rnd_imgs = torch.randn_like(tensor_imgs.detach())
-    rsave_path = os.path.join(output_path, f"vae_epoch_{epoch:04d}-{image_hash}_ns_i.webp")
+    rsave_path = os.path.join(output_path, f"{prefix}-{image_hash}_ns_i.webp")
     save_image(rnd_imgs, rsave_path, normalize=True, value_range=(-1, 1))
     rout_img = torch.clamp(diffuser(rnd_imgs.detach(), use_flow=False), min=-1, max=1)
     save_image(
         rout_img,
-        os.path.join(output_path, f"vae_epoch_{epoch:04d}-{image_hash}_ns_o.webp"),
+        os.path.join(output_path, f"{prefix}-{image_hash}_ns_o.webp"),
         normalize=True,
         value_range=(-1, 1),
     )
@@ -135,7 +140,7 @@ def safe_vae_sample(
     )
     save_image(
         out_img,
-        os.path.join(output_path, f"vae_epoch_{epoch:04d}-{image_hash}-nr_o.webp"),
+        os.path.join(output_path, f"{prefix}-{image_hash}-nr_o.webp"),
         normalize=True,
         value_range=(-1, 1),
     )
@@ -263,6 +268,7 @@ def save_sample_images(
     sample_sizes: Optional[List[Union[int, Tuple[int, int]]]] = None,
     use_cfg: bool = False,
     guidance_scale: float = 5.0,
+    filename_prefix: Optional[str] = None,
 ) -> None:
     """
     Generate and save sample images from text prompts.
@@ -282,6 +288,7 @@ def save_sample_images(
             Defaults to [256, 384, 512, 1024] (square images)
         use_cfg: Enable classifier-free guidance (default: False)
         guidance_scale: CFG strength (default: 5.0, only used if use_cfg=True)
+        filename_prefix: Custom filename prefix (default: "samples_epoch_{epoch:04d}")
     """
     diffuser.eval()
     text_encoder.eval()
@@ -366,8 +373,10 @@ def save_sample_images(
             decoded_images = diffuser.expander(denoised_latent)
             for b, img in enumerate(decoded_images):
                 global_idx = i + b
-                save_path = os.path.join(
-                    output_path,
-                    f"samples_epoch_{epoch:04d}_caption_{global_idx}-{size_str}.webp",
-                )
+                # Use custom prefix if provided, otherwise use default pattern
+                if filename_prefix:
+                    filename = f"{filename_prefix}_{global_idx}-{size_str}.webp"
+                else:
+                    filename = f"samples_epoch_{epoch:04d}_caption_{global_idx}-{size_str}.webp"
+                save_path = os.path.join(output_path, filename)
                 save_image(img, save_path, normalize=True, value_range=(-1, 1))

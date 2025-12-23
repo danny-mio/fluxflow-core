@@ -446,3 +446,305 @@ class FluxFlowProcessor(nn.Module):
                 outputs.append(packed_i)
 
             return torch.cat(outputs, dim=0)
+
+
+# ============================================================================
+# BASELINE MODELS (experimental/baseline-no-bezier branch)
+# These models replace Pillar-Based BezierActivation with standard FFN
+# Strategy: Use MORE transformer blocks with STANDARD FFN (4× expansion)
+# ============================================================================
+
+
+class BaselineFluxTransformerBlock(nn.Module):
+    """
+    Baseline transformer block without pillar-based Bezier.
+
+    Replaces Bezier's pillar architecture with standard 2-layer FFN:
+    - Bezier: 4 pillars @ depth=3 (12 MLP layers) + FFN = 281,656 params/block
+    - Baseline: 2-layer FFN @ 4× expansion = 198,712 params/block
+    - Compensation: Use MORE blocks (17 vs 12) to match total parameters
+
+    This respects: "pillar architecture is not possible without bezier and
+    the closest standard solution is to be picked (remembering point 1)"
+
+    Args:
+        d_model: Model dimension
+        n_head: Number of attention heads
+        baseline_activation: Activation function ("silu" or "gelu")
+        ffn_expansion: FFN hidden dim expansion factor (default: 4.0)
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        n_head: int,
+        baseline_activation: str = "silu",
+        ffn_expansion: float = 4.0,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.n_head = n_head
+
+        # Layer normalization
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+
+        # Attention layers (same as FluxTransformerBlock)
+        self.self_attn = ParallelAttention(d_model, n_head)
+        self.cross_attn = ParallelAttention(d_model, n_head)
+
+        # Standard FFN (replaces 4 pillars + FFN)
+        # 2-layer FFN @ 4× expansion (standard transformer)
+        hidden_dim = int(d_model * ffn_expansion)
+
+        activation: nn.Module
+        if baseline_activation == "silu":
+            activation = nn.SiLU()
+        elif baseline_activation == "gelu":
+            activation = nn.GELU()
+        else:
+            raise ValueError(f"Unknown activation: {baseline_activation}")
+
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, hidden_dim),
+            activation,
+            nn.Linear(hidden_dim, d_model),
+        )
+
+        # Rotary positional encoding (same as Bezier)
+        self.rotary_pe = RotaryPositionalEmbedding(d_model // n_head)
+
+        # Initialize weights (Xavier like Bezier)
+        self.apply(xavier_init)
+
+    def forward(
+        self,
+        img_seq,
+        text_seq,
+        sin_img,
+        cos_img,
+        sin_txt,
+        cos_txt,
+    ):
+        """
+        Args:
+            img_seq: Image token sequence [B, T_img, D]
+            text_seq: Text token sequence [B, T_txt, D]
+            sin_img, cos_img: Rotary embeddings for image tokens
+            sin_txt, cos_txt: Rotary embeddings for text tokens
+
+        Returns:
+            tuple: (updated img_seq [B, T_img, D], updated text_seq [B, T_txt, D], None)
+            Third element is None (no control points - those are Bezier-specific)
+        """
+        # Self-attention on image tokens
+        normed_img_seq = self.norm1(img_seq)
+        img_seq = img_seq + self.self_attn(
+            normed_img_seq,
+            normed_img_seq,
+            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
+            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
+        )
+
+        # Cross-attention with text tokens
+        img_seq = img_seq + self.cross_attn(
+            self.norm2(img_seq),
+            self.norm2(text_seq),
+            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
+            lambda x: self.rotary_pe.apply_rotary(x, sin_txt, cos_txt),
+        )
+
+        # Standard FFN (no pillars, no Bezier)
+        img_seq = img_seq + self.ffn(self.norm3(img_seq))
+
+        # Return img_seq, text_seq (unchanged), None (no control points)
+        return img_seq, text_seq, None
+
+
+# ============================================================================
+# BASELINE FLOW PROCESSOR (experimental/baseline-no-bezier branch)
+# Baseline variant of FluxFlowProcessor using standard activations
+# ============================================================================
+
+
+class BaselineFluxFlowProcessor(nn.Module):
+    """
+    Baseline flow prediction model using transformer blocks with standard activations.
+
+    This is the baseline variant of FluxFlowProcessor that uses:
+    - BaselineFluxTransformerBlock (17 blocks vs Bezier's 12)
+    - Standard activations (SiLU/GELU) instead of BezierActivation
+    - Standard 2-layer FFN instead of pillar architecture
+
+    Args:
+        d_model: Model dimensionality (default: 512)
+        vae_dim: VAE latent dimension (default: 128)
+        embedding_size: Text embedding dimension (default: 1024)
+        n_head: Number of attention heads (default: 8)
+        n_layers: Number of transformer layers (default: 17 for baseline)
+        max_hw: Maximum spatial dimension (default: 1024)
+        ctx_tokens: Number of context tokens to extract (default: 4)
+        baseline_activation: Activation function ("silu" or "gelu")
+        ffn_expansion: FFN expansion factor (default: 4.0)
+    """
+
+    def __init__(
+        self,
+        d_model=512,
+        vae_dim=128,
+        embedding_size=1024,
+        n_head=8,
+        n_layers=17,  # More blocks than Bezier's 12
+        max_hw=1024,
+        ctx_tokens=4,
+        baseline_activation="silu",
+        ffn_expansion=4.0,
+    ):
+        super().__init__()
+        self.max_hw = max_hw
+        self.ctx_tokens = ctx_tokens
+
+        self.vae_to_dmodel = nn.Linear(vae_dim, d_model)
+        self.dmodel_to_vae = nn.Linear(d_model, vae_dim)
+
+        # Use image tokens as context: lightweight mixer over first K tokens
+        self.ctx_mixer = ContextAttentionMixer(d_model, n_head=max(1, d_model // 128), use_cls=True)
+
+        self.text_proj = nn.Linear(embedding_size, d_model)
+
+        # Time embedding with standard activation (no TrainableBezier)
+        activation_fn = nn.SiLU() if baseline_activation == "silu" else nn.GELU()
+        self.time_embed = nn.Sequential(
+            nn.Embedding(1000, d_model),
+            nn.LayerNorm(d_model),
+            activation_fn,
+            nn.Linear(d_model, embedding_size),
+        )
+
+        self.context_injection = GatedContextInjection(d_model, d_model)
+
+        # Baseline transformer blocks (17 blocks vs Bezier's 12)
+        self.transformer_blocks = nn.ModuleList(
+            [
+                BaselineFluxTransformerBlock(d_model, n_head, baseline_activation, ffn_expansion)
+                for _ in range(n_layers)
+            ]
+        )
+
+        # Flow predictor with standard activation
+        self.flow_predictor = nn.Sequential(
+            nn.Conv2d(d_model, d_model, kernel_size=5, padding=2),
+            activation_fn,
+            nn.Conv2d(d_model, d_model, kernel_size=3, padding=1),
+        )
+        self.context_final = nn.Sequential(
+            nn.Conv2d(d_model + 2, d_model, kernel_size=7, padding=3),
+            activation_fn,
+        )
+
+    def add_coord_channels(self, x):
+        """Add normalized coordinate channels to feature map."""
+        B, _, H, W = x.shape
+        yy, xx = torch.meshgrid(
+            torch.linspace(-1, 1, H, device=x.device),
+            torch.linspace(-1, 1, W, device=x.device),
+            indexing="ij",
+        )
+        coords = torch.stack([xx, yy], dim=0).unsqueeze(0).expand(B, -1, -1, -1)
+        return torch.cat([x, coords], dim=1)
+
+    def forward(self, packed, text_embeddings, timesteps):
+        """
+        Args:
+            packed: Latent representation [B, T+1, Dv] from VAE
+            text_embeddings: Text embeddings [B, embedding_size]
+            timesteps: Diffusion timesteps [B]
+
+        Returns:
+            Updated packed latent [B, T+1, Dv] with preserved HW token
+        """
+        # Unpack image tokens and HW metadata
+        img_seq_v = packed[:, :-1, :].contiguous()  # [B, T, Dv]
+        hw_vec = packed[:, -1, :].contiguous()  # [B, Dv]
+
+        B, T, Dv = img_seq_v.shape
+        # Extract spatial dimensions from HW token
+        H = (hw_vec[:, 0] * self.max_hw).round().clamp(min=1).long()
+        W = (hw_vec[:, 1] * self.max_hw).round().clamp(min=1).long()
+
+        # VAE→d_model
+        img_seq = self.vae_to_dmodel(img_seq_v)  # [B, T, Dm]
+
+        # Derive context from image tokens
+        K = min(self.ctx_tokens, T)
+        ctx_tokens = img_seq[:, :K, :]
+        ctx_agg, ctx_tokens = self.ctx_mixer(ctx_tokens)
+
+        # Convert timesteps to discrete indices
+        timestep_idx = (timesteps.clamp(0, 0.999) * 1000).long()
+        t_embed = self.time_embed(timestep_idx)  # [B, embedding_size]
+
+        # Text conditioning
+        text_features = self.text_proj(text_embeddings)  # [B, Dm]
+        text_cond = text_features + t_embed[:, : text_features.shape[1]]  # [B, Dm]
+        text_seq = text_cond.unsqueeze(1).expand(-1, T, -1)  # [B, T, Dm]
+
+        # Inject global context into image sequence
+        img_seq = self.context_injection(img_seq, ctx_agg)
+
+        # Generate rotary embeddings (same as Bezier)
+        d_model = img_seq.shape[-1]  # Get d_model from tensor
+        n_head = self.transformer_blocks[0].n_head if len(self.transformer_blocks) > 0 else 8
+
+        rotary_img = RotaryPositionalEmbedding(d_model // n_head)
+        rotary_txt = RotaryPositionalEmbedding(d_model // n_head)
+        sin_img, cos_img = rotary_img.get_embed(torch.arange(T, device=img_seq.device))
+        sin_txt, cos_txt = rotary_txt.get_embed(torch.arange(T, device=img_seq.device))
+
+        # Process through baseline transformer blocks
+        # Note: Baseline blocks return (img_seq, text_seq, None) - no control points
+        for block in self.transformer_blocks:
+            img_seq, text_seq, _ = block(img_seq, text_seq, sin_img, cos_img, sin_txt, cos_txt)
+
+        # Reshape to spatial for flow prediction
+        d_model_dim = img_seq.shape[-1]  # Store d_model dimension
+
+        if B > 1 and (H == H[0]).all() and (W == W[0]).all():
+            # Fast path: all samples same size
+            h, w = H[0].item(), W[0].item()
+            t_valid = h * w
+            feat = rearrange(img_seq[:, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
+
+            # Apply flow predictor
+            flow_feat = self.flow_predictor(feat)
+            flow_feat = self.context_final(self.add_coord_channels(flow_feat))
+
+            # Back to sequence
+            img_seq_out = rearrange(flow_feat, "b d h w -> b (h w) d")
+            # Pad if needed
+            if T > t_valid:
+                padding = torch.zeros(B, T - t_valid, d_model_dim, device=img_seq.device)
+                img_seq_out = torch.cat([img_seq_out, padding], dim=1)
+        else:
+            # Slow path: process individually
+            img_seq_list = []
+            for i in range(B):
+                h, w = H[i].item(), W[i].item()
+                t_valid = h * w
+                feat = rearrange(img_seq[i : i + 1, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
+                flow_feat = self.flow_predictor(feat)
+                flow_feat = self.context_final(self.add_coord_channels(flow_feat))
+                seq_out = rearrange(flow_feat, "b d h w -> b (h w) d")
+                if T > t_valid:
+                    padding = torch.zeros(1, T - t_valid, d_model_dim, device=img_seq.device)
+                    seq_out = torch.cat([seq_out, padding], dim=1)
+                img_seq_list.append(seq_out)
+            img_seq_out = torch.cat(img_seq_list, dim=0)
+
+        # d_model→VAE
+        img_seq_v_out = self.dmodel_to_vae(img_seq_out)
+
+        # Repack with preserved HW token
+        packed_out = torch.cat([img_seq_v_out, hw_vec.unsqueeze(1)], dim=1)
+        return packed_out
