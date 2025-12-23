@@ -69,48 +69,19 @@ class BezierActivationModule(nn.Module):
             self.p_preactivation = F.relu
 
     def forward(self, t, p0, p1, p2, p3):
-        # Use JIT-compiled version if available (10-20% faster)
-        # Note: JIT has issues with gradient checkpointing (non-reentrant mode)
-        # If we detect checkpointing context, fall back to PyTorch
-        if self.jit_fn is not None:
-            try:
-                return self.jit_fn(t, p0, p1, p2, p3)
-            except (RuntimeError, AssertionError):
-                # Fall back to non-JIT if JIT fails (e.g., gradient checkpointing)
-                # AssertionError occurs with torch.utils.checkpoint
-                pass
+        # NOTE: JIT optimization disabled due to gradient checkpointing incompatibility
+        # Gradient checkpointing (torch.utils.checkpoint) has hooks that conflict with
+        # JIT-compiled functions and even some tensor methods.
+        # Using original F.* based implementation for compatibility.
 
-        # Fallback to dynamic PyTorch implementation
-        # Use tensor methods instead of F.* to avoid checkpoint issues
-        if self.t_pre_activation_type == "sigmoid":
-            t = t.sigmoid()
-        elif self.t_pre_activation_type == "tanh":
-            t = t.tanh()
-        elif self.t_pre_activation_type == "silu":
-            t = t * t.sigmoid()  # SiLU = x * sigmoid(x)
-        elif self.t_pre_activation_type == "relu":
-            t = t.relu()
+        if self.t_pre_activation:
+            t = self.t_pre_activation(t)
 
-        if self.p_preactivation_type == "sigmoid":
-            p0 = p0.sigmoid()
-            p1 = p1.sigmoid()
-            p2 = p2.sigmoid()
-            p3 = p3.sigmoid()
-        elif self.p_preactivation_type == "tanh":
-            p0 = p0.tanh()
-            p1 = p1.tanh()
-            p2 = p2.tanh()
-            p3 = p3.tanh()
-        elif self.p_preactivation_type == "silu":
-            p0 = p0 * p0.sigmoid()
-            p1 = p1 * p1.sigmoid()
-            p2 = p2 * p2.sigmoid()
-            p3 = p3 * p3.sigmoid()
-        elif self.p_preactivation_type == "relu":
-            p0 = p0.relu()
-            p1 = p1.relu()
-            p2 = p2.relu()
-            p3 = p3.relu()
+        if self.p_preactivation:
+            p0 = self.p_preactivation(p0)
+            p1 = self.p_preactivation(p1)
+            p2 = self.p_preactivation(p2)
+            p3 = self.p_preactivation(p3)
 
         # Optimized Bezier computation using torch.addcmul for efficiency
         # 1.5x faster than naive implementation

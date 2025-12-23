@@ -474,6 +474,7 @@ class TestSchedulerStateSaving:
         # Learning rates should match (allow for floating point precision)
         assert abs(new_optimizer.param_groups[0]["lr"] - lr_after_10_steps) < 1e-6
 
+
 class TestIOIntegration:
     """Integration tests for I/O operations."""
 
