@@ -49,13 +49,13 @@ def load_versioned_checkpoint(
 from fluxflow.models.versioning import load_versioned_checkpoint
 
 # Load from directory (recommended)
-pipeline = load_versioned_checkpoint("checkpoints/model_v0.4.0/")
+pipeline = load_versioned_checkpoint("checkpoints/model_v0.5.0/")
 
 # Load from specific file
 pipeline = load_versioned_checkpoint("checkpoints/model.safetensors")
 
 # Specify device
-pipeline = load_versioned_checkpoint("checkpoints/model_v0.4.0/", device="cuda")
+pipeline = load_versioned_checkpoint("checkpoints/model_v0.5.0/", device="cuda")
 ```
 
 **Behavior:**
@@ -142,7 +142,7 @@ Save FluxFlow checkpoint with version metadata.
 def save_versioned_checkpoint(
     model: Any,
     output_path: Path,
-    model_version: str = "0.4.0",
+    model_version: str = "0.5.0",
     architecture: Optional[Dict[str, Any]] = None,
     training_info: Optional[Dict[str, Any]] = None,
     **kwargs
@@ -152,7 +152,7 @@ def save_versioned_checkpoint(
 **Parameters:**
 - `model` (Any): Model to save (FluxPipeline or FluxFlowPipeline)
 - `output_path` (Path): Directory to save checkpoint
-- `model_version` (str): Model version string (semantic versioning, default: "0.4.0")
+- `model_version` (str): Model version string (semantic versioning, default: "0.5.0")
 - `architecture` (Optional[Dict]): Architecture config (auto-detected if None)
 - `training_info` (Optional[Dict]): Optional training metadata (steps, dataset, etc.)
 - `**kwargs`: Additional arguments
@@ -171,15 +171,15 @@ from fluxflow.models.versioning import save_versioned_checkpoint
 # Basic save
 save_versioned_checkpoint(
     pipeline,
-    "outputs/model_v0.4.0/",
-    model_version="0.4.0"
+    "outputs/model_v0.5.0/",
+    model_version="0.5.0"
 )
 
 # With training info
 save_versioned_checkpoint(
     pipeline,
-    "outputs/model_v0.4.0/",
-    model_version="0.4.0",
+    "outputs/model_v0.5.0/",
+    model_version="0.5.0",
     training_info={
         "total_steps": 50000,
         "dataset": "COCO",
@@ -191,8 +191,8 @@ save_versioned_checkpoint(
 # Custom architecture (rarely needed, auto-detected by default)
 save_versioned_checkpoint(
     pipeline,
-    "outputs/model_v0.4.0/",
-    model_version="0.4.0",
+    "outputs/model_v0.5.0/",
+    model_version="0.5.0",
     architecture={
         "vae_dim": 128,
         "feature_maps_dim": 128,
@@ -224,7 +224,7 @@ Model metadata container for versioning system.
 ```python
 @dataclass
 class ModelMetadata:
-    model_version: str              # Semantic version (e.g., "0.4.0")
+    model_version: str              # Semantic version (e.g., "0.5.0")
     library_version: str            # FluxFlow library version
     architecture: Dict[str, Any]    # Architecture config
     components: Dict[str, str]      # Component names/types
@@ -253,8 +253,8 @@ Save metadata to JSON file.
 from fluxflow.models.versioning import ModelMetadata
 
 metadata = ModelMetadata(
-    model_version="0.4.0",
-    library_version="0.4.0",
+    model_version="0.5.0",
+    library_version="0.5.0",
     architecture={"vae_dim": 128, "text_embed_dim": 768},
     components={"compressor": "FluxCompressor", "expander": "FluxExpander"}
 )
@@ -275,8 +275,8 @@ Create metadata from dictionary.
 from fluxflow.models.versioning import ModelMetadata
 
 data = {
-    "model_version": "0.4.0",
-    "library_version": "0.4.0",
+    "model_version": "0.5.0",
+    "library_version": "0.5.0",
     "architecture": {"vae_dim": 128},
     "components": {}
 }
@@ -304,8 +304,8 @@ Get loader class for specific version.
 ```python
 from fluxflow.models.versioning import ModelVersionRegistry
 
-# Get loader for v0.4.0
-loader_class = ModelVersionRegistry.get_loader("0.4.0")
+# Get loader for v0.5.0
+loader_class = ModelVersionRegistry.get_loader("0.5.0")
 if loader_class:
     loader = loader_class()
     # Use loader...
@@ -326,7 +326,7 @@ class CustomLoader(BaseModelLoader):
         # Custom saving logic
         pass
 
-ModelVersionRegistry.register_loader("0.4.0", CustomLoader)
+ModelVersionRegistry.register_loader("0.5.0", CustomLoader)
 ```
 
 **Registered Versions:**
@@ -353,7 +353,7 @@ pipeline = load_versioned_checkpoint("path/to/checkpoint/")
 **Save with metadata:**
 ```python
 from fluxflow.models.versioning import save_versioned_checkpoint
-save_versioned_checkpoint(pipeline, "outputs/model/", model_version="0.4.0")
+save_versioned_checkpoint(pipeline, "outputs/model/", model_version="0.5.0")
 ```
 
 **Check metadata:**
@@ -371,7 +371,7 @@ pipeline = FluxPipeline.from_pretrained("old_checkpoint.safetensors")
 
 # Save with versioning
 from fluxflow.models.versioning import save_versioned_checkpoint
-save_versioned_checkpoint(pipeline, "new_checkpoint/", model_version="0.4.0")
+save_versioned_checkpoint(pipeline, "new_checkpoint/", model_version="0.5.0")
 ```
 
 ---
@@ -427,7 +427,7 @@ import torch
 
 # Load from checkpoint file
 pipeline = FluxFlowPipeline.from_pretrained(
-    "checkpoints/fluxflow_v0.4.0.safetensors",
+    "checkpoints/fluxflow_v0.5.0.safetensors",
     device="cuda",
     torch_dtype=torch.float16
 )
