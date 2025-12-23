@@ -81,14 +81,36 @@ class BezierActivationModule(nn.Module):
                 pass
 
         # Fallback to dynamic PyTorch implementation
-        if self.t_pre_activation:
-            t = self.t_pre_activation(t)
+        # Use tensor methods instead of F.* to avoid checkpoint issues
+        if self.t_pre_activation_type == "sigmoid":
+            t = t.sigmoid()
+        elif self.t_pre_activation_type == "tanh":
+            t = t.tanh()
+        elif self.t_pre_activation_type == "silu":
+            t = t * t.sigmoid()  # SiLU = x * sigmoid(x)
+        elif self.t_pre_activation_type == "relu":
+            t = t.relu()
 
-        if self.p_preactivation:
-            p0 = self.p_preactivation(p0)
-            p1 = self.p_preactivation(p1)
-            p2 = self.p_preactivation(p2)
-            p3 = self.p_preactivation(p3)
+        if self.p_preactivation_type == "sigmoid":
+            p0 = p0.sigmoid()
+            p1 = p1.sigmoid()
+            p2 = p2.sigmoid()
+            p3 = p3.sigmoid()
+        elif self.p_preactivation_type == "tanh":
+            p0 = p0.tanh()
+            p1 = p1.tanh()
+            p2 = p2.tanh()
+            p3 = p3.tanh()
+        elif self.p_preactivation_type == "silu":
+            p0 = p0 * p0.sigmoid()
+            p1 = p1 * p1.sigmoid()
+            p2 = p2 * p2.sigmoid()
+            p3 = p3 * p3.sigmoid()
+        elif self.p_preactivation_type == "relu":
+            p0 = p0.relu()
+            p1 = p1.relu()
+            p2 = p2.relu()
+            p3 = p3.relu()
 
         # Optimized Bezier computation using torch.addcmul for efficiency
         # 1.5x faster than naive implementation
