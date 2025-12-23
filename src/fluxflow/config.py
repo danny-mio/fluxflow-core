@@ -14,6 +14,10 @@ from pydantic import BaseModel, Field, field_validator
 class ModelConfig(BaseModel):
     """Model architecture configuration."""
 
+    model_type: Literal["bezier", "baseline"] = Field(
+        default="bezier",
+        description="Model architecture type: 'bezier' (default) or 'baseline' (for comparison)",
+    )
     vae_dim: int = Field(
         default=128,
         ge=8,
@@ -29,6 +33,23 @@ class ModelConfig(BaseModel):
     text_embedding_dim: int = Field(default=1024, description="Text embedding dimension")
     pretrained_bert_model: Optional[str] = Field(
         default=None, description="Path to pretrained BERT checkpoint"
+    )
+
+    # Baseline-specific parameters (only used when model_type="baseline")
+    baseline_activation: Literal["silu", "gelu"] = Field(
+        default="silu", description="Activation function for baseline model"
+    )
+    baseline_vae_width_mult: float = Field(
+        default=4.5, ge=1.0, le=10.0, description="Baseline VAE width multiplier"
+    )
+    baseline_vae_depth_mult: float = Field(
+        default=1.0, ge=1.0, le=5.0, description="Baseline VAE depth multiplier"
+    )
+    baseline_flow_blocks: int = Field(
+        default=17, ge=1, le=50, description="Number of baseline flow transformer blocks"
+    )
+    baseline_flow_ffn_expansion: float = Field(
+        default=4.0, ge=1.0, le=8.0, description="Baseline flow FFN expansion factor"
     )
 
 

@@ -21,6 +21,12 @@ from .conditioning import (
 from .diffusion_pipeline import FluxFlowPipeline, FluxFlowPipelineOutput
 from .discriminators import DBlock, PatchDiscriminator
 from .encoders import BertTextEncoder, ImageEncoder
+from .factory import (
+    ModelFactory,
+    create_baseline_models,
+    create_bezier_models,
+    create_models_from_config,
+)
 from .flow import (
     FluxFlowProcessor,
     FluxTransformerBlock,
@@ -76,4 +82,9 @@ __all__ = [
     "FluxPipeline",
     "FluxFlowPipeline",
     "FluxFlowPipelineOutput",
+    # Factory
+    "ModelFactory",
+    "create_baseline_models",
+    "create_bezier_models",
+    "create_models_from_config",
 ]
