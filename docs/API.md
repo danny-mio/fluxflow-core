@@ -49,13 +49,13 @@ def load_versioned_checkpoint(
 from fluxflow.models.versioning import load_versioned_checkpoint
 
 # Load from directory (recommended)
-pipeline = load_versioned_checkpoint("checkpoints/model_v0.3.0/")
+pipeline = load_versioned_checkpoint("checkpoints/model_v0.4.0/")
 
 # Load from specific file
 pipeline = load_versioned_checkpoint("checkpoints/model.safetensors")
 
 # Specify device
-pipeline = load_versioned_checkpoint("checkpoints/model_v0.3.0/", device="cuda")
+pipeline = load_versioned_checkpoint("checkpoints/model_v0.4.0/", device="cuda")
 ```
 
 **Behavior:**
@@ -142,7 +142,7 @@ Save FluxFlow checkpoint with version metadata.
 def save_versioned_checkpoint(
     model: Any,
     output_path: Path,
-    model_version: str = "0.3.0",
+    model_version: str = "0.4.0",
     architecture: Optional[Dict[str, Any]] = None,
     training_info: Optional[Dict[str, Any]] = None,
     **kwargs
@@ -152,7 +152,7 @@ def save_versioned_checkpoint(
 **Parameters:**
 - `model` (Any): Model to save (FluxPipeline or FluxFlowPipeline)
 - `output_path` (Path): Directory to save checkpoint
-- `model_version` (str): Model version string (semantic versioning, default: "0.3.0")
+- `model_version` (str): Model version string (semantic versioning, default: "0.4.0")
 - `architecture` (Optional[Dict]): Architecture config (auto-detected if None)
 - `training_info` (Optional[Dict]): Optional training metadata (steps, dataset, etc.)
 - `**kwargs`: Additional arguments
@@ -171,15 +171,15 @@ from fluxflow.models.versioning import save_versioned_checkpoint
 # Basic save
 save_versioned_checkpoint(
     pipeline,
-    "outputs/model_v0.3.0/",
-    model_version="0.3.0"
+    "outputs/model_v0.4.0/",
+    model_version="0.4.0"
 )
 
 # With training info
 save_versioned_checkpoint(
     pipeline,
-    "outputs/model_v0.3.0/",
-    model_version="0.3.0",
+    "outputs/model_v0.4.0/",
+    model_version="0.4.0",
     training_info={
         "total_steps": 50000,
         "dataset": "COCO",
@@ -191,8 +191,8 @@ save_versioned_checkpoint(
 # Custom architecture (rarely needed, auto-detected by default)
 save_versioned_checkpoint(
     pipeline,
-    "outputs/model_v0.3.0/",
-    model_version="0.3.0",
+    "outputs/model_v0.4.0/",
+    model_version="0.4.0",
     architecture={
         "vae_dim": 128,
         "feature_maps_dim": 128,
@@ -224,7 +224,7 @@ Model metadata container for versioning system.
 ```python
 @dataclass
 class ModelMetadata:
-    model_version: str              # Semantic version (e.g., "0.3.0")
+    model_version: str              # Semantic version (e.g., "0.4.0")
     library_version: str            # FluxFlow library version
     architecture: Dict[str, Any]    # Architecture config
     components: Dict[str, str]      # Component names/types
@@ -253,8 +253,8 @@ Save metadata to JSON file.
 from fluxflow.models.versioning import ModelMetadata
 
 metadata = ModelMetadata(
-    model_version="0.3.0",
-    library_version="0.3.0",
+    model_version="0.4.0",
+    library_version="0.4.0",
     architecture={"vae_dim": 128, "text_embed_dim": 768},
     components={"compressor": "FluxCompressor", "expander": "FluxExpander"}
 )
@@ -275,8 +275,8 @@ Create metadata from dictionary.
 from fluxflow.models.versioning import ModelMetadata
 
 data = {
-    "model_version": "0.3.0",
-    "library_version": "0.3.0",
+    "model_version": "0.4.0",
+    "library_version": "0.4.0",
     "architecture": {"vae_dim": 128},
     "components": {}
 }
@@ -304,8 +304,8 @@ Get loader class for specific version.
 ```python
 from fluxflow.models.versioning import ModelVersionRegistry
 
-# Get loader for v0.3.0
-loader_class = ModelVersionRegistry.get_loader("0.3.0")
+# Get loader for v0.4.0
+loader_class = ModelVersionRegistry.get_loader("0.4.0")
 if loader_class:
     loader = loader_class()
     # Use loader...
@@ -330,6 +330,7 @@ ModelVersionRegistry.register_loader("0.4.0", CustomLoader)
 ```
 
 **Registered Versions:**
+- `0.4.0` → `FluxModelLoader_v0_4_0`
 - `0.3.0` → `FluxModelLoader_v0_3_0`
 - `0.2.x` → `LegacyLoader`
 
@@ -352,7 +353,7 @@ pipeline = load_versioned_checkpoint("path/to/checkpoint/")
 **Save with metadata:**
 ```python
 from fluxflow.models.versioning import save_versioned_checkpoint
-save_versioned_checkpoint(pipeline, "outputs/model/", model_version="0.3.0")
+save_versioned_checkpoint(pipeline, "outputs/model/", model_version="0.4.0")
 ```
 
 **Check metadata:**
@@ -370,8 +371,166 @@ pipeline = FluxPipeline.from_pretrained("old_checkpoint.safetensors")
 
 # Save with versioning
 from fluxflow.models.versioning import save_versioned_checkpoint
-save_versioned_checkpoint(pipeline, "new_checkpoint/", model_version="0.3.0")
+save_versioned_checkpoint(pipeline, "new_checkpoint/", model_version="0.4.0")
 ```
+
+---
+
+## FluxFlowPipeline
+
+High-level text-to-image generation pipeline inheriting from Diffusers' `DiffusionPipeline`.
+
+### Class Definition
+
+```python
+class FluxFlowPipeline(DiffusionPipeline):
+    """
+    Pipeline for text-to-image generation using FluxFlow models.
+    
+    Inherits from diffusers.DiffusionPipeline and provides a familiar API.
+    """
+```
+
+### Loading from Checkpoints
+
+#### from_pretrained()
+
+```python
+FluxFlowPipeline.from_pretrained(
+    pretrained_model_name_or_path: str | PathLike,
+    use_versioning: bool = False,
+    device: str = "cuda",
+    torch_dtype: torch.dtype = torch.float32,
+    tokenizer_name: str = "distilbert-base-uncased",
+    scheduler: Optional[SchedulerMixin] = None,
+    scheduler_config: Optional[dict] = None,
+    **kwargs
+) -> FluxFlowPipeline
+```
+
+**Parameters:**
+- `pretrained_model_name_or_path` (str | PathLike): Path to checkpoint file (`.safetensors` or `.pt`) or directory
+- `use_versioning` (bool, default=False): Enable versioned loading (future feature)
+- `device` (str, default="cuda"): Device to load model on ("cuda", "cpu", "mps")
+- `torch_dtype` (torch.dtype, default=torch.float32): Data type for model weights
+- `tokenizer_name` (str, default="distilbert-base-uncased"): HuggingFace tokenizer model name
+- `scheduler` (SchedulerMixin, optional): Custom scheduler instance
+- `scheduler_config` (dict, optional): Scheduler configuration (if not providing scheduler)
+- `**kwargs`: Additional arguments passed to parent class
+
+**Returns:** FluxFlowPipeline instance ready for inference
+
+**Example:**
+```python
+from fluxflow.models import FluxFlowPipeline
+import torch
+
+# Load from checkpoint file
+pipeline = FluxFlowPipeline.from_pretrained(
+    "checkpoints/fluxflow_v0.4.0.safetensors",
+    device="cuda",
+    torch_dtype=torch.float16
+)
+
+# Load from checkpoint directory
+pipeline = FluxFlowPipeline.from_pretrained(
+    "outputs/experiment_001/",
+    device="cuda"
+)
+```
+
+### Generating Images
+
+#### __call__()
+
+```python
+pipeline(
+    prompt: str | List[str],
+    negative_prompt: Optional[str | List[str]] = None,
+    num_inference_steps: int = 50,
+    guidance_scale: float = 7.5,
+    height: int = 512,
+    width: int = 512,
+    num_images_per_prompt: int = 1,
+    eta: float = 0.0,
+    generator: Optional[torch.Generator] = None,
+    latents: Optional[torch.Tensor] = None,
+    output_type: str = "pil",
+    return_dict: bool = True,
+    callback: Optional[Callable] = None,
+    callback_steps: int = 1,
+) -> FluxFlowPipelineOutput | Tuple
+```
+
+**Parameters:**
+- `prompt` (str | List[str]): Text prompt(s) to guide generation
+- `negative_prompt` (str | List[str], optional): Text prompt(s) to avoid in generation
+- `num_inference_steps` (int, default=50): Number of denoising steps
+- `guidance_scale` (float, default=7.5): Classifier-free guidance scale (1.0 = no guidance)
+- `height` (int, default=512): Output image height in pixels
+- `width` (int, default=512): Output image width in pixels
+- `num_images_per_prompt` (int, default=1): Number of images to generate per prompt
+- `eta` (float, default=0.0): DDIM eta parameter
+- `generator` (torch.Generator, optional): Random number generator for reproducibility
+- `latents` (torch.Tensor, optional): Pre-generated latents to start from
+- `output_type` (str, default="pil"): Output format ("pil" or "np")
+- `return_dict` (bool, default=True): Return FluxFlowPipelineOutput object
+- `callback` (Callable, optional): Function called after each denoising step
+- `callback_steps` (int, default=1): Number of steps between callback calls
+
+**Returns:** 
+- If `return_dict=True`: FluxFlowPipelineOutput with `images` attribute
+- If `return_dict=False`: Tuple of (images,)
+
+**Example:**
+```python
+# Single prompt
+result = pipeline(
+    prompt="a serene mountain landscape at dawn",
+    num_inference_steps=50,
+    guidance_scale=7.5,
+    height=768,
+    width=768
+)
+result.images[0].save("mountain.png")
+
+# Batch generation with negative prompts
+result = pipeline(
+    prompt=["a cat", "a dog", "a bird"],
+    negative_prompt="blurry, low quality",
+    num_inference_steps=30,
+    num_images_per_prompt=2,  # 2 images per prompt = 6 total
+    generator=torch.Generator().manual_seed(42)
+)
+
+for i, img in enumerate(result.images):
+    img.save(f"animal_{i}.png")
+```
+
+### Classifier-Free Guidance
+
+CFG requires models trained with `cfg_dropout_prob > 0` (typically 0.10-0.15).
+
+**Recommended guidance_scale values:**
+- `1.0`: No guidance (standard generation)
+- `3.0-7.0`: Moderate guidance (recommended)
+- `7.0-15.0`: Strong guidance (may oversaturate)
+
+**Example:**
+```python
+# Enable CFG
+image = pipeline(
+    prompt="photorealistic portrait of a cat",
+    negative_prompt="blurry, distorted",
+    guidance_scale=5.0,
+    num_inference_steps=50
+).images[0]
+```
+
+### FluxFlowPipelineOutput
+
+**Attributes:**
+- `images` (List[PIL.Image.Image] | np.ndarray): Generated images
 
 ---
 
