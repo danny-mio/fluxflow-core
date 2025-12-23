@@ -110,7 +110,7 @@ class TestConfigIntegration:
 
         assert isinstance(bezier_text, BertTextEncoder)
         assert isinstance(baseline_text, BertTextEncoder)
-        assert type(bezier_text) == type(baseline_text)
+        assert isinstance(bezier_text, type(baseline_text))
 
     def test_baseline_latent_compatibility(self):
         """Test that baseline and bezier use same latent dimensions."""

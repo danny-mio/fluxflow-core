@@ -8,7 +8,6 @@ Tests for complete baseline model integration including:
 
 import pytest
 import torch
-import torch.nn as nn
 
 from fluxflow.models.factory import create_bezier_models, create_baseline_models, ModelFactory
 
@@ -96,7 +95,7 @@ class TestCrossModelAblation:
         Encoders are shared - only decoder and flow differ.
         """
         # Both should use FluxCompressor
-        assert type(bezier_components["encoder"]) == type(baseline_components["encoder"])
+        assert isinstance(bezier_components["encoder"], type(baseline_components["encoder"]))
 
         # Both should have same parameter count
         bezier_params = sum(p.numel() for p in bezier_components["encoder"].parameters())
@@ -251,16 +250,16 @@ class TestFullPipelineIntegration:
         assert len(baseline_components) == 4
 
         # Encoder should be same class (shared)
-        assert type(bezier_components[0]) == type(baseline_components[0])
+        assert isinstance(bezier_components[0], type(baseline_components[0]))
 
         # Decoder should be different classes
-        assert type(bezier_components[1]) != type(baseline_components[1])
+        assert not isinstance(bezier_components[1], type(baseline_components[1]))
 
         # Flow should be different classes
-        assert type(bezier_components[2]) != type(baseline_components[2])
+        assert not isinstance(bezier_components[2], type(baseline_components[2]))
 
         # Text encoder should be same class (shared)
-        assert type(bezier_components[3]) == type(baseline_components[3])
+        assert isinstance(bezier_components[3], type(baseline_components[3]))
 
 
 if __name__ == "__main__":

@@ -10,10 +10,8 @@ model variants. Only VAE and Flow differ.
 
 import pytest
 import torch
-import torch.nn as nn
 
 from fluxflow.models.encoders import BertTextEncoder
-from fluxflow.models.flow import FluxFlowProcessor
 
 
 class TestTextEncoderCompatibility:
@@ -102,7 +100,7 @@ class TestTextEncoderCompatibility:
         """
         batch_size = 2
         embed_dim = 1024  # From text encoder
-        d_model = 512  # Flow internal dimension (can differ)
+        # d_model = 512  # Flow internal dimension (can differ)
 
         # Get text embeddings [B, embed_dim]
         with torch.no_grad():

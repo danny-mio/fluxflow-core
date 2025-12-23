@@ -91,7 +91,7 @@ class TestVAEEncoderCreation:
 
         # Check output shapes - encoder returns flattened [T, D]
         # After 4 downscales: 64 -> 32 -> 16 -> 8 -> 4
-        expected_spatial = 4 * 4  # 16 tokens
+        # expected_spatial = 4 * 4  # 16 tokens
         # Note: Encoder returns [T+1, D] format (flattened across batch)
         assert mu_logvar.shape[1] == 128  # D dimension
         assert deterministic.shape[1] == 128  # D dimension
