@@ -75,8 +75,9 @@ class BezierActivationModule(nn.Module):
         if self.jit_fn is not None:
             try:
                 return self.jit_fn(t, p0, p1, p2, p3)
-            except RuntimeError:
+            except (RuntimeError, AssertionError):
                 # Fall back to non-JIT if JIT fails (e.g., gradient checkpointing)
+                # AssertionError occurs with torch.utils.checkpoint
                 pass
 
         # Fallback to dynamic PyTorch implementation
