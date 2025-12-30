@@ -17,8 +17,8 @@ from diffusers.utils import BaseOutput
 from transformers import AutoTokenizer
 
 from .encoders import BertTextEncoder
-from .flow import FluxFlowProcessor
-from .vae import FluxCompressor, FluxExpander
+from .v060.flow import FluxFlowProcessor
+from .v060.vae import FluxCompressor, FluxExpander
 
 logger = logging.getLogger(__name__)
 

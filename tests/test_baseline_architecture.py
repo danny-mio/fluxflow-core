@@ -14,8 +14,8 @@ import pytest
 import torch
 import torch.nn as nn
 
-from fluxflow.models.vae import BaselineResidualUpsampleBlock, ResidualUpsampleBlock
 from fluxflow.models.flow import BaselineFluxTransformerBlock, FluxTransformerBlock
+from fluxflow.models.vae import BaselineResidualUpsampleBlock, ResidualUpsampleBlock
 
 
 class TestBaselineVAEParameterMatching:

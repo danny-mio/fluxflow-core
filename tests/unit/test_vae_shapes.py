@@ -2,11 +2,7 @@
 
 import torch
 
-from fluxflow.models.vae import (
-    Clamp,
-    ProgressiveUpscaler,
-    ResidualUpsampleBlock,
-)
+from fluxflow.models.vae import Clamp, ProgressiveUpscaler, ResidualUpsampleBlock
 
 
 class TestClamp:

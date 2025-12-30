@@ -10,8 +10,8 @@ import safetensors.torch
 import torch
 import torch.nn as nn
 
-from .flow import FluxFlowProcessor
-from .vae import FluxCompressor, FluxExpander
+from .v060.flow import FluxFlowProcessor
+from .v060.vae import FluxCompressor, FluxExpander
 
 logger = logging.getLogger(__name__)
 

@@ -1,7 +1,7 @@
 # FluxFlow VAE Training - Phase 1 Progress Report
 
-**Date**: December 7, 2025  
-**Training Session**: 20251207_183704  
+**Date**: December 7, 2025
+**Training Session**: 20251207_183704
 **Checkpoint**: `fluxflow-vae-phase1-step1100-20251207.safetensors` (427 MB, 112.0M parameters)
 
 ## What is FluxFlow?
@@ -59,14 +59,14 @@ training:
   use_fp16: false
   initial_clipping_norm: 1.0
   preserve_lr: true
-  
+
   # Training modes
   train_vae: true
   train_spade: true
   gan_training: false           # Disabled - VAE only
   use_lpips: false              # Disabled - VAE only
   train_diff: false
-  
+
   # KL divergence warmup
   kl_beta: 0.0001               # Target beta
   kl_warmup_steps: 5000         # Gradual warmup
@@ -212,13 +212,13 @@ This suggests the VAE is learning luminance/structure information faster than ch
 ## Key Learnings
 
 ### 1. VAE-Only Training Is Viable (Without GAN)
-**Previous Assumption**: "I don't have much results without GAN training"  
+**Previous Assumption**: "I don't have much results without GAN training"
 **Discovery**: With proper optimizer configuration (RMSprop + momentum) and KL warmup, VAE-only training produces meaningful reconstructions.
 
 **Implication**: We can validate the Bezier VAE independently before adding GAN complexity, simplifying the training pipeline.
 
 ### 2. KL Warmup Is Critical
-**Configuration**: 5,000-step warmup to KL beta of 0.0001  
+**Configuration**: 5,000-step warmup to KL beta of 0.0001
 **At Step 1,100**: Only 22% through warmup (beta = 0.000011)
 
 **Why This Matters**:
@@ -344,14 +344,14 @@ from safetensors.torch import load_file
 state_dict = load_file(checkpoint_path)
 
 # Load encoder weights
-encoder_state = {k.replace('diffuser.compressor.', ''): v 
-                 for k, v in state_dict.items() 
+encoder_state = {k.replace('diffuser.compressor.', ''): v
+                 for k, v in state_dict.items()
                  if 'compressor' in k}
 encoder.load_state_dict(encoder_state)
 
 # Load decoder weights
-decoder_state = {k.replace('diffuser.expander.', ''): v 
-                 for k, v in state_dict.items() 
+decoder_state = {k.replace('diffuser.expander.', ''): v
+                 for k, v in state_dict.items()
                  if 'expander' in k}
 decoder.load_state_dict(decoder_state)
 
@@ -376,7 +376,7 @@ Image.fromarray(reconstructed_img).save("reconstructed.png")
 print("✓ Reconstruction saved to reconstructed.png")
 ```
 
-**Expected Results**: 
+**Expected Results**:
 - Structural reconstruction should be recognizable
 - Colors will appear desaturated (as discussed in Color Observation section)
 - Best results on natural images similar to COCO dataset (people, objects, scenes)
@@ -397,7 +397,7 @@ print("✓ Reconstruction saved to reconstructed.png")
 
 **Model Components** (included in checkpoint):
 - **Compressor (Encoder)**: 12.6M parameters (11.2%) - Trained
-- **Expander (Decoder)**: 94.1M parameters (84.0%) - Trained  
+- **Expander (Decoder)**: 94.1M parameters (84.0%) - Trained
 - **Flow Processor**: 5.4M parameters (4.8%) - Untrained (initialized but not used in Phase 1)
 - **Text Encoder**: DistilBERT projection layers only (downloaded separately)
 
@@ -446,6 +446,6 @@ This initial training session validates our Phase 1 approach:
 
 ---
 
-**Training Platform**: Paperspace Gradient A6000 (Free Tier)  
-**Code Repository**: https://github.com/danny-mio/fluxflow-training  
+**Training Platform**: Paperspace Gradient A6000 (Free Tier)
+**Code Repository**: https://github.com/danny-mio/fluxflow-training
 **Model Repository**: https://github.com/danny-mio/fluxflow-core

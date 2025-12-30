@@ -18,6 +18,20 @@ class ModelConfig(BaseModel):
         default="bezier",
         description="Model architecture type: 'bezier' (default) or 'baseline' (for comparison)",
     )
+    model_version: str = Field(
+        default="0.3.0",
+        description="Model version: '0.3.0' (default) or '0.6.0'",
+    )
+
+    @field_validator("model_version")
+    @classmethod
+    def validate_model_version(cls, v):
+        """Validate model version is supported."""
+        allowed_versions = ["0.3.0", "0.6.0"]
+        if v not in allowed_versions:
+            raise ValueError(f"model_version must be one of {allowed_versions}, got '{v}'")
+        return v
+
     vae_dim: int = Field(
         default=128,
         ge=8,

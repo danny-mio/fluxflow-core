@@ -192,9 +192,9 @@ class ModelLoaderV03(ModelVersionLoader):
         self, checkpoint_path: Path, metadata: ModelMetadata, device: str, **kwargs
     ) -> Any:
         """Load v0.3.x checkpoint."""
-        from .flow import FluxFlowProcessor
         from .pipeline import FluxPipeline
-        from .vae import FluxCompressor, FluxExpander
+        from .v030.flow import FluxFlowProcessor
+        from .v030.vae import FluxCompressor, FluxExpander
 
         config = metadata.architecture
 

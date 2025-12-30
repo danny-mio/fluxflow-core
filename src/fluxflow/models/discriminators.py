@@ -64,35 +64,61 @@ class DBlock(nn.Module):
 
 class PatchDiscriminator(nn.Module):
     """
-    PatchGAN discriminator with optional Miyato-style projection conditioning.
+    Lightweight PatchGAN discriminator optimized for VAE GAN training.
 
-    Discriminates image patches and optionally conditions on context vectors
-    using projection-based conditioning.
+    Uses efficient architecture with minimal spectral normalization and
+    optional lightweight context conditioning.
 
     Args:
         in_channels: Input image channels (default: 3)
-        base_ch: Base number of channels (default: 64)
-        depth: Number of DBlocks (each downsamples by 2x) (default: 4)
+        base_ch: Base number of channels (default: 32) - REDUCED from 64
+        depth: Number of downsampling blocks (default: 3) - REDUCED from 4
         ctx_dim: Context vector dimension; 0 disables projection (default: 0)
+        use_spectral_norm: Enable spectral normalization (default: False) - DISABLED by default
     """
 
-    def __init__(self, in_channels=3, base_ch=64, depth=4, ctx_dim=0):
+    def __init__(self, in_channels=3, base_ch=32, depth=3, ctx_dim=0, use_spectral_norm=False):
         super().__init__()
         ch = base_ch
-        blocks = [snconv(in_channels, ch, 3, 1, 1), nn.LeakyReLU(0.2, inplace=True)]
+
+        # Lightweight backbone: 3 downsampling blocks instead of 4
+        blocks = []
+        # Initial conv (no spectral norm by default for speed)
+        conv1 = nn.Conv2d(in_channels, ch, 4, 2, 1)
+        if use_spectral_norm:
+            conv1 = _sn(conv1)
+        blocks.extend([conv1, nn.LeakyReLU(0.2, inplace=True)])
+
+        # Downsampling blocks - simplified from DBlock
         c = ch
-        for _ in range(depth):
-            blocks.append(DBlock(c, c * 2, down=True))
-            c *= 2
+        for i in range(depth):
+            out_ch = min(c * 2, 512)  # Cap at 512 channels
+            conv_block = nn.Conv2d(c, out_ch, 4, 2, 1)
+            if use_spectral_norm:
+                conv_block = _sn(conv_block)
+            blocks.extend([conv_block, nn.LeakyReLU(0.2, inplace=True)])
+            c = out_ch
+
         self.backbone = nn.Sequential(*blocks)
-        # Head: output patch logits without activation (for single channel output)
-        self.head = _sn(nn.Conv2d(c, 1, kernel_size=3, stride=1, padding=1))
+
+        # Lightweight head - no spectral norm by default
+        head_conv = nn.Conv2d(c, 1, 4, 1, 1)
+        if use_spectral_norm:
+            head_conv = _sn(head_conv)
+        self.head = head_conv
+
         self.ctx_dim = ctx_dim
         self.pool = nn.AdaptiveAvgPool2d((1, 1))
+
+        # Lightweight context conditioning (if needed)
         if ctx_dim and ctx_dim > 0:
-            # Projection: <phi(h_pool), Wc * c>
-            self.ctx_proj = snlinear(ctx_dim, c)
-            self.feat_proj = nn.Identity()  # Can replace with snlinear(c, c) for learnable mapping
+            # Simple projection instead of heavy snlinear
+            self.ctx_proj = nn.Sequential(
+                nn.Linear(ctx_dim, 128),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Linear(128, c),  # Project to feature dimension
+            )
+            self.feat_proj = nn.Identity()
 
     def forward(self, x, ctx_vec=None, return_feats=False):
         """

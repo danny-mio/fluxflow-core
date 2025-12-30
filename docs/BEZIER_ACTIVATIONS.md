@@ -62,7 +62,7 @@ FluxFlow implements three distinct methods for generating Bezier control points,
   p1 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
   p2 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
   p3 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
-  
+
   # Forward: generate control points from gated input
   g = torch.sigmoid(img_seq)  # Bound to [0,1]
   control_points = [p0(g), p1(g), p2(g), p3(g)]
@@ -140,7 +140,7 @@ Control Points:
 
 The curve's shape is determined by learned control points.
 - Straight line: p0, p1, p2, p3 collinear (ReLU-like)
-- S-curve: control points arranged for sigmoid (GELU-like)  
+- S-curve: control points arranged for sigmoid (GELU-like)
 - Custom: any smooth shape the neuron needs
 ```
 
@@ -160,7 +160,7 @@ Fewer neurons → Each learns custom curve → Direct representation
 [Neuron 1: Custom Bezier] + ... + [Neuron 128: Custom Bezier] = Complex Function
 ```
 
-**Intuition**: Bezier activations let each neuron learn custom curves (like sculpting with clay) vs ReLU = same function everywhere (like LEGO bricks). 
+**Intuition**: Bezier activations let each neuron learn custom curves (like sculpting with clay) vs ReLU = same function everywhere (like LEGO bricks).
 
 **See**: [INTUITION.md](INTUITION.md#part-3-the-analogy---lego-vs-clay) for detailed analogy.
 
@@ -363,7 +363,7 @@ x_p2 = x[:, 3::5, ...]
 x_p3 = x[:, 4::5, ...]
 
 # Apply cubic Bezier formula per channel
-output = (1-x_t)**3 * x_p0 + 3*(1-x_t)**2*x_t * x_p1 + 
+output = (1-x_t)**3 * x_p0 + 3*(1-x_t)**2*x_t * x_p1 +
          3*(1-x_t)*x_t**2 * x_p2 + x_t**3 * x_p3
 # Output shape: [batch, C, height, width] or [batch, C]
 ```
@@ -465,7 +465,7 @@ The `pillarLayer` function creates a multi-layer perceptron with configurable de
 def pillarLayer(in_size: int, out_size: int, depth: int, activation=nn.SiLU()):
     """
     Create pillar MLP: in_size → out_size → out_size → ... → in_size
-    
+
     Note: Last layer returns to in_size (not out_size) for residual-like structure.
     """
     layers = []
@@ -476,7 +476,7 @@ def pillarLayer(in_size: int, out_size: int, depth: int, activation=nn.SiLU()):
             layers.append(nn.Linear(out_size, in_size))  # Return to input size
         else:
             layers.append(nn.Linear(out_size, out_size))
-        
+
         if i < depth - 1:
             layers.append(activation)
     return nn.ModuleList([nn.Sequential(*[layers[i*2], layers[i*2+1] if i < depth-1 else layers[i*2]]) for i in range(depth)])
@@ -485,7 +485,7 @@ def pillarLayer(in_size: int, out_size: int, depth: int, activation=nn.SiLU()):
 **For depth=3, in_size=128, out_size=128 (bias=True):**
 - Layer 0: Linear(128 → 128) = 128×128 + 128 = 16,512 params
 - Activation: SiLU()
-- Layer 1: Linear(128 → 128) = 128×128 + 128 = 16,512 params  
+- Layer 1: Linear(128 → 128) = 128×128 + 128 = 16,512 params
 - Activation: SiLU()
 - Layer 2: Linear(128 → 128) = 128×128 + 128 = 16,512 params
 - **Total per pillar: 49,536 params (3 × 16,512)**
@@ -504,23 +504,23 @@ class FluxTransformerBlock(nn.Module):
         self.p2 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
         self.p3 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
         self.bezier_activation = BezierActivation()
-    
+
     def forward(self, img_seq, ...):
         # Sigmoid gating: bound inputs to [0,1] for stable pillar processing
         g = torch.sigmoid(img_seq)  # [B, N, D]
-        
+
         # Generate 4 control points via separate deep networks
         img_p0 = self.p0(g)  # [B, N, D] - each pillar outputs same shape as input
         img_p1 = self.p1(g)  # [B, N, D]
         img_p2 = self.p2(g)  # [B, N, D]
         img_p3 = self.p3(g)  # [B, N, D]
-        
+
         # Concatenate: [img_seq, p0, p1, p2, p3] → [B, N, 5×D]
         # Then apply BezierActivation (5→1 reduction) → [B, N, D]
         img_seq = self.bezier_activation(
             torch.cat([img_seq, img_p0, img_p1, img_p2, img_p3], dim=-1)
         )
-        
+
         return img_seq
 ```
 
@@ -602,7 +602,7 @@ Pillar-Based (d_model=128, depth=3, bias=True):
 
 Equivalent ReLU MLP (bias=True):
   2 layers: 32,896 params (comprised of 2 Linear(128,128) layers, each 16,512 params)
-  
+
 Parameter ratio: 6.02× more than ReLU baseline
 ```
 
@@ -637,7 +637,7 @@ Parameter ratio: 6.02× more than ReLU baseline
 ```
 START: Need Bezier activation?
 │
-├─ Output layer (RGB, mu/logvar)? 
+├─ Output layer (RGB, mu/logvar)?
 │  └─ YES → Use **TrainableBezier** (minimal params, dimension-preserving)
 │
 ├─ Transformer MLP layer?
@@ -709,11 +709,11 @@ class BezierActivation(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Input: [B, D*5, ...] where D*5 = [t, p0, p1, p2, p3] × D
         # Output: [B, D, ...]
-        
+
         # Reshape to extract Bezier parameters
         x = x.view(B, D, 5, ...)
         t, p0, p1, p2, p3 = x.unbind(dim=2)  # Each [B, D, ...]
-        
+
         # Apply pre-activations
         if self.t_pre_activation:
             t = self.t_pre_activation(t)  # e.g., sigmoid(t) → [0,1]
@@ -722,7 +722,7 @@ class BezierActivation(nn.Module):
             p1 = self.p_preactivation(p1)
             p2 = self.p_preactivation(p2)
             p3 = self.p_preactivation(p3)
-        
+
         # Compute Bezier curve
         output = (1-t)**3 * p0 + 3*(1-t)**2*t * p1 + 3*(1-t)*t**2 * p2 + t**3 * p3
         return output
@@ -740,14 +740,14 @@ class TrainableBezier(nn.Module):
     def __init__(self, shape, channel_only=True, p0=-1.0, p3=1.0):
         # Learnable control points: p0, p1, p2, p3
         # p1, p2 initialized to linear interpolation
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Input: [B, D, ...] 
+        # Input: [B, D, ...]
         # Output: [B, D, ...] (same shape)
-        
+
         # Normalize input to [0, 1]
         t = torch.sigmoid(x)
-        
+
         # Compute Bezier with learned control points
         # Optimized with fused operations (torch.addcmul)
         # 1.41x faster than naive implementation

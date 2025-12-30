@@ -42,10 +42,10 @@
 
 ## Project Overview
 
-**Repository**: `fluxflow-core`  
-**Purpose**: Core model architectures, inference pipeline, and foundational components for FluxFlow text-to-image generation  
-**Package Name**: `fluxflow` (on PyPI)  
-**Dependencies**: PyTorch, safetensors, diffusers  
+**Repository**: `fluxflow-core`
+**Purpose**: Core model architectures, inference pipeline, and foundational components for FluxFlow text-to-image generation
+**Package Name**: `fluxflow` (on PyPI)
+**Dependencies**: PyTorch, safetensors, diffusers
 **Role**: Foundation library - other repos depend on this
 
 ## Cross-Project References (CRITICAL)
@@ -125,7 +125,7 @@ pre-commit run --all-files
 - **Linting**: flake8 (max-complexity=15, max-line-length=100)
 - **Type Hints**: Required on public APIs, optional on internal helpers
 - **Docstrings**: Google style for public classes/functions
-- **Naming**: 
+- **Naming**:
   - snake_case: functions, variables, modules
   - PascalCase: classes
   - UPPER_SNAKE: constants
@@ -294,7 +294,7 @@ git push origin v0.3.1
   - API keys, tokens, credentials
   - Local filesystem paths (`/Users/`, `/Volumes/`)
   - Checkpoints (use Git LFS for model files)
-  
+
 - **Use environment variables** for:
   - HuggingFace tokens
   - Weights & Biases API keys

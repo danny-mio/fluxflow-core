@@ -4,9 +4,10 @@ Test that all code examples in documentation are correct.
 This ensures documentation stays in sync with implementation.
 """
 
+import pytest
 import torch
 import torch.nn as nn
-import pytest
+
 from fluxflow.models.activations import BezierActivation, TrainableBezier
 from fluxflow.models.flow import pillarLayer
 

@@ -7,7 +7,7 @@ Validates that models can be created from config files with model_type parameter
 import pytest
 import torch
 
-from fluxflow.config import ModelConfig, FluxFlowConfig
+from fluxflow.config import FluxFlowConfig, ModelConfig
 from fluxflow.models.factory import create_models_from_config
 
 
@@ -30,12 +30,9 @@ class TestConfigIntegration:
         assert flow is not None
         assert text_enc is not None
 
-        # Verify it's using Bezier components (check for BezierActivation)
-        from fluxflow.models.vae import FluxExpander
-        from fluxflow.models.flow import FluxFlowProcessor
-
-        assert isinstance(vae_dec, FluxExpander)
-        assert isinstance(flow, FluxFlowProcessor)
+        # Verify it's using Bezier components by checking class names
+        assert vae_dec.__class__.__name__ == "FluxExpander"
+        assert flow.__class__.__name__ == "FluxFlowProcessor"
 
     def test_baseline_model_from_config(self):
         """Test creating Baseline models from config."""
@@ -57,12 +54,9 @@ class TestConfigIntegration:
         assert flow is not None
         assert text_enc is not None
 
-        # Verify it's using Baseline components
-        from fluxflow.models.vae import BaselineFluxExpander
-        from fluxflow.models.flow import BaselineFluxFlowProcessor
-
-        assert isinstance(vae_dec, BaselineFluxExpander)
-        assert isinstance(flow, BaselineFluxFlowProcessor)
+        # Verify it's using Baseline components by checking class names
+        assert vae_dec.__class__.__name__ == "BaselineFluxExpander"
+        assert flow.__class__.__name__ == "BaselineFluxFlowProcessor"
 
     def test_baseline_default_params(self):
         """Test that baseline defaults are correct."""
@@ -183,7 +177,5 @@ class TestConfigIntegration:
         # Should create Bezier models successfully
         vae_enc, vae_dec, flow, text_enc = create_models_from_config(config)
 
-        from fluxflow.models.vae import FluxExpander
-
         # Should still use Bezier components
-        assert isinstance(vae_dec, FluxExpander)
+        assert vae_dec.__class__.__name__ == "FluxExpander"

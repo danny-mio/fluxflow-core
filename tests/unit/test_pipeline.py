@@ -1,12 +1,12 @@
 """Tests for FluxPipeline and FluxFlowPipeline classes."""
 
 import pytest
-import torch
 import safetensors.torch
+import torch
 
+from fluxflow.models.flow import FluxFlowProcessor
 from fluxflow.models.pipeline import FluxPipeline
 from fluxflow.models.vae import FluxCompressor, FluxExpander
-from fluxflow.models.flow import FluxFlowProcessor
 
 
 class TestFluxPipeline:
@@ -115,8 +115,8 @@ class TestFluxPipelineFromPretrained:
     @pytest.fixture
     def mock_checkpoint(self, tmp_path):
         """Create mock checkpoint file using actual model state."""
-        from fluxflow.models.vae import FluxCompressor, FluxExpander
         from fluxflow.models.flow import FluxFlowProcessor
+        from fluxflow.models.vae import FluxCompressor, FluxExpander
 
         # Create small models with known config
         vae_dim = 32
@@ -173,8 +173,8 @@ class TestFluxPipelineFromPretrained:
 
     def test_from_pretrained_pt_file(self, tmp_path):
         """Test loading from .pt file."""
-        from fluxflow.models.vae import FluxCompressor, FluxExpander
         from fluxflow.models.flow import FluxFlowProcessor
+        from fluxflow.models.vae import FluxCompressor, FluxExpander
 
         # Create small models
         compressor = FluxCompressor(in_channels=3, d_model=32, downscales=2, max_hw=1024)
