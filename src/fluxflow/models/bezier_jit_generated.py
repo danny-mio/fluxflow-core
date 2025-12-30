@@ -8,6 +8,7 @@ of t_pre_activation × p_preactivation for maximum performance.
 import torch
 import torch.nn.functional as F
 
+
 def bezier_forward_none_none(t, p0, p1, p2, p3):
     """
     Bezier with none on t, none on control points.
@@ -29,6 +30,7 @@ def bezier_forward_none_none(t, p0, p1, p2, p3):
         + 3.0 * one_minus_t * t_sq * p2
         + t_cube * p3
     )
+
 
 def bezier_forward_none_sigmoid(t, p0, p1, p2, p3):
     """
@@ -56,6 +58,7 @@ def bezier_forward_none_sigmoid(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_none_tanh(t, p0, p1, p2, p3):
     """
     Bezier with none on t, tanh on control points.
@@ -81,6 +84,7 @@ def bezier_forward_none_tanh(t, p0, p1, p2, p3):
         + 3.0 * one_minus_t * t_sq * p2
         + t_cube * p3
     )
+
 
 def bezier_forward_none_silu(t, p0, p1, p2, p3):
     """
@@ -108,6 +112,7 @@ def bezier_forward_none_silu(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_none_relu(t, p0, p1, p2, p3):
     """
     Bezier with none on t, relu on control points.
@@ -134,6 +139,7 @@ def bezier_forward_none_relu(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_sigmoid_none(t, p0, p1, p2, p3):
     """
     Bezier with sigmoid on t, none on control points.
@@ -156,6 +162,7 @@ def bezier_forward_sigmoid_none(t, p0, p1, p2, p3):
         + 3.0 * one_minus_t * t_sq * p2
         + t_cube * p3
     )
+
 
 def bezier_forward_sigmoid_sigmoid(t, p0, p1, p2, p3):
     """
@@ -184,6 +191,7 @@ def bezier_forward_sigmoid_sigmoid(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_sigmoid_tanh(t, p0, p1, p2, p3):
     """
     Bezier with sigmoid on t, tanh on control points.
@@ -210,6 +218,7 @@ def bezier_forward_sigmoid_tanh(t, p0, p1, p2, p3):
         + 3.0 * one_minus_t * t_sq * p2
         + t_cube * p3
     )
+
 
 def bezier_forward_sigmoid_silu(t, p0, p1, p2, p3):
     """
@@ -238,6 +247,7 @@ def bezier_forward_sigmoid_silu(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_sigmoid_relu(t, p0, p1, p2, p3):
     """
     Bezier with sigmoid on t, relu on control points.
@@ -265,6 +275,7 @@ def bezier_forward_sigmoid_relu(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_tanh_none(t, p0, p1, p2, p3):
     """
     Bezier with tanh on t, none on control points.
@@ -287,6 +298,7 @@ def bezier_forward_tanh_none(t, p0, p1, p2, p3):
         + 3.0 * one_minus_t * t_sq * p2
         + t_cube * p3
     )
+
 
 def bezier_forward_tanh_sigmoid(t, p0, p1, p2, p3):
     """
@@ -315,6 +327,7 @@ def bezier_forward_tanh_sigmoid(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_tanh_tanh(t, p0, p1, p2, p3):
     """
     Bezier with tanh on t, tanh on control points.
@@ -341,6 +354,7 @@ def bezier_forward_tanh_tanh(t, p0, p1, p2, p3):
         + 3.0 * one_minus_t * t_sq * p2
         + t_cube * p3
     )
+
 
 def bezier_forward_tanh_silu(t, p0, p1, p2, p3):
     """
@@ -369,6 +383,7 @@ def bezier_forward_tanh_silu(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_tanh_relu(t, p0, p1, p2, p3):
     """
     Bezier with tanh on t, relu on control points.
@@ -396,6 +411,7 @@ def bezier_forward_tanh_relu(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_silu_none(t, p0, p1, p2, p3):
     """
     Bezier with silu on t, none on control points.
@@ -418,6 +434,7 @@ def bezier_forward_silu_none(t, p0, p1, p2, p3):
         + 3.0 * one_minus_t * t_sq * p2
         + t_cube * p3
     )
+
 
 def bezier_forward_silu_sigmoid(t, p0, p1, p2, p3):
     """
@@ -446,6 +463,7 @@ def bezier_forward_silu_sigmoid(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_silu_tanh(t, p0, p1, p2, p3):
     """
     Bezier with silu on t, tanh on control points.
@@ -472,6 +490,7 @@ def bezier_forward_silu_tanh(t, p0, p1, p2, p3):
         + 3.0 * one_minus_t * t_sq * p2
         + t_cube * p3
     )
+
 
 def bezier_forward_silu_silu(t, p0, p1, p2, p3):
     """
@@ -500,6 +519,7 @@ def bezier_forward_silu_silu(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_silu_relu(t, p0, p1, p2, p3):
     """
     Bezier with silu on t, relu on control points.
@@ -527,6 +547,7 @@ def bezier_forward_silu_relu(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_relu_none(t, p0, p1, p2, p3):
     """
     Bezier with relu on t, none on control points.
@@ -549,6 +570,7 @@ def bezier_forward_relu_none(t, p0, p1, p2, p3):
         + 3.0 * one_minus_t * t_sq * p2
         + t_cube * p3
     )
+
 
 def bezier_forward_relu_sigmoid(t, p0, p1, p2, p3):
     """
@@ -577,6 +599,7 @@ def bezier_forward_relu_sigmoid(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_relu_tanh(t, p0, p1, p2, p3):
     """
     Bezier with relu on t, tanh on control points.
@@ -604,6 +627,7 @@ def bezier_forward_relu_tanh(t, p0, p1, p2, p3):
         + t_cube * p3
     )
 
+
 def bezier_forward_relu_silu(t, p0, p1, p2, p3):
     """
     Bezier with relu on t, silu on control points.
@@ -630,6 +654,7 @@ def bezier_forward_relu_silu(t, p0, p1, p2, p3):
         + 3.0 * one_minus_t * t_sq * p2
         + t_cube * p3
     )
+
 
 def bezier_forward_relu_relu(t, p0, p1, p2, p3):
     """
@@ -704,4 +729,3 @@ def get_jit_bezier_function(t_pre_activation=None, p_preactivation=None):
     }
 
     return lookup.get((t_pre_activation, p_preactivation), None)
-

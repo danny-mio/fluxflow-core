@@ -8,7 +8,7 @@ This module provides a unified interface for building either:
 The factory ensures proper component compatibility and parameter matching.
 """
 
-from typing import Any, Literal, Optional, Type
+from typing import Any, Literal, Optional
 
 import torch.nn as nn
 
@@ -389,30 +389,35 @@ class ModelFactory:
             Dict with 'FluxCompressor', 'FluxExpander', 'FluxFlowProcessor' classes
         """
         if self.model_type == "bezier" and self.model_version == "0.3.0":
-            from .v030 import FluxCompressor, FluxExpander, FluxFlowProcessor  # type: ignore
+            from .v030 import FluxCompressor as FC_v030
+            from .v030 import FluxExpander as FE_v030
+            from .v030 import FluxFlowProcessor as FFP_v030
 
             return {
-                "FluxCompressor": FluxCompressor,
-                "FluxExpander": FluxExpander,
-                "FluxFlowProcessor": FluxFlowProcessor,
+                "FluxCompressor": FC_v030,
+                "FluxExpander": FE_v030,
+                "FluxFlowProcessor": FFP_v030,
             }
         elif self.model_type == "bezier" and self.model_version == "0.6.0":
-            from .v060 import FluxCompressor, FluxExpander, FluxFlowProcessor  # type: ignore
+            from .v060 import FluxCompressor as FC_v060
+            from .v060 import FluxExpander as FE_v060
+            from .v060 import FluxFlowProcessor as FFP_v060
 
             return {
-                "FluxCompressor": FluxCompressor,
-                "FluxExpander": FluxExpander,
-                "FluxFlowProcessor": FluxFlowProcessor,
+                "FluxCompressor": FC_v060,
+                "FluxExpander": FE_v060,
+                "FluxFlowProcessor": FFP_v060,
             }
         else:
             # Use current implementations (baseline or default bezier)
-            from .v060.flow import FluxFlowProcessor  # type: ignore
-            from .v060.vae import FluxCompressor, FluxExpander  # type: ignore
+            from .v060.flow import FluxFlowProcessor as FFP_v060
+            from .v060.vae import FluxCompressor as FC_v060
+            from .v060.vae import FluxExpander as FE_v060
 
             return {
-                "FluxCompressor": FluxCompressor,
-                "FluxExpander": FluxExpander,
-                "FluxFlowProcessor": FluxFlowProcessor,
+                "FluxCompressor": FC_v060,
+                "FluxExpander": FE_v060,
+                "FluxFlowProcessor": FFP_v060,
             }
 
     def get_config(self) -> dict[str, Any]:
@@ -477,16 +482,28 @@ def create_bezier_models(
         (vae_encoder, vae_decoder, flow_processor, text_encoder)
     """
     # Import from the appropriate version directory
+    Compressor: Any
+    Expander: Any
+    FlowProcessor: Any
+
     if model_version == "0.3.0":
-        from .encoders import BertTextEncoder  # type: ignore
-        from .v030 import FluxCompressor as Compressor  # type: ignore
-        from .v030 import FluxExpander as Expander  # type: ignore
-        from .v030 import FluxFlowProcessor as FlowProcessor  # type: ignore
+        from .encoders import BertTextEncoder
+        from .v030 import FluxCompressor as Compressor_v030
+        from .v030 import FluxExpander as Expander_v030
+        from .v030 import FluxFlowProcessor as FlowProcessor_v030
+
+        Compressor = Compressor_v030
+        Expander = Expander_v030
+        FlowProcessor = FlowProcessor_v030
     elif model_version == "0.6.0":
-        from .encoders import BertTextEncoder  # type: ignore
-        from .v060 import FluxCompressor as Compressor  # type: ignore
-        from .v060 import FluxExpander as Expander  # type: ignore
-        from .v060 import FluxFlowProcessor as FlowProcessor  # type: ignore
+        from .encoders import BertTextEncoder
+        from .v060 import FluxCompressor as Compressor_v060
+        from .v060 import FluxExpander as Expander_v060
+        from .v060 import FluxFlowProcessor as FlowProcessor_v060
+
+        Compressor = Compressor_v060
+        Expander = Expander_v060
+        FlowProcessor = FlowProcessor_v060
     else:
         raise ValueError(f"Unsupported model version: {model_version}")
 
