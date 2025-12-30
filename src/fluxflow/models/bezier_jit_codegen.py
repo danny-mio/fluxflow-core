@@ -1,5 +1,5 @@
 """
-Code generation utility for JIT-compiled Bezier activation functions.
+Code generation utility for optimized Bezier activation functions.
 
 Generates all 25 combinations of t_pre_activation × p_preactivation to avoid
 manual boilerplate while maintaining optimal performance.
@@ -134,7 +134,7 @@ def generate_jit_function(t_activation: Optional[str], p_activation: Optional[st
 
 def generate_all_jit_functions() -> str:
     """
-    Generate all 25 JIT-compiled Bezier function combinations.
+    Generate all 25 optimized Bezier function combinations.
 
     Returns:
         Complete Python module code with all 25 functions
@@ -167,8 +167,11 @@ def generate_all_jit_functions() -> str:
             func_code = generate_jit_function(t_act, p_act)
             functions.append(func_code)
 
+    # Add lookup function
+    lookup_code = generate_lookup_function()
+
     # Combine all
-    all_code = "\n".join(header) + "\n\n".join(functions) + "\n"
+    all_code = "\n".join(header) + "\n\n".join(functions) + "\n\n" + lookup_code + "\n"
     return all_code
 
 
