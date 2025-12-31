@@ -56,9 +56,9 @@ class ResidualUpsampleBlock(nn.Module):
             nn.ConvTranspose2d(
                 channels, channels * 5, kernel_size=16, stride=2, padding=7
             ),  # doubles H,W
-            BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+            BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
             nn.Conv2d(channels, channels * 5, kernel_size=5, padding=4, stride=1, dilation=2),
-            BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+            BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
         )
 
         # Residual upsampling path - simple nearest neighbor upsampling
@@ -131,7 +131,7 @@ class ProgressiveUpscaler(nn.Module):
         if self.use_gradient_checkpointing:
             # Checkpoint each layer individually to reduce memory usage
             for layer in self.layers:
-                x = checkpoint(layer, x, context, use_reentrant=False)
+                x = checkpoint(layer, x, context, use_reentrant=True)
             return x
         else:
             # Normal forward pass without checkpointing
@@ -160,6 +160,10 @@ class FluxCompressor(nn.Module):
         attn_ff_mult: Feed-forward expansion multiplier (default: 2)
         attn_dropout: Attention dropout rate (default: 0.0)
     """
+
+    def get_context_dims(self) -> int:
+        """Return number of context dimensions added to latents (0 for v0.3.0 and earlier)."""
+        return 0
 
     def __init__(
         self,
@@ -201,7 +205,7 @@ class FluxCompressor(nn.Module):
                         padding=1,
                         bias=False,
                     ),
-                    BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+                    BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
                 )
                 for i in range(downscales)
             ]
@@ -217,7 +221,7 @@ class FluxCompressor(nn.Module):
                         stride=2,
                         padding=3,
                     ),
-                    BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+                    BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
                 )
                 for i in range(downscales)
             ]
@@ -229,7 +233,7 @@ class FluxCompressor(nn.Module):
             *[
                 nn.Sequential(
                     nn.Conv2d(final_ch, d_model * 5, kernel_size=1),
-                    BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+                    BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
                 )
                 for _ in range(2)
             ]
@@ -259,18 +263,18 @@ class FluxCompressor(nn.Module):
         self.mu_activation = TrainableBezier(
             shape=(d_model,),
             channel_only=True,
-            p0=-2.0,  # Wider initial range for latent space
-            p1=-0.5,
-            p2=0.5,
-            p3=2.0,
+            p0=-0.5,  # Tighter range for better learning
+            p1=-0.1,
+            p2=0.1,
+            p3=0.5,
         )
         self.logvar_activation = TrainableBezier(
             shape=(d_model,),
             channel_only=True,
-            p0=-3.0,  # Logvar typically has wider range
-            p1=-1.0,
-            p2=1.0,
-            p3=3.0,
+            p0=-1.0,  # Tighter range for logvar
+            p1=-0.2,
+            p2=0.2,
+            p3=1.0,
         )
 
         # Token self-attention blocks
@@ -381,7 +385,7 @@ class FluxCompressor(nn.Module):
             return x
 
         if self.use_gradient_checkpointing:
-            x = checkpoint(encode_block, img, use_reentrant=False)
+            x = checkpoint(encode_block, img, use_reentrant=True)
         else:
             x = encode_block(img)
 
@@ -413,7 +417,7 @@ class FluxCompressor(nn.Module):
             return seq
 
         if self.use_gradient_checkpointing:
-            img_seq = checkpoint(attn_block, img_seq, use_reentrant=False)
+            img_seq = checkpoint(attn_block, img_seq, use_reentrant=True)
         else:
             img_seq = attn_block(img_seq)
 
@@ -478,8 +482,10 @@ class FluxExpander(nn.Module):
         # Only 3 parameters per control point → 12 params total
         self.rgb_activation = TrainableBezier(
             shape=(3,),  # R, G, B channels only
-            p0=-1.0,  # Output range start
-            p3=1.0,  # Output range end
+            p0=-0.5,  # Output range start
+            p1=-0.05,  # Small negative
+            p2=0.05,  # Small positive
+            p3=0.5,  # Output range end
             channel_only=True,
         )
 
@@ -777,7 +783,7 @@ class BaselineFluxExpander(nn.Module):
                 if self.use_gradient_checkpointing:
                     # Checkpoint each layer individually to reduce memory usage
                     for layer in self.layers:
-                        x = checkpoint(layer, x, context, use_reentrant=False)
+                        x = checkpoint(layer, x, context, use_reentrant=True)
                     return x
                 else:
                     # Normal forward pass without checkpointing

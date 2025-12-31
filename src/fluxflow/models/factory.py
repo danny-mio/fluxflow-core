@@ -8,13 +8,54 @@ This module provides a unified interface for building either:
 The factory ensures proper component compatibility and parameter matching.
 """
 
+import importlib
+from pathlib import Path
 from typing import Any, Literal, Optional
 
 import torch.nn as nn
 
+from . import registry
 from .encoders import BertTextEncoder
 from .v060.flow import BaselineFluxFlowProcessor
 from .v060.vae import BaselineFluxExpander, BaselineResidualUpsampleBlock
+
+# Import the registry to ensure it's available for version modules
+ModelClassRegistry = registry.ModelClassRegistry
+
+
+# Automatically discover and import all version modules
+# This enables truly self-registering versions - no code changes needed for new versions
+
+
+def _auto_discover_versions():
+    """Automatically discover and import all version modules."""
+    # Get the directory containing this factory.py file
+    models_dir = Path(__file__).parent
+
+    # Find all directories that match version pattern (vXXX)
+    for item in models_dir.iterdir():
+        if (
+            item.is_dir()
+            and item.name.startswith("v")
+            and len(item.name) >= 4  # vXXX minimum
+            and item.name[1:].isdigit()
+            and (item / "__init__.py").exists()
+        ):  # Must have __init__.py
+
+            try:
+                # Import the version module to trigger self-registration
+                # __name__ is 'fluxflow.models.factory', parent is 'fluxflow.models'
+                parent_package = ".".join(__name__.split(".")[:-1])
+                version_module_name = item.name
+                full_module_name = f"{parent_package}.{version_module_name}"
+                importlib.import_module(full_module_name)
+            except ImportError:
+                # Skip modules that can't be imported
+                continue
+
+
+# Auto-discover all versions
+_auto_discover_versions()
 
 ModelType = Literal["bezier", "baseline"]
 ActivationType = Literal["silu", "gelu", "relu"]
@@ -382,43 +423,39 @@ class ModelFactory:
         """
         Get versioned classes for VAE and Flow components.
 
-        For bezier models with specific versions, imports from versioned directories.
+        Uses the self-registering ModelClassRegistry for bezier models.
         For baseline or unspecified versions, uses current implementations.
 
         Returns:
             Dict with 'FluxCompressor', 'FluxExpander', 'FluxFlowProcessor' classes
         """
-        if self.model_type == "bezier" and self.model_version == "0.3.0":
-            from .v030 import FluxCompressor as FC_v030
-            from .v030 import FluxExpander as FE_v030
-            from .v030 import FluxFlowProcessor as FFP_v030
+        if self.model_type == "bezier":
+            # Try to get registered classes for this version
+            registered_classes = ModelClassRegistry.get_classes(self.model_version)
+            if registered_classes:
+                return registered_classes  # type: ignore
 
-            return {
-                "FluxCompressor": FC_v030,
-                "FluxExpander": FE_v030,
-                "FluxFlowProcessor": FFP_v030,
-            }
-        elif self.model_type == "bezier" and self.model_version == "0.6.0":
-            from .v060 import FluxCompressor as FC_v060
-            from .v060 import FluxExpander as FE_v060
-            from .v060 import FluxFlowProcessor as FFP_v060
+            # Fallback: try to dynamically import version module
+            try:
+                version_module = f".v{self.model_version.replace('.', '')}"
+                _ = __import__(version_module, fromlist=[""], globals=globals())
+                # If the module has registered itself, it should be in the registry now
+                registered_classes = ModelClassRegistry.get_classes(self.model_version)
+                if registered_classes:
+                    return registered_classes  # type: ignore
+            except ImportError:
+                pass
 
-            return {
-                "FluxCompressor": FC_v060,
-                "FluxExpander": FE_v060,
-                "FluxFlowProcessor": FFP_v060,
-            }
-        else:
-            # Use current implementations (baseline or default bezier)
-            from .v060.flow import FluxFlowProcessor as FFP_v060
-            from .v060.vae import FluxCompressor as FC_v060
-            from .v060.vae import FluxExpander as FE_v060
+        # Fallback to current implementations (baseline or default bezier)
+        from .v060.flow import FluxFlowProcessor as FFP_v060
+        from .v060.vae import FluxCompressor as FC_v060
+        from .v060.vae import FluxExpander as FE_v060
 
-            return {
-                "FluxCompressor": FC_v060,
-                "FluxExpander": FE_v060,
-                "FluxFlowProcessor": FFP_v060,
-            }
+        return {
+            "FluxCompressor": FC_v060,
+            "FluxExpander": FE_v060,
+            "FluxFlowProcessor": FFP_v060,
+        }
 
     def get_config(self) -> dict[str, Any]:
         """
@@ -473,39 +510,37 @@ def create_bezier_models(
     vae_dim: int = 128,
     flow_d_model: int = 512,
     flow_embedding_size: int = 1024,
-    model_version: str = "0.3.0",
+    model_version: str = "0.7.0",
 ) -> tuple:
     """
     Convenience function to create full Bezier model set.
 
+    Uses self-registering version system - no if statements needed for new versions.
+
     Returns:
         (vae_encoder, vae_decoder, flow_processor, text_encoder)
     """
-    # Import from the appropriate version directory
-    Compressor: Any
-    Expander: Any
-    FlowProcessor: Any
+    from .encoders import BertTextEncoder
 
-    if model_version == "0.3.0":
-        from .encoders import BertTextEncoder
-        from .v030 import FluxCompressor as Compressor_v030
-        from .v030 import FluxExpander as Expander_v030
-        from .v030 import FluxFlowProcessor as FlowProcessor_v030
+    # Get classes from registry (will import and register the version module if needed)
+    classes = ModelClassRegistry.get_classes(model_version)
+    if classes is None:
+        # Try to dynamically import the version module to trigger registration
+        try:
+            version_module = f"fluxflow.models.v{model_version.replace('.', '')}"
+            __import__(version_module)
+            classes = ModelClassRegistry.get_classes(model_version)
+        except ImportError:
+            pass
 
-        Compressor = Compressor_v030
-        Expander = Expander_v030
-        FlowProcessor = FlowProcessor_v030
-    elif model_version == "0.6.0":
-        from .encoders import BertTextEncoder
-        from .v060 import FluxCompressor as Compressor_v060
-        from .v060 import FluxExpander as Expander_v060
-        from .v060 import FluxFlowProcessor as FlowProcessor_v060
+    if classes is None:
+        raise ValueError(
+            f"Unsupported model version: {model_version}. Available: {ModelClassRegistry.list_versions()}"
+        )
 
-        Compressor = Compressor_v060
-        Expander = Expander_v060
-        FlowProcessor = FlowProcessor_v060
-    else:
-        raise ValueError(f"Unsupported model version: {model_version}")
+    Compressor = classes["FluxCompressor"]
+    Expander = classes["FluxExpander"]
+    FlowProcessor = classes["FluxFlowProcessor"]
 
     # Use consistent downscales for all versions
     downscales = 4

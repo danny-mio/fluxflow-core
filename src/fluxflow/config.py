@@ -19,15 +19,18 @@ class ModelConfig(BaseModel):
         description="Model architecture type: 'bezier' (default) or 'baseline' (for comparison)",
     )
     model_version: str = Field(
-        default="0.3.0",
-        description="Model version: '0.3.0' (default) or '0.6.0'",
+        default="0.6.0",
+        description="Model version: automatically discovered (default: '0.6.0')",
     )
 
     @field_validator("model_version")
     @classmethod
     def validate_model_version(cls, v):
-        """Validate model version is supported."""
-        allowed_versions = ["0.3.0", "0.6.0"]
+        """Validate model version is supported by checking registered versions."""
+        # Import registry to ensure version modules are discovered
+        from .models.registry import list_versions
+
+        allowed_versions = list_versions()
         if v not in allowed_versions:
             raise ValueError(f"model_version must be one of {allowed_versions}, got '{v}'")
         return v

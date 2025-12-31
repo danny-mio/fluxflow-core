@@ -17,7 +17,11 @@ from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
 from ..activations import BezierActivation, TrainableBezier
-from ..conditioning import SPADE, ContextAttentionMixer
+from ..conditioning import ContextAttentionMixer
+from .conditioning import SPADE
+
+# Number of context dimensions for v0.7.0
+CONTEXT_DIMS = 5
 
 
 class Clamp(nn.Module):
@@ -77,7 +81,7 @@ class ResidualUpsampleBlock(nn.Module):
         # Save input for residual connection
         identity = x
 
-        if self.use_spade and context is not None:
+        if self.use_spade:
             x = self.spade(x, context)
 
         # Main convolution path (no checkpoint here, done at higher level)
@@ -158,12 +162,12 @@ class FluxCompressor(nn.Module):
         attn_layers: Number of self-attention layers (default: 2)
         attn_heads: Number of attention heads (default: 8)
         attn_ff_mult: Feed-forward expansion multiplier (default: 2)
-        attn_dropout: Attention dropout rate (default: 0.0)
+         attn_dropout: Attention dropout rate (default: 0.0)
     """
 
     def get_context_dims(self) -> int:
-        """Return number of context dimensions added to latents (0 for v0.6.0 and earlier)."""
-        return 0
+        """Return number of context dimensions added to latents."""
+        return CONTEXT_DIMS
 
     def __init__(
         self,
@@ -308,6 +312,9 @@ class FluxCompressor(nn.Module):
             [AttnBlock(d_model, attn_heads, attn_dropout) for _ in range(attn_layers)]
         )
 
+        # Context projection: reduce attention output to context dimensions for SPADE
+        self.context_proj = nn.Linear(d_model, CONTEXT_DIMS)
+
         # Fixed 2D sinusoidal positional encoding
         self.register_buffer("_pe_dummy", torch.zeros(1), persistent=False)
         self._pos_cache = {}  # {(H,W,D,device): tensor}
@@ -410,23 +417,40 @@ class FluxCompressor(nn.Module):
         pe_content = latent.flatten(2).permute(0, 2, 1)  # [B, T, D]
         img_seq = img_seq + pe_fixed.unsqueeze(0) + pe_content
 
-        # Checkpoint attention layers as a group
+        # z is generated WITHOUT self-attention (clean latent representation)
+        z_tokens = img_seq.clone()
+
+        # Apply self-attention ONLY for context generation
         def attn_block(seq):
             for blk in self.token_attn:
                 seq = blk(seq)
             return seq
 
         if self.use_gradient_checkpointing:
-            img_seq = checkpoint(attn_block, img_seq, use_reentrant=True)
+            attended_seq = checkpoint(attn_block, img_seq, use_reentrant=True)
         else:
-            img_seq = attn_block(img_seq)
+            attended_seq = attn_block(img_seq)
 
-        # HW token (encodes spatial dimensions)
-        hw_vec = torch.zeros((B, 1, D), device=z.device, dtype=z.dtype)
+        # Generate context from self-attention output for SPADE conditioning
+        # Context is pooled across all attended tokens (global attentional context)
+        context = self.context_proj(attended_seq.mean(dim=1, keepdim=True))  # [B, 1, CONTEXT_DIMS]
+
+        # Use clean tokens (z) for the main latent representation
+        img_seq = z_tokens
+
+        # HW token (encodes spatial dimensions) - now includes context dimensions
+        hw_vec = torch.zeros((B, 1, D + CONTEXT_DIMS), device=z.device, dtype=z.dtype)
         hw_vec[:, 0, 0] = H / float(self.max_hw)
         hw_vec[:, 0, 1] = W / float(self.max_hw)
+        # Last CONTEXT_DIMS dimensions are context (will be used by expander for SPADE)
 
-        packed = torch.cat([img_seq, hw_vec], dim=1)  # [B, T+1, D]
+        # Concatenate context to each token in img_seq
+        context_expanded = context.expand(-1, img_seq.size(1), -1)  # [B, T, CONTEXT_DIMS]
+        img_seq_with_context = torch.cat(
+            [img_seq, context_expanded], dim=-1
+        )  # [B, T, D+CONTEXT_DIMS]
+
+        packed = torch.cat([img_seq_with_context, hw_vec], dim=1)  # [B, T+1, D+CONTEXT_DIMS]
 
         if training:
             return packed, mu, logvar
@@ -454,7 +478,7 @@ class FluxExpander(nn.Module):
         self.upscale = ProgressiveUpscaler(
             channels=d_model,
             steps=upscales,
-            context_size=d_model,
+            context_size=CONTEXT_DIMS,  # Context dimensions for SPADE
             use_spade=True,
             use_gradient_checkpointing=use_gradient_checkpointing,
         )
@@ -490,22 +514,30 @@ class FluxExpander(nn.Module):
         )
 
     def unpack(self, packed):
-        """Extract image tokens and spatial dimensions from packed representation."""
-        img_seq = packed[:, :-1, :].contiguous()  # [B, T, D]
+        """Extract image tokens, context, and spatial dimensions from packed representation."""
+        img_seq_with_context = packed[:, :-1, :].contiguous()  # [B, T, D+CONTEXT_DIMS]
+        # Split into VAE dimensions and context dimensions
+        img_seq = img_seq_with_context[:, :, :-CONTEXT_DIMS]  # [B, T, D] - VAE tokens
+        context = img_seq_with_context[
+            :, :, -CONTEXT_DIMS:
+        ].contiguous()  # [B, T, CONTEXT_DIMS] - context for SPADE
         H = (packed[:, -1, 0] * self.max_hw).round().clamp(min=1).long()
         W = (packed[:, -1, 1] * self.max_hw).round().clamp(min=1).long()
-        return img_seq, H, W
+        return img_seq, context, H, W
 
     def forward(self, packed, use_context=True):
         """
         Args:
-            packed: Latent representation [B, T+1, D]
-            use_context: Enable context conditioning (default: True)
+            packed: Latent representation [B, T+1, D+CONTEXT_DIMS] (VAE dims + context dims)
+                     IMPORTANT: During training, only add noise to image tokens packed[:, :-1, :]
+                     The HW token (packed[:, -1, :]) should remain clean as it encodes spatial metadata
+            text_embeddings: Text embeddings [B, embedding_size]
+            timesteps: Diffusion timesteps [B]
 
         Returns:
             Generated images [B, 3, H, W]
         """
-        img_seq, H, W = self.unpack(packed)
+        img_seq, context, H, W = self.unpack(packed)
         B, L, D = img_seq.shape
 
         # Check if all samples have same H, W for batch optimization
@@ -518,10 +550,10 @@ class FluxExpander(nn.Module):
             # Batch process all samples
             feat = rearrange(img_seq[:, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
 
-            # Use feat itself as spatial context for SPADE (spatially-adaptive)
-            # This provides rich spatial information instead of a pooled vector
+            # Use context from compressor for SPADE conditioning
+            # Context is [B, T, CONTEXT_DIMS], reshape to spatial [B, CONTEXT_DIMS, h, w]
             if use_context:
-                ctx = feat  # [B, D, h, w] - spatial context
+                ctx = rearrange(context[:, :t_valid], "b (h w) c -> b c h w", h=h, w=w).contiguous()
             else:
                 ctx = None  # Disable SPADE conditioning entirely
 
@@ -539,9 +571,11 @@ class FluxExpander(nn.Module):
 
                 feat_i = rearrange(img_seq[i : i + 1, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
 
-                # Use feat_i itself as spatial context for SPADE
+                # Use context from compressor for SPADE conditioning
                 if use_context:
-                    ctx_i = feat_i  # [1, D, h, w] - spatial context
+                    ctx_i = rearrange(
+                        context[i : i + 1, :t_valid], "b (h w) c -> b c h w", h=h, w=w
+                    ).contiguous()
                 else:
                     ctx_i = None  # Disable SPADE conditioning entirely
 

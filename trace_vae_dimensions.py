@@ -21,7 +21,7 @@ def trace_dimensions():
     batch_size = 2
     original_img_size = 256  # 256x256 images
     img_size = original_img_size
-    d_model = 128   # latent dimension
+    d_model = 128  # latent dimension
     downscales = 4  # 4 downsampling stages
 
     print(f"Input: {batch_size} × 3 × {img_size} × {img_size}")
@@ -65,19 +65,36 @@ def trace_dimensions():
 
         # First step: feature expansion
         print(f"     Input: {current.shape}")
-        conv1 = nn.Conv2d(stage_channels[i], stage_channels[i+1] * 5, kernel_size=3, stride=1, padding=1, bias=False)
+        conv1 = nn.Conv2d(
+            stage_channels[i],
+            stage_channels[i + 1] * 5,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=False,
+        )
         current = conv1(current)
-        print(f"     After Conv2d({stage_channels[i]}→{stage_channels[i+1]*5}, k=3, s=1, p=1): {current.shape}")
+        print(
+            f"     After Conv2d({stage_channels[i]}→{stage_channels[i+1]*5}, k=3, s=1, p=1): {current.shape}"
+        )
         print(f"     BezierActivation (5→1 reduction)")
-        current = current.view(batch_size, stage_channels[i+1], 5, img_size, img_size).mean(dim=2)  # Simulate Bezier reduction
+        current = current.view(batch_size, stage_channels[i + 1], 5, img_size, img_size).mean(
+            dim=2
+        )  # Simulate Bezier reduction
         print(f"     After Bezier: {current.shape}")
 
         # Second step: downsampling
-        conv2 = nn.Conv2d(stage_channels[i+1], stage_channels[i+1] * 5, kernel_size=8, stride=2, padding=3)
+        conv2 = nn.Conv2d(
+            stage_channels[i + 1], stage_channels[i + 1] * 5, kernel_size=8, stride=2, padding=3
+        )
         current = conv2(current)
-        print(f"     After Conv2d({stage_channels[i+1]}→{stage_channels[i+1]*5}, k=8, s=2, p=3): {current.shape}")
+        print(
+            f"     After Conv2d({stage_channels[i+1]}→{stage_channels[i+1]*5}, k=8, s=2, p=3): {current.shape}"
+        )
         print(f"     BezierActivation (5→1 reduction)")
-        current = current.view(batch_size, stage_channels[i+1], 5, current.shape[2], current.shape[3]).mean(dim=2)
+        current = current.view(
+            batch_size, stage_channels[i + 1], 5, current.shape[2], current.shape[3]
+        ).mean(dim=2)
         print(f"     After Bezier: {current.shape}")
 
         img_size = current.shape[2]  # Update spatial size
@@ -94,8 +111,12 @@ def trace_dimensions():
     for layer_idx in range(2):
         conv_latent = nn.Conv2d(final_ch, d_model * 5, kernel_size=1)
         current = conv_latent(current)
-        print(f"   After latent_proj[{layer_idx}] Conv2d({final_ch}→{d_model*5}, k=1): {current.shape}")
-        current = current.view(batch_size, d_model, 5, current.shape[2], current.shape[3]).mean(dim=2)
+        print(
+            f"   After latent_proj[{layer_idx}] Conv2d({final_ch}→{d_model*5}, k=1): {current.shape}"
+        )
+        current = current.view(batch_size, d_model, 5, current.shape[2], current.shape[3]).mean(
+            dim=2
+        )
         print(f"   After Bezier reduction: {current.shape}")
 
     print(f"   Final latent spatial: {current.shape[2]}×{current.shape[3]}")
@@ -117,15 +138,21 @@ def trace_dimensions():
         current = trans_conv(current)
         print(f"     After ConvTranspose2d({d_model}→{d_model*5}, k=16, s=2, p=7): {current.shape}")
         print(f"     BezierActivation (5→1 reduction)")
-        current = current.view(batch_size, d_model, 5, current.shape[2], current.shape[3]).mean(dim=2)
+        current = current.view(batch_size, d_model, 5, current.shape[2], current.shape[3]).mean(
+            dim=2
+        )
         print(f"     After Bezier: {current.shape}")
 
         # Regular convolution with dilation
-        conv_dilated = nn.Conv2d(d_model, d_model * 5, kernel_size=5, padding=4, stride=1, dilation=2)
+        conv_dilated = nn.Conv2d(
+            d_model, d_model * 5, kernel_size=5, padding=4, stride=1, dilation=2
+        )
         current = conv_dilated(current)
         print(f"     After Conv2d({d_model}→{d_model*5}, k=5, p=4, d=2): {current.shape}")
         print(f"     BezierActivation (5→1 reduction)")
-        current = current.view(batch_size, d_model, 5, current.shape[2], current.shape[3]).mean(dim=2)
+        current = current.view(batch_size, d_model, 5, current.shape[2], current.shape[3]).mean(
+            dim=2
+        )
         print(f"     After Bezier: {current.shape}")
 
     print(f"\n   After {downscales} upsampling stages: {current.shape}")
@@ -165,6 +192,7 @@ def trace_dimensions():
         print(f"   ❌ Spatial dimension error: expected {expected_spatial}, got {actual_spatial}")
 
     print("\n" + "=" * 80)
+
 
 if __name__ == "__main__":
     trace_dimensions()

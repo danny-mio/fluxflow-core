@@ -1,8 +1,9 @@
 """
-FluxFlow v0.6.0 models (current optimizations).
+FluxFlow v0.7.0 models (context-enhanced architecture).
 
-This version contains the optimized activation functions and architecture
-with improved VAE reconstruction and flow processing.
+This version introduces separate context generation in the compressor,
+context-aware SPADE conditioning in the expander, and unified flow processing
+of VAE dimensions + context dimensions as a single entity.
 """
 
 # Auto-register this version using metaclass
@@ -12,9 +13,9 @@ from .vae import FluxCompressor, FluxExpander
 
 
 class VersionRegistrar(metaclass=VersionedModelMeta):
-    """Auto-registers v0.6.0 models when this class is defined."""
+    """Auto-registers v0.7.0 models when this class is defined."""
 
-    VERSION = "0.6.0"
+    VERSION = "0.7.0"
     COMPONENTS = {
         "FluxCompressor": FluxCompressor,
         "FluxExpander": FluxExpander,
