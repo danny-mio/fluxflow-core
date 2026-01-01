@@ -132,7 +132,7 @@ class ProgressiveUpscaler(nn.Module):
             Upsampled output [B, channels, H*2^steps, W*2^steps]
         """
 
-        if self.use_gradient_checkpointing:
+        if self.use_gradient_checkpointing and x.requires_grad:
             # Checkpoint each layer individually to reduce memory usage
             for layer in self.layers:
                 x = checkpoint(layer, x, context, use_reentrant=True)
@@ -391,7 +391,7 @@ class FluxCompressor(nn.Module):
                 x = self.encoder_z[i](x)
             return x
 
-        if self.use_gradient_checkpointing:
+        if self.use_gradient_checkpointing and img.requires_grad:
             x = checkpoint(encode_block, img, use_reentrant=True)
         else:
             x = encode_block(img)
@@ -426,7 +426,7 @@ class FluxCompressor(nn.Module):
                 seq = blk(seq)
             return seq
 
-        if self.use_gradient_checkpointing:
+        if self.use_gradient_checkpointing and img_seq.requires_grad:
             attended_seq = checkpoint(attn_block, img_seq, use_reentrant=True)
         else:
             attended_seq = attn_block(img_seq)
@@ -814,7 +814,7 @@ class BaselineFluxExpander(nn.Module):
                 )
 
             def forward(self, x, context=None):
-                if self.use_gradient_checkpointing:
+                if self.use_gradient_checkpointing and x.requires_grad:
                     # Checkpoint each layer individually to reduce memory usage
                     for layer in self.layers:
                         x = checkpoint(layer, x, context, use_reentrant=True)

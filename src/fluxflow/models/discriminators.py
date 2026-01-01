@@ -112,12 +112,8 @@ class PatchDiscriminator(nn.Module):
 
         # Lightweight context conditioning (if needed)
         if ctx_dim and ctx_dim > 0:
-            # Simple projection instead of heavy snlinear
-            self.ctx_proj = nn.Sequential(
-                nn.Linear(ctx_dim, 128),
-                nn.LeakyReLU(0.2, inplace=True),
-                nn.Linear(128, c),  # Project to feature dimension
-            )
+            # Simple linear projection
+            self.ctx_proj = nn.Linear(ctx_dim, c)
             self.feat_proj = nn.Identity()
 
     def forward(self, x, ctx_vec=None, return_feats=False):
