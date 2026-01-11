@@ -258,6 +258,18 @@ class FluxPipeline(nn.Module):
                 config["flow_attn_heads"] = config["flow_dim"] // head_dim
                 break
 
+        # Detect v0.7.0 context features
+        has_context_features = any(
+            "ctx_mixer" in key or "context_injection" in key or "context_final" in key
+            for key in keys
+        )
+        if has_context_features:
+            config["model_version"] = "0.7.0"
+            config["has_context"] = True
+        else:
+            config["model_version"] = "0.3.0"
+            config["has_context"] = False
+
         # Set default max_hw
         config["max_hw"] = 1024
 

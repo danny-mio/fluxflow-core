@@ -392,9 +392,9 @@ class ModelLoaderLegacy(ModelVersionLoader):
         """Load legacy checkpoint using config detection."""
         from .pipeline import FluxPipeline
 
-        logger.warning(
-            f"Loading legacy checkpoint without version metadata: {checkpoint_path}. "
-            "Architecture will be inferred from checkpoint structure. "
+        logger.info(
+            f"Loading checkpoint without version metadata: {checkpoint_path}. "
+            "Architecture will be auto-detected from checkpoint structure. "
             "Consider re-saving with 'save_versioned_checkpoint()' to add metadata."
         )
 
@@ -406,11 +406,14 @@ class ModelLoaderLegacy(ModelVersionLoader):
 
         config = FluxPipeline._detect_config(state_dict)
 
+        # Determine actual version from detected config
+        detected_version = config.get("model_version", "0.3.0")
+
         # Create metadata for future use
         if metadata is None:
             metadata = ModelMetadata(
-                model_version="0.2.0",
-                library_version="0.3.1",
+                model_version=detected_version,
+                library_version="0.7.0",
                 architecture=config,
                 components={
                     "compressor": "FluxCompressor",
@@ -419,9 +422,15 @@ class ModelLoaderLegacy(ModelVersionLoader):
                 },
             )
 
-        # Delegate to v0.3 loader (backward compatible)
-        v03_loader = ModelLoaderV03()
-        return v03_loader.load_checkpoint(checkpoint_path, metadata, device, **kwargs)
+        # Route to appropriate loader based on detected version
+        if detected_version == "0.7.0":
+            logger.info(f"Detected v0.7.0 architecture from checkpoint structure")
+            v07_loader = ModelLoaderV07()
+            return v07_loader.load_checkpoint(checkpoint_path, metadata, device, **kwargs)
+        else:
+            # Delegate to v0.3 loader for older versions
+            v03_loader = ModelLoaderV03()
+            return v03_loader.load_checkpoint(checkpoint_path, metadata, device, **kwargs)
 
     def save_checkpoint(
         self, model: Any, output_path: Path, metadata: ModelMetadata, **kwargs
