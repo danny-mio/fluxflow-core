@@ -297,6 +297,15 @@ class ModelLoaderV07(ModelVersionLoader):
 
         config = metadata.architecture
 
+        # For v0.7.0 models, adjust vae_dim if it was detected from flow_processor.vae_to_dmodel
+        # since that includes context dimensions
+        if config.get("model_version") == "0.7.0" and "vae_dim" in config:
+            # Import CONTEXT_DIMS from v0.7.0 module
+            from .v070.vae import CONTEXT_DIMS
+            if "flow_dim" in config:
+                # vae_to_dmodel input is vae_dim + CONTEXT_DIMS
+                config["vae_dim"] = config["vae_dim"] - CONTEXT_DIMS
+
         # Calculate appropriate attention heads to ensure d_model is divisible
         def get_valid_n_head(d_model, preferred_heads=8):
             """Get number of heads that evenly divides d_model."""
@@ -439,7 +448,7 @@ class ModelLoaderLegacy(ModelVersionLoader):
             )
 
         # Update version variable for logging
-        version = detected_version
+        version = detected_version  # Used for final logging
 
         # Route to appropriate loader based on detected version
         if detected_version == "0.7.0":
