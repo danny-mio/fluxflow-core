@@ -297,6 +297,21 @@ class ModelLoaderV07(ModelVersionLoader):
 
         config = metadata.architecture
 
+        # Calculate appropriate attention heads to ensure d_model is divisible
+        def get_valid_n_head(d_model, preferred_heads=8):
+            """Get number of heads that evenly divides d_model."""
+            if d_model % preferred_heads == 0:
+                return preferred_heads
+            # Find largest divisor that keeps heads reasonable
+            for heads in range(preferred_heads, 0, -1):
+                if d_model % heads == 0:
+                    return heads
+            return 1  # Fallback, though this shouldn't happen
+
+        # Use detected or default attention heads, ensuring compatibility
+        vae_attn_heads = get_valid_n_head(config["vae_dim"])
+        flow_attn_heads = get_valid_n_head(config["flow_dim"], config.get("flow_attn_heads", 8))
+
         # Initialize models with explicit config
         compressor = FluxCompressor(
             in_channels=config.get("in_channels", 3),
@@ -305,13 +320,14 @@ class ModelLoaderV07(ModelVersionLoader):
             max_hw=config.get("max_hw", 1024),
             use_attention=True,
             attn_layers=config.get("vae_attn_layers", 2),
+            attn_heads=vae_attn_heads,  # Ensure compatibility
         )
 
         flow_processor = FluxFlowProcessor(
             d_model=config["flow_dim"],
             vae_dim=config["vae_dim"],
             embedding_size=config.get("text_embed_dim", 768),
-            n_head=config.get("flow_attn_heads", 8),
+            n_head=flow_attn_heads,  # Use calculated heads
             n_layers=config.get("flow_transformer_layers", 10),
             max_hw=config.get("max_hw", 1024),
         )
@@ -421,6 +437,9 @@ class ModelLoaderLegacy(ModelVersionLoader):
                     "expander": "FluxExpander",
                 },
             )
+
+        # Update version variable for logging
+        version = detected_version
 
         # Route to appropriate loader based on detected version
         if detected_version == "0.7.0":
