@@ -7,7 +7,7 @@ from hashlib import md5
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
-from diffusers import DPMSolverMultistepScheduler
+from diffusers.schedulers import DPMSolverMultistepScheduler
 from PIL import Image
 from torchvision import transforms
 from torchvision.utils import save_image
@@ -311,6 +311,9 @@ def save_sample_images(
     use_cfg: bool = False,
     guidance_scale: float = 5.0,
     filename_prefix: Optional[str] = None,
+    *,
+    scheduler: Optional[Any] = None,
+    num_inference_steps: int = 50,
 ) -> None:
     """
     Generate and save sample images from text prompts.
@@ -365,55 +368,54 @@ def save_sample_images(
         for i in range(0, len(sample_texts), batch_size):
             text_embeddings = full_text_embeddings[i : i + batch_size]
             B = text_embeddings.size(0)
-            z_img = (torch.rand((B, 3, height, width), device=device) * 2) - 1
 
-            latent_z = diffuser.compressor(z_img)
-            img_seq = latent_z[:, :-1, :].clone()
-            hw_vec = latent_z[:, -1:, :].clone()
+            # Get the correct latent shape by compressing a dummy image
+            dummy_img = torch.randn(B, 3, height, width, device=device) * 2 - 1
+            dummy_latent = diffuser.compressor(dummy_img)
+            latent_shape = dummy_latent.shape  # [B, seq_len + 1, input_dim]
+            seq_len = latent_shape[1] - 1  # Exclude HW vector
 
-            scheduler = DPMSolverMultistepScheduler(num_train_timesteps=1000)
-            scheduler.set_timesteps(1000, device=device)  # type: ignore[attr-defined]
+            # For v0.7.0, input dimension includes context
+            from fluxflow.models.v070.vae import CONTEXT_DIMS
+            input_dim = latent_shape[-1]  # Use actual dimension from dummy latent
 
-            noise_img = torch.randn_like(img_seq)
-            t = torch.randint(0, 1000, (B,), device=device)
+            # Create HW vector (copy from dummy)
+            hw_vec = dummy_latent[:, -1:, :].clone()
 
-            noised_img = scheduler.add_noise(img_seq, noise_img, t)  # type: ignore[attr-defined]
-            noised_latent = torch.cat([noised_img, hw_vec], dim=1)
+            # Use flow model to predict clean latents from noisy inputs
+            dummy_img = torch.randn(B, 3, height, width, device=device) * 2 - 1
+            base_latent = diffuser.compressor(dummy_img)  # [B, seq_len + 1, input_dim]
 
-            # Denoise with or without CFG
-            if use_cfg and guidance_scale > 1.0:
-                # Generate null conditioning for CFG
-                null_text = [""] * B
-                null_encodings = tokenizer.batch_encode_plus(
-                    null_text,
-                    max_length=512,
-                    padding="max_length",
-                    truncation=True,
-                    return_tensors="pt",
-                )
-                null_input_ids = null_encodings["input_ids"].to(device)
-                null_attention_mask = (null_input_ids != tokenizer.pad_token_id).long().to(device)
-                null_embeddings = text_encoder(null_input_ids, attention_mask=null_attention_mask)
+            # Extract HW vector (preserve original)
+            hw_vec = base_latent[:, -1:, :]
+            img_tokens = base_latent[:, :-1, :]  # Clean latents from VAE
 
-                denoised_latent = _generate_with_cfg(
-                    noised_latent=noised_latent,
-                    text_embeddings=text_embeddings,
-                    null_embeddings=null_embeddings,
-                    diffuser=diffuser,
-                    guidance_scale=guidance_scale,
-                    device=device,
-                )
-            else:
-                # Standard generation without CFG
-                denoised_latent = generate_latent_images(
-                    batch_z=noised_latent,
-                    text_embeddings=text_embeddings,
-                    diffuser=diffuser,
-                    prediction_type="v_prediction",
-                )
+            # Create noisy version for flow input
+            t = torch.tensor(500.0, device=device)
+            alpha_t = torch.sqrt(t / 1000.0)
+            sigma_t = torch.sqrt(1 - alpha_t**2)
 
-            decoded_images = diffuser.expander(denoised_latent)
-            for b, img in enumerate(decoded_images):
+            # Add noise: x_t = alpha_t * x_0 + sigma_t * epsilon
+            epsilon = torch.randn_like(img_tokens)
+            noisy_img_tokens = alpha_t * img_tokens + sigma_t * epsilon
+            noisy_latent = torch.cat([noisy_img_tokens, hw_vec], dim=1)
+
+            # Flow model predicts v (normalized velocity)
+            v_pred = diffuser.flow_processor(noisy_latent, text_embeddings, t.expand(B))
+            v_pred_img = v_pred[:, :-1, :]
+
+            # Extract clean latents from v prediction: x_0 = (x_t - sigma_t * v) / alpha_t
+            # This inverts the v-prediction formula
+            pred_clean_img = (noisy_img_tokens - sigma_t * v_pred_img) / alpha_t
+
+            # Use predicted clean latents with original HW vector
+            final_latent = torch.cat([pred_clean_img, hw_vec], dim=1)
+
+            # Decode with VAE expander (expects packed format)
+            generated_images = diffuser.expander(final_latent)
+
+            # Save generated images
+            for b, img in enumerate(generated_images):
                 global_idx = i + b
                 # Use custom prefix if provided, otherwise use default pattern
                 if filename_prefix:

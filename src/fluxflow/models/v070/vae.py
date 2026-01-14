@@ -312,6 +312,9 @@ class FluxCompressor(nn.Module):
             [AttnBlock(d_model, attn_heads, attn_dropout) for _ in range(attn_layers)]
         )
 
+        # Final scaling to constrain latent range and improve numerical stability
+        self.final_norm = nn.LayerNorm(d_model)
+
         # Context projection: reduce attention output to context dimensions for SPADE
         self.context_proj = nn.Linear(d_model, CONTEXT_DIMS)
 
@@ -416,6 +419,11 @@ class FluxCompressor(nn.Module):
         pe_fixed = self._build_2d_sincos_pe(H, W, D, device=img_seq.device, dtype=img_seq.dtype)
         pe_content = latent.flatten(2).permute(0, 2, 1)  # [B, T, D]
         img_seq = img_seq + pe_fixed.unsqueeze(0) + pe_content
+
+        # Apply final scaling to constrain latent range and improve numerical stability
+        # Prevents massive accumulation from positional encodings
+        img_seq = self.final_norm(img_seq)
+        img_seq = torch.tanh(img_seq)  # Constrain to [-1, 1] range
 
         # z is generated WITHOUT self-attention (clean latent representation)
         z_tokens = img_seq.clone()

@@ -296,15 +296,9 @@ class ModelLoaderV07(ModelVersionLoader):
         from .v070.vae import FluxCompressor, FluxExpander
 
         config = metadata.architecture
-
-        # For v0.7.0 models, adjust vae_dim if it was detected from flow_processor.vae_to_dmodel
-        # since that includes context dimensions
-        if config.get("model_version") == "0.7.0" and "vae_dim" in config:
-            # Import CONTEXT_DIMS from v0.7.0 module
-            from .v070.vae import CONTEXT_DIMS
-            if "flow_dim" in config:
-                # vae_to_dmodel input is vae_dim + CONTEXT_DIMS
-                config["vae_dim"] = config["vae_dim"] - CONTEXT_DIMS
+        print(
+            f"DEBUG: ModelLoaderV07 config keys: {list(config.keys())}, model_version: {config.get('model_version')}, vae_dim: {config.get('vae_dim')}"
+        )
 
         # Calculate appropriate attention heads to ensure d_model is divisible
         def get_valid_n_head(d_model, preferred_heads=8):
@@ -317,14 +311,57 @@ class ModelLoaderV07(ModelVersionLoader):
                     return heads
             return 1  # Fallback, though this shouldn't happen
 
-        # Use detected or default attention heads, ensuring compatibility
-        vae_attn_heads = get_valid_n_head(config["vae_dim"])
-        flow_attn_heads = get_valid_n_head(config["flow_dim"], config.get("flow_attn_heads", 8))
+        # Load the checkpoint to get actual dimensions
+        if checkpoint_path.suffix == ".safetensors":
+            state_dict = safetensors.torch.load_file(str(checkpoint_path))
+        else:
+            state_dict = torch.load(checkpoint_path, map_location="cpu")
 
-        # Initialize models with explicit config
+        # Strip 'diffuser.' prefix if present
+        diffuser_state = {
+            k.replace("diffuser.", ""): v
+            for k, v in state_dict.items()
+            if k.startswith("diffuser.")
+        }
+        if not diffuser_state:
+            diffuser_state = state_dict
+
+        # Detect actual dimensions from checkpoint
+        actual_d_model = config.get("flow_dim", 32)
+        actual_vae_input_dim = config["vae_dim"]  # Default to config
+
+        for key in diffuser_state.keys():
+            if "flow_processor.vae_to_dmodel.weight" in key:
+                shape = diffuser_state[key].shape
+                actual_d_model = shape[0]
+                actual_vae_input_dim = shape[1]
+                break
+
+        # For v0.7.0, the config vae_dim is the VAE latent dimension
+        # The flow processor needs the actual input dimension from checkpoint
+        if config.get("model_version") == "0.7.0":
+            from .v070.vae import CONTEXT_DIMS
+
+            vae_latent_dim = config["vae_dim"]
+            flow_vae_dim = vae_latent_dim + CONTEXT_DIMS
+            # Verify against checkpoint if detected
+            if actual_vae_input_dim != flow_vae_dim:
+                logger.warning(
+                    f"Checkpoint vae_input_dim {actual_vae_input_dim} != expected {flow_vae_dim}, using checkpoint value"
+                )
+                flow_vae_dim = actual_vae_input_dim
+        else:
+            vae_latent_dim = config["vae_dim"]
+            flow_vae_dim = config["vae_dim"]
+
+        # Use detected or default attention heads, ensuring compatibility
+        vae_attn_heads = get_valid_n_head(vae_latent_dim)
+        flow_attn_heads = get_valid_n_head(actual_d_model, config.get("flow_attn_heads", 8))
+
+        # Initialize models with actual dimensions
         compressor = FluxCompressor(
             in_channels=config.get("in_channels", 3),
-            d_model=config["vae_dim"],
+            d_model=vae_latent_dim,
             downscales=config["downscales"],
             max_hw=config.get("max_hw", 1024),
             use_attention=True,
@@ -333,10 +370,10 @@ class ModelLoaderV07(ModelVersionLoader):
         )
 
         flow_processor = FluxFlowProcessor(
-            d_model=config["flow_dim"],
-            vae_dim=config["vae_dim"],
+            d_model=actual_d_model,
+            vae_dim=vae_latent_dim,
             embedding_size=config.get("text_embed_dim", 768),
-            n_head=flow_attn_heads,  # Use calculated heads
+            n_head=flow_attn_heads,
             n_layers=config.get("flow_transformer_layers", 10),
             max_hw=config.get("max_hw", 1024),
         )
@@ -431,8 +468,16 @@ class ModelLoaderLegacy(ModelVersionLoader):
 
         config = FluxPipeline._detect_config(state_dict)
 
-        # Determine actual version from detected config
-        detected_version = config.get("model_version", "0.3.0")
+        # Detect v0.7.0 features in checkpoint
+        keys = list(state_dict.keys())
+        has_v070_features = any(
+            "ctx_mixer" in key or "context_injection" in key or "context_final" in key
+            for key in keys
+        )
+        detected_version = "0.7.0" if has_v070_features else "0.3.0"
+
+        # Add version info to config for loader compatibility
+        config["model_version"] = detected_version
 
         # Create metadata for future use
         if metadata is None:
@@ -447,12 +492,9 @@ class ModelLoaderLegacy(ModelVersionLoader):
                 },
             )
 
-        # Update version variable for logging
-        version = detected_version  # Used for final logging
-
         # Route to appropriate loader based on detected version
         if detected_version == "0.7.0":
-            logger.info(f"Detected v0.7.0 architecture from checkpoint structure")
+            logger.info("Detected v0.7.0 architecture from checkpoint structure")
             v07_loader = ModelLoaderV07()
             return v07_loader.load_checkpoint(checkpoint_path, metadata, device, **kwargs)
         else:

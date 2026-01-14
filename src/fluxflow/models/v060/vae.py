@@ -308,6 +308,10 @@ class FluxCompressor(nn.Module):
             [AttnBlock(d_model, attn_heads, attn_dropout) for _ in range(attn_layers)]
         )
 
+        # Final scaling to constrain latent range and improve numerical stability
+        # Prevents massive latent accumulation from attention + positional encoding
+        self.final_norm = nn.LayerNorm(d_model)
+
         # Fixed 2D sinusoidal positional encoding
         self.register_buffer("_pe_dummy", torch.zeros(1), persistent=False)
         self._pos_cache = {}  # {(H,W,D,device): tensor}
@@ -420,6 +424,11 @@ class FluxCompressor(nn.Module):
             img_seq = checkpoint(attn_block, img_seq, use_reentrant=True)
         else:
             img_seq = attn_block(img_seq)
+
+        # Final scaling to constrain latent range and improve numerical stability
+        # Prevents massive latent accumulation from attention + positional encoding
+        img_seq = self.final_norm(img_seq)
+        img_seq = torch.tanh(img_seq)  # Constrain to [-1, 1] range
 
         # HW token (encodes spatial dimensions)
         hw_vec = torch.zeros((B, 1, D), device=z.device, dtype=z.dtype)
