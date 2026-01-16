@@ -377,6 +377,7 @@ def save_sample_images(
 
             # For v0.7.0, input dimension includes context
             from fluxflow.models.v070.vae import CONTEXT_DIMS
+
             input_dim = latent_shape[-1]  # Use actual dimension from dummy latent
 
             # Create HW vector (copy from dummy)
