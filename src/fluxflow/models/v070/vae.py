@@ -169,6 +169,15 @@ class FluxCompressor(nn.Module):
         """Return number of context dimensions added to latents."""
         return CONTEXT_DIMS
 
+    def get_downscales(self) -> int:
+        """Return the number of downsampling levels used by this model version."""
+        return int(self.downscales)
+
+    @classmethod
+    def get_default_downscales(cls) -> int:
+        """Return the default number of downsampling levels for this model version."""
+        return 4
+
     def __init__(
         self,
         in_channels=3,

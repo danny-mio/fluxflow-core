@@ -511,6 +511,7 @@ def create_bezier_models(
     flow_d_model: int = 512,
     flow_embedding_size: int = 1024,
     model_version: str = "0.7.0",
+    downscales: Optional[int] = None,
 ) -> tuple:
     """
     Convenience function to create full Bezier model set.
@@ -542,8 +543,10 @@ def create_bezier_models(
     Expander = classes["FluxExpander"]
     FlowProcessor = classes["FluxFlowProcessor"]
 
-    # Use consistent downscales for all versions
-    downscales = 4
+    # Get version-specific downscales
+    if downscales is None:
+        # All versions use 4 downscales for compatibility
+        downscales = 4
 
     compressor = Compressor(
         in_channels=3,

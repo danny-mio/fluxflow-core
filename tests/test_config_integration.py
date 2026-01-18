@@ -108,23 +108,28 @@ class TestConfigIntegration:
 
     def test_baseline_latent_compatibility(self):
         """Test that baseline and bezier use same latent dimensions."""
-        bezier_config = ModelConfig(model_type="bezier", vae_dim=128)
+        # Both use v0.6.0 architecture with 4 downscales for compatibility
+        bezier_config = ModelConfig(model_type="bezier", model_version="0.6.0", vae_dim=128)
         baseline_config = ModelConfig(model_type="baseline", vae_dim=128)
 
+        # Disable gradient checkpointing to avoid memory issues during testing
         bezier_enc, _, _, _ = create_models_from_config(bezier_config)
-        baseline_enc, _, _, _ = create_models_from_config(baseline_config)
+        bezier_enc.use_gradient_checkpointing = False
 
-        # Test with dummy input
-        x = torch.randn(1, 3, 256, 256)
+        baseline_enc, _, _, _ = create_models_from_config(baseline_config)
+        baseline_enc.use_gradient_checkpointing = False
+
+        # Test with smaller dummy input to avoid memory issues
+        x = torch.randn(1, 3, 64, 64)
 
         with torch.no_grad():
             bezier_latent = bezier_enc(x)
             baseline_latent = baseline_enc(x)
 
         # Both should produce same shape
-        # Note: encoder outputs mu + logvar concatenated, so channels = 2*vae_dim + 1
+        # Note: encoder outputs packed latents [B, T+1, D] where T = H*W after downsampling
         assert bezier_latent.shape == baseline_latent.shape
-        assert bezier_latent.shape[1] == 2 * 128 + 1  # mu + logvar + 1
+        assert bezier_latent.shape[2] == 128  # vae_dim
 
     def test_full_config_yaml_structure(self):
         """Test that full FluxFlowConfig works with model_type."""

@@ -31,6 +31,11 @@ class ModelConfig(BaseModel):
         from .models.registry import list_versions
 
         allowed_versions = list_versions()
+
+        # Fallback to known versions if registry is empty (import order issue)
+        if not allowed_versions:
+            allowed_versions = ["0.3.0", "0.6.0", "0.7.0"]
+
         if v not in allowed_versions:
             raise ValueError(f"model_version must be one of {allowed_versions}, got '{v}'")
         return v

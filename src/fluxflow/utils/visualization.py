@@ -369,23 +369,9 @@ def save_sample_images(
             text_embeddings = full_text_embeddings[i : i + batch_size]
             B = text_embeddings.size(0)
 
-            # Get the correct latent shape by compressing a dummy image
-            dummy_img = torch.randn(B, 3, height, width, device=device) * 2 - 1
-            dummy_latent = diffuser.compressor(dummy_img)
-            latent_shape = dummy_latent.shape  # [B, seq_len + 1, input_dim]
-            seq_len = latent_shape[1] - 1  # Exclude HW vector
-
-            # For v0.7.0, input dimension includes context
-            from fluxflow.models.v070.vae import CONTEXT_DIMS
-
-            input_dim = latent_shape[-1]  # Use actual dimension from dummy latent
-
-            # Create HW vector (copy from dummy)
-            hw_vec = dummy_latent[:, -1:, :].clone()
-
             # Use flow model to predict clean latents from noisy inputs
             dummy_img = torch.randn(B, 3, height, width, device=device) * 2 - 1
-            base_latent = diffuser.compressor(dummy_img)  # [B, seq_len + 1, input_dim]
+            base_latent = diffuser.compressor(dummy_img)  # [B, T + 1, D]
 
             # Extract HW vector (preserve original)
             hw_vec = base_latent[:, -1:, :]
