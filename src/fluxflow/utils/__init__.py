@@ -9,11 +9,7 @@ from .io import (
     save_model,
     save_training_state,
 )
-from .logger import (
-    get_default_logger,
-    get_logger,
-    setup_logger,
-)
+from .logger import get_default_logger, get_logger, setup_logger
 from .visualization import (
     generate_latent_images,
     img_to_random_packet,

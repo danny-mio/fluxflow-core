@@ -13,10 +13,7 @@ from pathlib import Path
 # Add parent directory to path to import fluxflow
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from fluxflow.models.versioning import (
-    load_versioned_checkpoint,
-    save_versioned_checkpoint,
-)
+from fluxflow.models.versioning import load_versioned_checkpoint, save_versioned_checkpoint
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -42,9 +39,7 @@ def migrate_checkpoint(
         sys.exit(1)
 
     if output_path.exists() and not force:
-        logger.error(
-            f"Output path already exists: {output_path}. Use --force to overwrite."
-        )
+        logger.error(f"Output path already exists: {output_path}. Use --force to overwrite.")
         sys.exit(1)
 
     logger.info(f"Loading legacy checkpoint: {input_path}")
@@ -121,9 +116,7 @@ Examples:
         help="Overwrite output directory if it exists",
     )
 
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 

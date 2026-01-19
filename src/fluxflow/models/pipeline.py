@@ -10,8 +10,8 @@ import safetensors.torch
 import torch
 import torch.nn as nn
 
-from .flow import FluxFlowProcessor
-from .vae import FluxCompressor, FluxExpander
+from .v060.flow import FluxFlowProcessor
+from .v060.vae import FluxCompressor, FluxExpander
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +257,18 @@ class FluxPipeline(nn.Module):
                 head_dim = inv_freq_size * 2  # inv_freq is dim // 2
                 config["flow_attn_heads"] = config["flow_dim"] // head_dim
                 break
+
+        # Detect v0.7.0 context features
+        has_context_features = any(
+            "ctx_mixer" in key or "context_injection" in key or "context_final" in key
+            for key in keys
+        )
+        if has_context_features:
+            config["model_version"] = "0.7.0"
+            config["has_context"] = True
+        else:
+            config["model_version"] = "0.3.0"
+            config["has_context"] = False
 
         # Set default max_hw
         config["max_hw"] = 1024

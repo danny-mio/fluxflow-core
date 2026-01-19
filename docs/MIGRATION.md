@@ -334,17 +334,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Install FluxFlow
         run: pip install -e .
-      
+
       - name: Migrate Checkpoint
         run: |
           python scripts/migrate_checkpoints.py \
             ${{ inputs.checkpoint_path }} \
             checkpoints/versioned/ \
             --version 0.3.0
-      
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v3
         with:

@@ -14,11 +14,11 @@ import torch
 from fluxflow.models.activations import BezierActivation, BezierActivationModule, TrainableBezier
 from fluxflow.models.bezier_jit import get_jit_bezier_function
 from fluxflow.models.bezier_power_cache import (
-    get_cached_power_fn,
-    get_cache_stats,
-    reset_cache_stats,
     clear_power_cache,
+    get_cache_stats,
+    get_cached_power_fn,
     prewarm_cache,
+    reset_cache_stats,
 )
 
 

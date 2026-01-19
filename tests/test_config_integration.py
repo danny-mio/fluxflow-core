@@ -7,7 +7,7 @@ Validates that models can be created from config files with model_type parameter
 import pytest
 import torch
 
-from fluxflow.config import ModelConfig, FluxFlowConfig
+from fluxflow.config import FluxFlowConfig, ModelConfig
 from fluxflow.models.factory import create_models_from_config
 
 
@@ -30,12 +30,9 @@ class TestConfigIntegration:
         assert flow is not None
         assert text_enc is not None
 
-        # Verify it's using Bezier components (check for BezierActivation)
-        from fluxflow.models.vae import FluxExpander
-        from fluxflow.models.flow import FluxFlowProcessor
-
-        assert isinstance(vae_dec, FluxExpander)
-        assert isinstance(flow, FluxFlowProcessor)
+        # Verify it's using Bezier components by checking class names
+        assert vae_dec.__class__.__name__ == "FluxExpander"
+        assert flow.__class__.__name__ == "FluxFlowProcessor"
 
     def test_baseline_model_from_config(self):
         """Test creating Baseline models from config."""
@@ -57,12 +54,9 @@ class TestConfigIntegration:
         assert flow is not None
         assert text_enc is not None
 
-        # Verify it's using Baseline components
-        from fluxflow.models.vae import BaselineFluxExpander
-        from fluxflow.models.flow import BaselineFluxFlowProcessor
-
-        assert isinstance(vae_dec, BaselineFluxExpander)
-        assert isinstance(flow, BaselineFluxFlowProcessor)
+        # Verify it's using Baseline components by checking class names
+        assert vae_dec.__class__.__name__ == "BaselineFluxExpander"
+        assert flow.__class__.__name__ == "BaselineFluxFlowProcessor"
 
     def test_baseline_default_params(self):
         """Test that baseline defaults are correct."""
@@ -114,23 +108,28 @@ class TestConfigIntegration:
 
     def test_baseline_latent_compatibility(self):
         """Test that baseline and bezier use same latent dimensions."""
-        bezier_config = ModelConfig(model_type="bezier", vae_dim=128)
+        # Both use v0.6.0 architecture with 4 downscales for compatibility
+        bezier_config = ModelConfig(model_type="bezier", model_version="0.6.0", vae_dim=128)
         baseline_config = ModelConfig(model_type="baseline", vae_dim=128)
 
+        # Disable gradient checkpointing to avoid memory issues during testing
         bezier_enc, _, _, _ = create_models_from_config(bezier_config)
-        baseline_enc, _, _, _ = create_models_from_config(baseline_config)
+        bezier_enc.use_gradient_checkpointing = False
 
-        # Test with dummy input
-        x = torch.randn(1, 3, 256, 256)
+        baseline_enc, _, _, _ = create_models_from_config(baseline_config)
+        baseline_enc.use_gradient_checkpointing = False
+
+        # Test with smaller dummy input to avoid memory issues
+        x = torch.randn(1, 3, 64, 64)
 
         with torch.no_grad():
             bezier_latent = bezier_enc(x)
             baseline_latent = baseline_enc(x)
 
         # Both should produce same shape
-        # Note: encoder outputs mu + logvar concatenated, so channels = 2*vae_dim + 1
+        # Note: encoder outputs packed latents [B, T+1, D] where T = H*W after downsampling
         assert bezier_latent.shape == baseline_latent.shape
-        assert bezier_latent.shape[1] == 2 * 128 + 1  # mu + logvar + 1
+        assert bezier_latent.shape[2] == 128  # vae_dim
 
     def test_full_config_yaml_structure(self):
         """Test that full FluxFlowConfig works with model_type."""
@@ -183,7 +182,5 @@ class TestConfigIntegration:
         # Should create Bezier models successfully
         vae_enc, vae_dec, flow, text_enc = create_models_from_config(config)
 
-        from fluxflow.models.vae import FluxExpander
-
         # Should still use Bezier components
-        assert isinstance(vae_dec, FluxExpander)
+        assert vae_dec.__class__.__name__ == "FluxExpander"

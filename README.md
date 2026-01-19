@@ -7,7 +7,7 @@
 **Training In Progress**: FluxFlow models are currently in Week 1-4 of systematic validation.
 
 **Status**:
-- ✅ Architecture implemented and tested  
+- ✅ Architecture implemented and tested
 - 🔄 VAE training in progress (Bezier + ReLU baselines)
 - ⏳ Flow training pending VAE completion
 - ⏳ Empirical benchmarks pending training completion
@@ -291,7 +291,7 @@ Traditional activations provide a single fixed transformation:
 | Training memory (batch=2) | 10.2GB | 4.1GB | 60% reduction |
 | FID (COCO val) | 15.2±0.3 | ≤15.0 | Equivalent quality |
 
-**Status**: 
+**Status**:
 - VAE training: 🔄 In progress
 - Flow training: ⏳ Pending VAE completion
 - Baseline comparison: ⏳ Pending both completions
@@ -356,7 +356,7 @@ nn.Conv2d(in_ch, out_ch * 5, kernel_size=3, padding=1)
 BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu")
 ```
 
-**Parameters:** 0 learnable (but previous layer needs 5× weights)  
+**Parameters:** 0 learnable (but previous layer needs 5× weights)
 **Use:** VAE encoder/decoder, convolutional layers
 
 #### 2. TrainableBezier
@@ -368,7 +368,7 @@ nn.Linear(latent_dim, latent_dim)
 TrainableBezier((latent_dim,), channel_only=True)
 ```
 
-**Parameters:** 4×D learnable (e.g., 1024 params for D=256)  
+**Parameters:** 4×D learnable (e.g., 1024 params for D=256)
 **Use:** VAE latent bottleneck (mu/logvar), RGB output layer
 
 #### 3. Pillar-Based
@@ -385,7 +385,7 @@ g = torch.sigmoid(img_seq)
 output = BezierActivation(torch.cat([img_seq, p0(g), p1(g), p2(g), p3(g)], dim=-1))
 ```
 
-**Parameters:** 4×(depth=3)×D² (e.g., 198K params for D=128)  
+**Parameters:** 4×(depth=3)×D² (e.g., 198K params for D=128)
 **Use:** Flow transformer MLP layers
 
 **Pre-activation parameters** (for Input-Based and Pillar-Based):
@@ -399,7 +399,7 @@ output = BezierActivation(torch.cat([img_seq, p0(g), p1(g), p2(g), p3(g)], dim=-
 - Rationale: 0 activation params, smooth gradients for image↔latent mapping
 
 **VAE Latent (mu/logvar):** TrainableBezier
-- Pattern: `Linear(D, D) → TrainableBezier(D)`  
+- Pattern: `Linear(D, D) → TrainableBezier(D)`
 - Rationale: Per-channel learned curves for latent distribution (1024 params for D=256)
 
 **VAE RGB Output:** TrainableBezier

@@ -283,7 +283,7 @@ If you want to contribute regularly and need direct access to the repository:
    - Commitment to contributing
 
 2. **Open a discussion** at https://github.com/danny-mio/fluxflow-core/discussions
-   
+
 3. **Use the title**: `Request: Contributor Access for [Your Name]`
 
 4. **Include in your request**:

@@ -16,8 +16,9 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
-from .activations import BezierActivation, TrainableBezier, xavier_init
-from .conditioning import ContextAttentionMixer, GatedContextInjection
+from ..activations import BezierActivation, TrainableBezier, xavier_init
+from ..conditioning import ContextAttentionMixer, GatedContextInjection
+from .vae import CONTEXT_DIMS
 
 
 def pillarLayer(
@@ -246,12 +247,13 @@ class FluxFlowProcessor(nn.Module):
     """
     Flow prediction model using transformer blocks.
 
-    Processes latent representations and predicts flow for diffusion sampling.
-    Uses image tokens themselves as context via attention mixer.
+    Processes latent representations with integrated context and predicts flow for diffusion sampling.
+    Input dimension is vae_dim + CONTEXT_DIMS (VAE dimensions + context dimensions).
+    Processes as unified entity.
 
     Args:
         d_model: Model dimensionality (default: 512)
-        vae_dim: VAE latent dimension (default: 128)
+        vae_dim: VAE latent dimension (default: 128, input will be vae_dim + CONTEXT_DIMS)
         embedding_size: Text embedding dimension (default: 1024)
         n_head: Number of attention heads (default: 8)
         n_layers: Number of transformer layers (default: 10)
@@ -273,8 +275,9 @@ class FluxFlowProcessor(nn.Module):
         self.max_hw = max_hw
         self.ctx_tokens = ctx_tokens
 
-        self.vae_to_dmodel = nn.Linear(vae_dim, d_model)
-        self.dmodel_to_vae = nn.Linear(d_model, vae_dim)
+        # Input is vae_dim + CONTEXT_DIMS, processed as unified entity
+        self.vae_to_dmodel = nn.Linear(vae_dim + CONTEXT_DIMS, d_model)
+        self.dmodel_to_vae = nn.Linear(d_model, vae_dim + CONTEXT_DIMS)
 
         # Use image tokens as context: lightweight mixer over first K tokens
         self.ctx_mixer = ContextAttentionMixer(d_model, n_head=max(1, d_model // 128), use_cls=True)
@@ -316,23 +319,27 @@ class FluxFlowProcessor(nn.Module):
     def forward(self, packed, text_embeddings, timesteps):
         """
         Args:
-            packed: Latent representation [B, T+1, Dv] from VAE
-                    IMPORTANT: During training, only add noise to image tokens packed[:, :-1, :]
-                    The HW token (packed[:, -1, :]) should remain clean as it encodes spatial metadata
+            packed: Latent representation [B, T+1, Dv+CONTEXT_DIMS] from VAE (VAE dims + context dims)
+                     IMPORTANT: During training, only add noise to image tokens packed[:, :-1, :]
+                     The HW token (packed[:, -1, :]) should remain clean as it encodes spatial metadata
             text_embeddings: Text embeddings [B, embedding_size]
             timesteps: Diffusion timesteps [B]
 
         Returns:
-            Updated packed latent [B, T+1, Dv] with preserved HW token
+            Updated packed latent [B, T+1, Dv+CONTEXT_DIMS] with preserved HW token
         """
         # Unpack image tokens and HW metadata
-        img_seq_v = packed[:, :-1, :].contiguous()  # [B, T, Dv] - image tokens (may be noisy)
-        hw_vec = packed[:, -1, :].contiguous()  # [B, Dv] - HW metadata (should be clean)
+        img_seq_v = packed[
+            :, :-1, :
+        ].contiguous()  # [B, T, Dv+CONTEXT_DIMS] - image tokens (may be noisy)
+        hw_vec_full = packed[
+            :, -1, :
+        ].contiguous()  # [B, Dv+CONTEXT_DIMS] - HW metadata (should be clean)
 
-        B, T, Dv = img_seq_v.shape
+        B, T, Dv_plus_3 = img_seq_v.shape
         # Extract spatial dimensions from HW token (first 2 channels)
-        H = (hw_vec[:, 0] * self.max_hw).round().clamp(min=1).long()
-        W = (hw_vec[:, 1] * self.max_hw).round().clamp(min=1).long()
+        H = (hw_vec_full[:, 0] * self.max_hw).round().clamp(min=1).long()
+        W = (hw_vec_full[:, 1] * self.max_hw).round().clamp(min=1).long()
 
         # VAE→d_model
         img_seq = self.vae_to_dmodel(img_seq_v)  # [B, T, Dm]
@@ -380,7 +387,7 @@ class FluxFlowProcessor(nn.Module):
         )
 
         # Pre-compute projection to VAE space for all samples (batched)
-        img_seq_v_all = self.dmodel_to_vae(img_seq)  # [B, T, Dv]
+        img_seq_v_all = self.dmodel_to_vae(img_seq)  # [B, T, Dv+CONTEXT_DIMS]
 
         # Check if all samples have same H, W for batch optimization
         if B > 1 and (H == H[0]).all() and (W == W[0]).all():
@@ -409,8 +416,10 @@ class FluxFlowProcessor(nn.Module):
                     dim=1,
                 )
 
-            # Repack all samples
-            return torch.cat([img_seq_v_all, hw_vec.unsqueeze(1)], dim=1)  # [B, T+1, Dv]
+            # Repack all samples (HW token unchanged)
+            return torch.cat(
+                [img_seq_v_all, hw_vec_full.unsqueeze(1)], dim=1
+            ).contiguous()  # [B, T+1, Dv+CONTEXT_DIMS]
 
         else:
             # Slow path: variable dimensions, must process individually
@@ -441,11 +450,11 @@ class FluxFlowProcessor(nn.Module):
                     )
 
                 packed_i = torch.cat(
-                    [img_seq_v_i, hw_vec[i : i + 1].unsqueeze(1)], dim=1
-                )  # [1, T+1, Dv]
+                    [img_seq_v_i, hw_vec_full[i : i + 1].unsqueeze(1)], dim=1
+                )  # [1, T+1, Dv+CONTEXT_DIMS]
                 outputs.append(packed_i)
 
-            return torch.cat(outputs, dim=0)
+            return torch.cat(outputs, dim=0).contiguous()
 
 
 # ============================================================================

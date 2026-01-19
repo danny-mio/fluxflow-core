@@ -102,7 +102,7 @@ Control Points:
 
 The curve's shape is determined by learned control points.
 - Straight line: p0, p1, p2, p3 collinear (ReLU-like)
-- S-curve: control points arranged for sigmoid (GELU-like)  
+- S-curve: control points arranged for sigmoid (GELU-like)
 - Custom: any smooth shape the neuron needs
 ```
 
@@ -133,7 +133,7 @@ The curve's shape is determined by learned control points.
 - More complex per neuron (4 control points vs 0)
 - Need to trust the learning process
 
-**Efficiency Gain**: 
+**Efficiency Gain**:
 - LEGO: 256 bricks to approximate a smooth curve
 - Clay: 128 custom-shaped neurons = same expressiveness
 
@@ -228,7 +228,7 @@ output = bezier_curve(t=input, p0=p0, p1=p1, p2=p2, p3=p3)
 
 ### Parameter Count Analysis: The Real Story
 
-**Common misconception:** "Bezier activations reduce parameters."  
+**Common misconception:** "Bezier activations reduce parameters."
 **Reality:** It depends on which Bezier approach you use.
 
 #### Verified Calculations (2-Layer Network)
@@ -257,10 +257,10 @@ Layer 2: Linear(128, 640) = 128 × 640 + 640 = 82,560 params (5× channels)
 Total: 247,040 parameters (5.0× MORE than ReLU)
 ```
 
-**Why more parameters?**  
+**Why more parameters?**
 BezierActivation has 0 learnable params, but requires previous layer to output 5× channels. The parameter cost shifts to the Linear layers.
 
-**So why use it?**  
+**So why use it?**
 Hypothesis: A 2-layer Bezier network might be as expressive as a 4-layer ReLU network, resulting in net parameter savings. (Empirical validation needed)
 
 ### Option B: TrainableBezier
@@ -274,7 +274,7 @@ Layer 2: Linear(128, 128) = 128 × 128 + 128 = 16,512 params
 Total: 50,432 parameters (1.02× more than ReLU, basically same)
 ```
 
-**Why nearly the same?**  
+**Why nearly the same?**
 TrainableBezier adds 4×D parameters, which is minimal compared to Linear layer costs (D² parameters).
 
 ### Option C: Pillar-Based
@@ -284,14 +284,14 @@ Layer 1: Linear(256, 128) = 256 × 128 + 128 = 32,896 params
 Layer 2: 4 × pillarLayer(128, 128, depth=3)
          - pillar_0: 3 × (128 × 128 + 128) = 49,536 params
          - pillar_1: 49,536 params
-         - pillar_2: 49,536 params  
+         - pillar_2: 49,536 params
          - pillar_3: 49,536 params
          - BezierActivation() = 0 params
 
 Total: 231,040 parameters (4.7× MORE than ReLU)
 ```
 
-**Why so many parameters?**  
+**Why so many parameters?**
 Each pillar is a depth-3 MLP (3 Linear layers), and we have 4 pillars. This is intentional - transformers benefit from highly expressive activations.
 
 #### Visual Comparison
@@ -484,7 +484,7 @@ FluxFlow is currently undergoing systematic validation:
 
 **Bezier Activations Core Intuition**:
 
-Traditional neurons are like workers using the same tool (ReLU) for every job.  
+Traditional neurons are like workers using the same tool (ReLU) for every job.
 Bezier neurons are like skilled craftspeople who forge custom tools for each specific task.
 
 **The Bet**:
@@ -496,6 +496,6 @@ Bezier neurons are like skilled craftspeople who forge custom tools for each spe
 
 ---
 
-**Status**: 🔄 Training Phase 1 (VAE) in progress  
-**Next Update**: Week 4 decision gate results  
+**Status**: 🔄 Training Phase 1 (VAE) in progress
+**Next Update**: Week 4 decision gate results
 **Questions?**: See [BEZIER_ACTIVATIONS.md](BEZIER_ACTIVATIONS.md) for mathematical details

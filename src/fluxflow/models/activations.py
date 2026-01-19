@@ -69,11 +69,11 @@ class BezierActivationModule(nn.Module):
             self.p_preactivation = F.relu
 
     def forward(self, t, p0, p1, p2, p3):
-        # NOTE: JIT optimization disabled due to gradient checkpointing incompatibility
-        # Gradient checkpointing (torch.utils.checkpoint) has hooks that conflict with
-        # JIT-compiled functions and even some tensor methods.
-        # Using original F.* based implementation for compatibility.
+        # Use JIT-compiled version when available (compatible with reentrant checkpointing)
+        if self.jit_fn is not None:
+            return self.jit_fn(t, p0, p1, p2, p3)
 
+        # Fallback to F.* implementation for backward compatibility
         if self.t_pre_activation:
             t = self.t_pre_activation(t)
 

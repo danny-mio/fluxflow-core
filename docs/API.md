@@ -321,7 +321,7 @@ class CustomLoader(BaseModelLoader):
     def load(self, checkpoint_path, device, **kwargs):
         # Custom loading logic
         pass
-    
+
     def save(self, model, output_path, **kwargs):
         # Custom saving logic
         pass
@@ -386,7 +386,7 @@ High-level text-to-image generation pipeline inheriting from Diffusers' `Diffusi
 class FluxFlowPipeline(DiffusionPipeline):
     """
     Pipeline for text-to-image generation using FluxFlow models.
-    
+
     Inherits from diffusers.DiffusionPipeline and provides a familiar API.
     """
 ```
@@ -478,7 +478,7 @@ pipeline(
 - `callback` (Callable, optional): Function called after each denoising step
 - `callback_steps` (int, default=1): Number of steps between callback calls
 
-**Returns:** 
+**Returns:**
 - If `return_dict=True`: FluxFlowPipelineOutput with `images` attribute
 - If `return_dict=False`: Tuple of (images,)
 

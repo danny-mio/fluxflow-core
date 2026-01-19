@@ -4,13 +4,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from fluxflow.models.activations import (
-    BezierActivation,
-    Flip,
-    Rot90,
-    TrainableBezier,
-    xavier_init,
-)
+from fluxflow.models.activations import BezierActivation, Flip, Rot90, TrainableBezier, xavier_init
 
 
 class TestBezierActivation:
