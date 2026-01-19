@@ -178,7 +178,7 @@ To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
 2. **Check metadata** before loading:
    ```python
    from fluxflow.models.versioning import ModelMetadata
-   
+
    metadata = ModelMetadata.load(path / "model_metadata.json")
    print(f"Model version: {metadata.model_version}")
    print(f"Architecture: {metadata.architecture}")
@@ -206,7 +206,7 @@ pip install --upgrade fluxflow
 
 ### Warning: "Loading legacy checkpoint without version metadata"
 
-The checkpoint doesn't have metadata. Architecture will be inferred.  
+The checkpoint doesn't have metadata. Architecture will be inferred.
 To fix, migrate the checkpoint:
 ```bash
 python scripts/migrate_checkpoints.py old.safetensors new/
@@ -214,7 +214,7 @@ python scripts/migrate_checkpoints.py old.safetensors new/
 
 ### Checksum Mismatch
 
-The model weights have been modified or corrupted.  
+The model weights have been modified or corrupted.
 Re-download the checkpoint or restore from backup.
 
 ## Advanced Usage
@@ -229,11 +229,11 @@ from fluxflow.models.versioning import ModelVersionLoader, ModelVersionRegistry
 class ModelLoaderV04(ModelVersionLoader):
     VERSION = "0.4.0"
     COMPATIBLE_VERSIONS = ["0.4.1"]
-    
+
     def load_checkpoint(self, checkpoint_path, metadata, device, **kwargs):
         # Custom loading logic for v0.4.x
         pass
-    
+
     def save_checkpoint(self, model, output_path, metadata, **kwargs):
         # Custom saving logic for v0.4.x
         pass

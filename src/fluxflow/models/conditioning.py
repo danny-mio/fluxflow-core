@@ -73,8 +73,10 @@ class SPADE(nn.Module):
     def __init__(self, context_nc, num_features):
         super().__init__()
         # GroupNorm instead of BatchNorm (works with batch_size=1)
-        # Use 32 groups or num_features if smaller
-        num_groups = min(32, num_features)
+        # Find largest num_groups <= 32 that divides num_features
+        for num_groups in range(min(32, num_features), 0, -1):
+            if num_features % num_groups == 0:
+                break
         self.bn = nn.GroupNorm(num_groups, num_features, affine=False)
 
         # Conv block to produce gamma/beta from context
@@ -90,7 +92,7 @@ class SPADE(nn.Module):
         """
         Args:
             x: Feature tensor [B, num_features, H, W]
-            context: Context map [B, context_nc, Hc, Wc]
+            context: Context map [B, context_nc, Hc, Wc], or None for identity modulation
 
         Returns:
             Modulated features [B, num_features, H, W]
@@ -98,17 +100,24 @@ class SPADE(nn.Module):
         # Normalize x
         normalized = self.bn(x)
 
-        # Upsample context if needed to match x's spatial dimensions
-        if context.size(2) != x.size(2) or context.size(3) != x.size(3):
-            context = F.interpolate(context, size=x.shape[2:], mode="bilinear", align_corners=False)
+        if context is not None:
+            # Upsample context if needed to match x's spatial dimensions
+            if context.size(2) != x.size(2) or context.size(3) != x.size(3):
+                context = F.interpolate(
+                    context, size=x.shape[2:], mode="bilinear", align_corners=False
+                )
 
-        # Produce gamma, beta from context
-        actv = self.mlp_shared(context)
-        gamma = self.mlp_gamma(actv)
-        beta = self.mlp_beta(actv)
+            # Produce gamma, beta from context
+            actv = self.mlp_shared(context)
+            gamma = self.mlp_gamma(actv)
+            beta = self.mlp_beta(actv)
 
-        # Apply affine transform
-        out = normalized * (1 + gamma) + beta
+            # Apply affine transform
+            out = normalized * (1 + gamma) + beta
+        else:
+            # Identity modulation: just return normalized features
+            out = normalized
+
         return out
 
 

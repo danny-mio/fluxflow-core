@@ -9,16 +9,17 @@ Validates all performance improvements across:
 """
 
 import time
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
+
 import torch
 import torch.nn as nn
 
 from fluxflow.models.activations import BezierActivation, BezierActivationModule, TrainableBezier
 from fluxflow.models.bezier_power_cache import (
-    get_cache_stats,
-    reset_cache_stats,
-    prewarm_cache,
     clear_power_cache,
+    get_cache_stats,
+    prewarm_cache,
+    reset_cache_stats,
 )
 
 
@@ -148,9 +149,7 @@ def benchmark_device(device: str, results: BenchmarkResults) -> bool:
         results.add_result(baseline_key, "time_ms", time_ms)
         results.add_result(baseline_key, "speedup", 1.0)
 
-        print(
-            f"{shape_name:<20} | {time_ms:>10.4f} ms | {1.0:>8.2f}x | ✓"
-        )
+        print(f"{shape_name:<20} | {time_ms:>10.4f} ms | {1.0:>8.2f}x | ✓")
 
     return True
 
@@ -284,7 +283,7 @@ def benchmark_memory(device: str):
     output = activation(x)
 
     # Measure memory
-    peak_mem_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
+    peak_mem_mb = torch.cuda.max_memory_allocated() / (1024**2)
 
     print(f"Input shape: {x.shape}")
     print(f"Output shape: {output.shape}")
@@ -341,17 +340,19 @@ def generate_markdown_report(results: BenchmarkResults, output_path: str = "benc
         lines.append("")
 
     # Add JIT variants section
-    lines.extend([
-        "## JIT Activation Combinations",
-        "",
-        "All 25 combinations of t_pre_activation × p_preactivation are benchmarked:",
-        "",
-        "- **t_activations**: None, sigmoid, tanh, silu, relu",
-        "- **p_activations**: None, sigmoid, tanh, silu, relu",
-        "",
-        "All combinations are JIT-compiled for maximum performance.",
-        "",
-    ])
+    lines.extend(
+        [
+            "## JIT Activation Combinations",
+            "",
+            "All 25 combinations of t_pre_activation × p_preactivation are benchmarked:",
+            "",
+            "- **t_activations**: None, sigmoid, tanh, silu, relu",
+            "- **p_activations**: None, sigmoid, tanh, silu, relu",
+            "",
+            "All combinations are JIT-compiled for maximum performance.",
+            "",
+        ]
+    )
 
     # Write report
     with open(output_path, "w") as f:
@@ -362,9 +363,9 @@ def generate_markdown_report(results: BenchmarkResults, output_path: str = "benc
 
 def main():
     """Run all benchmarks and generate report."""
-    print("="*80)
+    print("=" * 80)
     print("FluxFlow Bezier Activation Optimization Benchmark Suite")
-    print("="*80)
+    print("=" * 80)
 
     results = BenchmarkResults()
 
@@ -398,9 +399,9 @@ def main():
     # Generate report
     generate_markdown_report(results)
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("✓ All benchmarks completed successfully!")
-    print("="*80)
+    print("=" * 80)
 
 
 if __name__ == "__main__":

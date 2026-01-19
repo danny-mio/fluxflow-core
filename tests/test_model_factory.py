@@ -1,31 +1,37 @@
 """
-Tests for model factory (Bezier vs Baseline model creation).
+Tests for model factory (Bezier vs Baseline model creation with versioning).
 
 Validates that ModelFactory can create compatible models for both
-Bezier and Baseline variants.
+Bezier and Baseline variants, with support for different versions.
 """
 
 import pytest
 import torch
 import torch.nn as nn
 
-from fluxflow.models.factory import (
-    ModelFactory,
-    create_bezier_models,
-    create_baseline_models,
-)
+from fluxflow.models.factory import ModelFactory, create_baseline_models, create_bezier_models
 
 
 class TestModelFactory:
     """Test ModelFactory basic functionality."""
 
-    def test_factory_init_bezier(self):
-        """Test factory initialization for Bezier models."""
-        factory = ModelFactory(model_type="bezier")
+    def test_factory_init_bezier_v030(self):
+        """Test factory initialization for Bezier models v0.3.0."""
+        factory = ModelFactory(model_type="bezier", model_version="0.3.0")
 
         assert factory.model_type == "bezier"
+        assert factory.model_version == "0.3.0"
         assert factory.vae_dim == 128
-        assert factory.bezier_flow_blocks == 12
+        assert factory.bezier_flow_blocks == 10
+
+    def test_factory_init_bezier_v060(self):
+        """Test factory initialization for Bezier models v0.6.0."""
+        factory = ModelFactory(model_type="bezier", model_version="0.6.0")
+
+        assert factory.model_type == "bezier"
+        assert factory.model_version == "0.6.0"
+        assert factory.vae_dim == 128
+        assert factory.bezier_flow_blocks == 10
 
     def test_factory_init_baseline(self):
         """Test factory initialization for Baseline models."""
@@ -61,26 +67,34 @@ class TestModelFactory:
 class TestVAEEncoderCreation:
     """Test VAE encoder creation (same for both model types)."""
 
-    def test_create_bezier_vae_encoder(self):
-        """Test Bezier VAE encoder creation."""
-        factory = ModelFactory(model_type="bezier", vae_dim=128)
-        encoder = factory.create_vae_encoder()
+    def test_create_bezier_vae_encoder_v030(self):
+        """Test Bezier VAE encoder creation v0.3.0."""
+        factory = ModelFactory(model_type="bezier", model_version="0.3.0", vae_dim=128)
+        encoder = factory.create_vae_encoder(downscales=4)  # v0.3.0 uses 4 downscales
+
+        assert encoder is not None
+        assert encoder.d_model == 128
+
+    def test_create_bezier_vae_encoder_v060(self):
+        """Test Bezier VAE encoder creation v0.6.0."""
+        factory = ModelFactory(model_type="bezier", model_version="0.6.0", vae_dim=128)
+        encoder = factory.create_vae_encoder(downscales=3)  # v0.6.0 uses 3 downscales
 
         assert encoder is not None
         assert encoder.d_model == 128
 
     def test_create_baseline_vae_encoder(self):
-        """Test Baseline VAE encoder creation."""
+        """Test Baseline VAE encoder creation (uses same encoder as bezier)."""
         factory = ModelFactory(model_type="baseline", vae_dim=128)
         encoder = factory.create_vae_encoder()
 
         assert encoder is not None
         assert encoder.d_model == 128
 
-    def test_vae_encoder_forward(self):
-        """Test VAE encoder forward pass."""
-        factory = ModelFactory(vae_dim=128)
-        encoder = factory.create_vae_encoder(use_gradient_checkpointing=False)
+    def test_vae_encoder_forward_v030(self):
+        """Test VAE encoder forward pass v0.3.0."""
+        factory = ModelFactory(model_type="bezier", model_version="0.3.0", vae_dim=128)
+        encoder = factory.create_vae_encoder(downscales=4, use_gradient_checkpointing=False)
 
         # Create dummy input
         batch_size = 2
@@ -92,6 +106,25 @@ class TestVAEEncoderCreation:
         # Check output shapes - encoder returns flattened [T, D]
         # After 4 downscales: 64 -> 32 -> 16 -> 8 -> 4
         # expected_spatial = 4 * 4  # 16 tokens
+        # Note: Encoder returns [T+1, D] format (flattened across batch)
+        assert mu_logvar.shape[1] == 128  # D dimension
+        assert deterministic.shape[1] == 128  # D dimension
+
+    def test_vae_encoder_forward_v060(self):
+        """Test VAE encoder forward pass v0.6.0."""
+        factory = ModelFactory(model_type="bezier", model_version="0.6.0", vae_dim=128)
+        encoder = factory.create_vae_encoder(downscales=3, use_gradient_checkpointing=False)
+
+        # Create dummy input
+        batch_size = 2
+        x = torch.randn(batch_size, 3, 64, 64)
+
+        with torch.no_grad():
+            mu_logvar, deterministic = encoder(x)
+
+        # Check output shapes - encoder returns flattened [T, D]
+        # After 3 downscales: 64 -> 32 -> 16 -> 8
+        # expected_spatial = 8 * 8  # 64 tokens
         # Note: Encoder returns [T+1, D] format (flattened across batch)
         assert mu_logvar.shape[1] == 128  # D dimension
         assert deterministic.shape[1] == 128  # D dimension
@@ -141,10 +174,17 @@ class TestTextEncoderCreation:
 class TestVAEDecoderCreation:
     """Test VAE decoder creation."""
 
-    def test_create_bezier_vae_decoder(self):
-        """Test Bezier VAE decoder creation."""
-        factory = ModelFactory(model_type="bezier", vae_dim=128)
-        decoder = factory.create_vae_decoder()
+    def test_create_bezier_vae_decoder_v030(self):
+        """Test Bezier VAE decoder creation v0.3.0."""
+        factory = ModelFactory(model_type="bezier", model_version="0.3.0", vae_dim=128)
+        decoder = factory.create_vae_decoder(upscales=4)  # v0.3.0 uses 4 upscales
+
+        assert decoder is not None
+
+    def test_create_bezier_vae_decoder_v060(self):
+        """Test Bezier VAE decoder creation v0.6.0."""
+        factory = ModelFactory(model_type="bezier", model_version="0.6.0", vae_dim=128)
+        decoder = factory.create_vae_decoder(upscales=3)  # v0.6.0 uses 3 upscales
 
         assert decoder is not None
 
@@ -156,10 +196,10 @@ class TestVAEDecoderCreation:
         assert decoder is not None
         assert isinstance(decoder, nn.Module)
 
-    def test_bezier_decoder_forward(self):
-        """Test Bezier VAE decoder forward pass."""
-        factory = ModelFactory(vae_dim=128)
-        decoder = factory.create_vae_decoder(use_gradient_checkpointing=False)
+    def test_bezier_decoder_forward_v030(self):
+        """Test Bezier VAE decoder forward pass v0.3.0."""
+        factory = ModelFactory(model_type="bezier", model_version="0.3.0", vae_dim=128)
+        decoder = factory.create_vae_decoder(upscales=4, use_gradient_checkpointing=False)
 
         # Create dummy latent
         batch_size = 2
@@ -176,19 +216,53 @@ class TestVAEDecoderCreation:
         # After 4 upscales: 4 -> 8 -> 16 -> 32 -> 64
         assert output.shape == (batch_size, 3, 64, 64)
 
+    def test_bezier_decoder_forward_v060(self):
+        """Test Bezier VAE decoder forward pass v0.6.0."""
+        factory = ModelFactory(model_type="bezier", model_version="0.6.0", vae_dim=128)
+        decoder = factory.create_vae_decoder(upscales=3, use_gradient_checkpointing=False)
+
+        # Create dummy latent
+        batch_size = 2
+        spatial_tokens = 64  # 8×8 image
+        packed = torch.randn(batch_size, spatial_tokens + 1, 128)
+
+        # Set hw_vec (last token) to valid spatial dims
+        packed[:, -1, 0] = 8 / 1024  # H normalized
+        packed[:, -1, 1] = 8 / 1024  # W normalized
+
+        with torch.no_grad():
+            output = decoder(packed, use_context=False)
+
+        # After 3 upscales: 8 -> 16 -> 32 -> 64
+        assert output.shape == (batch_size, 3, 64, 64)
+
 
 class TestFlowProcessorCreation:
     """Test Flow processor creation."""
 
-    def test_create_bezier_flow_processor(self):
-        """Test Bezier Flow processor creation."""
-        factory = ModelFactory(model_type="bezier", flow_d_model=512, vae_dim=128)
+    def test_create_bezier_flow_processor_v030(self):
+        """Test Bezier Flow processor creation v0.3.0."""
+        factory = ModelFactory(
+            model_type="bezier", model_version="0.3.0", flow_d_model=512, vae_dim=128
+        )
         flow = factory.create_flow_processor()
 
         assert flow is not None
         # Verify it has transformer blocks
         assert hasattr(flow, "transformer_blocks")
-        assert len(flow.transformer_blocks) == 12  # Bezier uses 12 blocks
+        assert len(flow.transformer_blocks) == 10  # Bezier uses 10 blocks
+
+    def test_create_bezier_flow_processor_v060(self):
+        """Test Bezier Flow processor creation v0.6.0."""
+        factory = ModelFactory(
+            model_type="bezier", model_version="0.6.0", flow_d_model=512, vae_dim=128
+        )
+        flow = factory.create_flow_processor()
+
+        assert flow is not None
+        # Verify it has transformer blocks
+        assert hasattr(flow, "transformer_blocks")
+        assert len(flow.transformer_blocks) == 10  # Bezier uses 10 blocks
 
     def test_create_baseline_flow_processor(self):
         """Test Baseline Flow processor creation (Phase 1.2 complete)."""
@@ -243,9 +317,9 @@ class TestBaselineUpsamplerHelper:
 class TestConvenienceFunctions:
     """Test convenience functions for model creation."""
 
-    def test_create_bezier_models(self):
-        """Test create_bezier_models() convenience function."""
-        vae_encoder, vae_decoder, flow, text_encoder = create_bezier_models()
+    def test_create_bezier_models_v030(self):
+        """Test create_bezier_models() convenience function v0.3.0."""
+        vae_encoder, vae_decoder, flow, text_encoder = create_bezier_models(model_version="0.3.0")
 
         assert vae_encoder is not None
         assert vae_decoder is not None
@@ -256,7 +330,22 @@ class TestConvenienceFunctions:
         assert vae_encoder.d_model == 128
         # Flow processor has transformer_blocks
         assert hasattr(flow, "transformer_blocks")
-        assert len(flow.transformer_blocks) == 12
+        assert len(flow.transformer_blocks) == 10  # v0.3.0 uses 10 blocks
+
+    def test_create_bezier_models_v060(self):
+        """Test create_bezier_models() convenience function v0.6.0."""
+        vae_encoder, vae_decoder, flow, text_encoder = create_bezier_models(model_version="0.6.0")
+
+        assert vae_encoder is not None
+        assert vae_decoder is not None
+        assert flow is not None
+        assert text_encoder is not None
+
+        # Verify dimensions match
+        assert vae_encoder.d_model == 128
+        # Flow processor has transformer_blocks
+        assert hasattr(flow, "transformer_blocks")
+        assert len(flow.transformer_blocks) == 10  # v0.6.0 also uses 10 blocks
 
     def test_create_baseline_models_complete(self):
         """Test create_baseline_models() returns complete set (Phase 1.2 complete)."""

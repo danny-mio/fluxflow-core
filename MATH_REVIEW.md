@@ -76,7 +76,7 @@ dB/dt = 3(1-t)²(1-0) + 6(1-t)t(1-1) + 3t²(0-1)
 | **Bezier** | B(t; p₀, p₁, p₂, p₃) | Polynomial | No | **High** (4^D states) |
 ```
 
-**Problem**: 
+**Problem**:
 - "States" is undefined for continuous parameters
 - This notation was removed elsewhere but remains in the table
 - Misleading comparison with discrete "states"
@@ -99,7 +99,7 @@ dB/dt = 3(1-t)²(1-0) + 6(1-t)t(1-1) + 3t²(0-1)
 
 **Claim**:
 ```
-Var(B(t)) = E[(1-t)⁶]·Var(p₀) + 9E[(1-t)⁴t²]·Var(p₁) 
+Var(B(t)) = E[(1-t)⁶]·Var(p₀) + 9E[(1-t)⁴t²]·Var(p₁)
            + 9E[(1-t)²t⁴]·Var(p₂) + E[t⁶]·Var(p₃)
            + Covariance terms
 ```
@@ -448,4 +448,3 @@ For production deployment on edge devices:
 3. **Specify experimental setup**: Hardware, dataset, hyperparameters for all benchmarks
 4. **Mark theoretical vs. empirical**: Clear distinction between proven mathematics and observations
 5. **Add references**: Cite sources for all non-original mathematical statements
-

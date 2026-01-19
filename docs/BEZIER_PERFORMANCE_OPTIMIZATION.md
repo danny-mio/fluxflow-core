@@ -1,8 +1,8 @@
 # Bezier Activation Performance Optimization
 
-**Author:** Solution Architect → Dev Agent (Implementation)  
-**Date:** 2025-12-23  
-**Status:** ✅ **Phase 1 Complete** (JIT Expansion + Power Caching)  
+**Author:** Solution Architect → Dev Agent (Implementation)
+**Date:** 2025-12-23
+**Status:** ✅ **Phase 1 Complete** (JIT Expansion + Power Caching)
 **Target:** FluxFlow Core v0.3.x → v0.4.0
 
 ---
@@ -55,7 +55,7 @@ Based on analysis of the current implementation, research papers, and TorchKAN's
 4. 🚧 **TorchScript Export** - Static graph optimization (15-25% speedup)
 5. 📋 **Quantization-Aware Training** - INT8/FP16 precision support (40% memory, 20-30% speedup)
 
-**Achieved Impact (Phase 1):**  
+**Achieved Impact (Phase 1):**
 - JIT coverage: 6 → 25 combinations (417% increase)
 - Power computation caching with >95% hit rate
 - Cross-device consistency (CPU/CUDA/MPS)
@@ -186,15 +186,15 @@ import torch
 def bernstein_basis_cached(t_shape: tuple, device: str, dtype: str) -> dict:
     """
     Cache Bernstein basis function powers for common tensor shapes.
-    
+
     Args:
         t_shape: Shape of input tensor (e.g., (batch, channels, height, width))
         device: 'cpu', 'cuda', 'mps'
         dtype: 'float32', 'float16'
-    
+
     Returns:
         dict with keys: 't2', 't3', 't_inv', 't_inv2', 't_inv3'
-    
+
     Note: Cache hit rate expected >80% during training (same batch shapes)
     """
     # Return template tensors - actual values computed on first use
@@ -206,17 +206,17 @@ def bernstein_basis_cached(t_shape: tuple, device: str, dtype: str) -> dict:
 # Modified BezierActivationModule.forward():
 def forward(self, t, p0, p1, p2, p3):
     # ... pre-activation logic ...
-    
+
     # Cache key: shape + device + dtype
     cache_key = (t.shape, str(t.device), str(t.dtype))
-    
+
     # Compute powers (cache for repeated shapes)
     t2 = t * t
     t3 = t2 * t
     t_inv = 1 - t
     t_inv2 = t_inv * t_inv
     t_inv3 = t_inv2 * t_inv
-    
+
     # NOTE: Can't cache tensor values (gradients differ per batch)
     # Instead, cache computation graph via torch.jit
 ```
@@ -276,9 +276,9 @@ __global__ void bezier_fused_kernel(
         float t_inv = 1.0f - t_val;
         float t_inv2 = t_inv * t_inv;
         float t_inv3 = t_inv2 * t_inv;
-        
+
         // Fused Bezier computation (single kernel launch)
-        output[idx] = t_inv3 * p0[idx] 
+        output[idx] = t_inv3 * p0[idx]
                     + 3.0f * t_inv2 * t_val * p1[idx]
                     + 3.0f * t_inv * t2 * p2[idx]
                     + t3 * p3[idx];
@@ -297,7 +297,7 @@ torch::Tensor bezier_fused_cuda(
     int n = t.numel();
     int threads = 256;
     int blocks = (n + threads - 1) / threads;
-    
+
     bezier_fused_kernel<<<blocks, threads>>>(
         t.data_ptr<float>(),
         p0.data_ptr<float>(),
@@ -307,7 +307,7 @@ torch::Tensor bezier_fused_cuda(
         output.data_ptr<float>(),
         n
     );
-    
+
     return output;
 }
 ```
@@ -354,18 +354,18 @@ def bezier_forward_optimized(t, p0, p1, p2, p3):
 ```python
 def forward(self, t, p0, p1, p2, p3):
     # ... pre-activation ...
-    
+
     # Reuse t's memory for t_inv (t not needed after)
     t_inv = torch.sub(1, t, out=t)  # In-place if t not needed for grad
-    
+
     # Pre-allocate output buffer
     output = torch.empty_like(p0)
-    
+
     # Compute in-place where possible
     torch.mul(t_inv, t_inv, out=output)  # t_inv2
     torch.mul(output, t_inv, out=output)  # t_inv3
     torch.mul(output, p0, out=output)     # t_inv3 * p0
-    
+
     # ... rest of computation ...
 ```
 
@@ -393,11 +393,11 @@ import torch.quantization as quant
 
 class BezierActivationQAT(nn.Module):
     """Quantization-Aware Training version of BezierActivation."""
-    
+
     def __init__(self, t_pre_activation=None, p_preactivation=None):
         super().__init__()
         self.bezier_module = BezierActivationModule(t_pre_activation, p_preactivation)
-        
+
         # Quantization stubs
         self.quant_t = quant.QuantStub()
         self.quant_p0 = quant.QuantStub()
@@ -405,7 +405,7 @@ class BezierActivationQAT(nn.Module):
         self.quant_p2 = quant.QuantStub()
         self.quant_p3 = quant.QuantStub()
         self.dequant = quant.DeQuantStub()
-    
+
     def forward(self, t, p0, p1, p2, p3):
         # Quantize inputs
         t = self.quant_t(t)
@@ -413,10 +413,10 @@ class BezierActivationQAT(nn.Module):
         p1 = self.quant_p1(p1)
         p2 = self.quant_p2(p2)
         p3 = self.quant_p3(p3)
-        
+
         # Compute (in quantized precision)
         output = self.bezier_module(t, p0, p1, p2, p3)
-        
+
         # Dequantize output
         return self.dequant(output)
 
@@ -474,10 +474,10 @@ PRE_ACTIVATIONS = {
 def generate_jit_variants():
     """Generate and JIT-compile all pre-activation combinations."""
     variants = {}
-    
+
     for t_act_name, p_act_name in product(PRE_ACTIVATIONS.keys(), repeat=2):
         key = (t_act_name, p_act_name)
-        
+
         # Generate function dynamically
         def make_bezier_fn(t_act, p_act):
             @torch.jit.script
@@ -487,26 +487,26 @@ def generate_jit_variants():
                     t = t_act(t)
                 if p_act is not None:
                     p0, p1, p2, p3 = p_act(p0), p_act(p1), p_act(p2), p_act(p3)
-                
+
                 # Bezier computation
                 one_minus_t = 1.0 - t
                 one_minus_t_sq = one_minus_t * one_minus_t
                 one_minus_t_cube = one_minus_t_sq * one_minus_t
                 t_sq = t * t
                 t_cube = t_sq * t
-                
+
                 return (one_minus_t_cube * p0
                       + 3.0 * one_minus_t_sq * t * p1
                       + 3.0 * one_minus_t * t_sq * p2
                       + t_cube * p3)
-            
+
             return bezier_variant
-        
+
         variants[key] = make_bezier_fn(
             PRE_ACTIVATIONS[t_act_name],
             PRE_ACTIVATIONS[p_act_name]
         )
-    
+
     return variants
 
 # Pre-compile at module load
@@ -689,11 +689,11 @@ def forward(self, t, p0, p1, p2, p3):
         p1 = self.p_preactivation(p1)
         p2 = self.p_preactivation(p2)
         p3 = self.p_preactivation(p3)
-    
+
     # Use CUDA kernel if available and beneficial
     if CUDA_FUSED_AVAILABLE and t.is_cuda and t.numel() > 1024:
         return bezier_fused_cuda(t, p0, p1, p2, p3)
-    
+
     # Fallback to optimized torch operations
     # ... existing addcmul code ...
 ```
@@ -732,14 +732,14 @@ def test_cuda_kernel_correctness():
     p1 = torch.randn_like(t)
     p2 = torch.randn_like(t)
     p3 = torch.randn_like(t)
-    
+
     # Reference (PyTorch)
     module = BezierActivationModule().cuda()
     output_torch = module(t, p0, p1, p2, p3)
-    
+
     # CUDA kernel
     output_cuda = bezier_fused_cuda(t, p0, p1, p2, p3)
-    
+
     assert torch.allclose(output_torch, output_cuda, rtol=1e-5, atol=1e-6)
 
 def test_quantization_accuracy():
@@ -747,11 +747,11 @@ def test_quantization_accuracy():
     # Train FP32 baseline
     model_fp32 = train_vae_to_fid_20()
     fid_fp32 = evaluate_fid(model_fp32)
-    
+
     # Quantize
     model_int8 = quantize_model(model_fp32)
     fid_int8 = evaluate_fid(model_int8)
-    
+
     # Accuracy check
     assert abs(fid_fp32 - fid_int8) < 0.5  # <0.5 FID degradation
 ```
@@ -768,9 +768,9 @@ def benchmark_all_variants():
     model_fp32 = FluxCompressor.from_pretrained("baseline")
     model_int8 = FluxCompressor.from_pretrained("quantized")
     model_jit = torch.jit.load("fluxflow_vae_optimized.pt")
-    
+
     input_batch = torch.randn(4, 3, 512, 512, device='cuda')
-    
+
     # Benchmark each
     results = {}
     for name, model in [('FP32', model_fp32), ('INT8', model_int8), ('JIT', model_jit)]:
@@ -779,16 +779,16 @@ def benchmark_all_variants():
             # Warmup
             for _ in range(10):
                 _ = model(input_batch)
-            
+
             torch.cuda.synchronize()
             start = time.time()
             for _ in range(100):
                 _ = model(input_batch)
             torch.cuda.synchronize()
             elapsed = (time.time() - start) / 100
-            
+
             results[name] = elapsed
-    
+
     print(results)
     # Expected: {'FP32': 0.050, 'INT8': 0.035, 'JIT': 0.038}
 ```
@@ -827,11 +827,11 @@ def benchmark_variant(model, name, device='cuda'):
         'memory_peak': [],
         'fid_score': None
     }
-    
+
     for batch_size in [1, 2, 4, 8]:
         for resolution in [256, 512, 1024]:
             input_batch = torch.randn(batch_size, 3, resolution, resolution, device=device)
-            
+
             # Forward benchmark
             with torch.no_grad():
                 torch.cuda.reset_peak_memory_stats()
@@ -840,10 +840,10 @@ def benchmark_variant(model, name, device='cuda'):
                 torch.cuda.synchronize()
                 forward_time = time.time() - start
                 memory = torch.cuda.max_memory_allocated() / 1e9  # GB
-            
+
             results['forward_times'].append((batch_size, resolution, forward_time))
             results['memory_peak'].append((batch_size, resolution, memory))
-            
+
             # Backward benchmark (training only)
             if model.training:
                 input_batch.requires_grad = True
@@ -854,10 +854,10 @@ def benchmark_variant(model, name, device='cuda'):
                 torch.cuda.synchronize()
                 backward_time = time.time() - start
                 results['backward_times'].append((batch_size, resolution, backward_time))
-    
+
     # FID evaluation (expensive, run once)
     results['fid_score'] = evaluate_fid_on_coco(model)
-    
+
     return results
 ```
 
@@ -974,7 +974,7 @@ def benchmark_variant(model, name, device='cuda'):
 - **TorchKAN:** https://github.com/1ssb/torchkan
   - **Used:** `functools.lru_cache` for Legendre polynomials
   - **Lesson:** Cache basis functions for repeated computations
-  
+
 - **FluxFlow Existing:** `src/fluxflow/models/bezier_jit.py`
   - **Proven:** 20-30% speedup via JIT on CPU/CUDA/MPS
   - **Expand:** From 6 variants to 25+ variants

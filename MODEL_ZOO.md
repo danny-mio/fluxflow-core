@@ -214,5 +214,5 @@ For questions about models:
 
 ---
 
-**Last Updated**: December 14, 2025  
+**Last Updated**: December 14, 2025
 **Next Update**: Expected February 2026 (upon training completion)

@@ -71,7 +71,7 @@ python scripts/migrate_checkpoints.py \
 
 All changes are **opt-in** (default behavior unchanged):
 
-- `FluxPipeline.from_pretrained(path, use_versioning=False)` 
+- `FluxPipeline.from_pretrained(path, use_versioning=False)`
 - `save_model(..., save_metadata=False, model_version="0.3.0")`
 - New: `load_versioned_checkpoint(path)`
 - New: `save_versioned_checkpoint(model, path, model_version)`

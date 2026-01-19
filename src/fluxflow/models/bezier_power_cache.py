@@ -12,7 +12,6 @@ import functools
 
 import torch
 
-
 # Cache statistics (for monitoring and debugging)
 _cache_stats = {"hits": 0, "misses": 0}
 

@@ -1,5 +1,9 @@
 """FluxFlow model components."""
 
+# Backward compatibility: allow imports like 'from fluxflow.models.vae import ...'
+# by creating module aliases
+import sys
+
 from .activations import (
     BezierActivation,
     BezierActivationModule,
@@ -30,21 +34,28 @@ from .factory import (
     create_bezier_models,
     create_models_from_config,
 )
-from .flow import (
+from .pipeline import FluxPipeline
+
+# Import from default version (v0.6.0) for backward compatibility
+from .v060.flow import (
     FluxFlowProcessor,
     FluxTransformerBlock,
     ParallelAttention,
     RotaryPositionalEmbedding,
     pillarLayer,
 )
-from .pipeline import FluxPipeline
-from .vae import (
+
+# Import from default version (v0.6.0) for backward compatibility
+from .v060.vae import (
     Clamp,
     FluxCompressor,
     FluxExpander,
     ProgressiveUpscaler,
     ResidualUpsampleBlock,
 )
+
+sys.modules["fluxflow.models.vae"] = sys.modules["fluxflow.models.v060.vae"]
+sys.modules["fluxflow.models.flow"] = sys.modules["fluxflow.models.v060.flow"]
 
 __all__ = [
     # Activations

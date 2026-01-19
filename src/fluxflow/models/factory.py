@@ -8,18 +8,54 @@ This module provides a unified interface for building either:
 The factory ensures proper component compatibility and parameter matching.
 """
 
+import importlib
+from pathlib import Path
 from typing import Any, Literal, Optional
 
 import torch.nn as nn
 
+from . import registry
 from .encoders import BertTextEncoder
-from .flow import BaselineFluxFlowProcessor, FluxFlowProcessor
-from .vae import (
-    BaselineFluxExpander,
-    BaselineResidualUpsampleBlock,
-    FluxCompressor,
-    FluxExpander,
-)
+from .v060.flow import BaselineFluxFlowProcessor
+from .v060.vae import BaselineFluxExpander, BaselineResidualUpsampleBlock
+
+# Import the registry to ensure it's available for version modules
+ModelClassRegistry = registry.ModelClassRegistry
+
+
+# Automatically discover and import all version modules
+# This enables truly self-registering versions - no code changes needed for new versions
+
+
+def _auto_discover_versions():
+    """Automatically discover and import all version modules."""
+    # Get the directory containing this factory.py file
+    models_dir = Path(__file__).parent
+
+    # Find all directories that match version pattern (vXXX)
+    for item in models_dir.iterdir():
+        if (
+            item.is_dir()
+            and item.name.startswith("v")
+            and len(item.name) >= 4  # vXXX minimum
+            and item.name[1:].isdigit()
+            and (item / "__init__.py").exists()
+        ):  # Must have __init__.py
+
+            try:
+                # Import the version module to trigger self-registration
+                # __name__ is 'fluxflow.models.factory', parent is 'fluxflow.models'
+                parent_package = ".".join(__name__.split(".")[:-1])
+                version_module_name = item.name
+                full_module_name = f"{parent_package}.{version_module_name}"
+                importlib.import_module(full_module_name)
+            except ImportError:
+                # Skip modules that can't be imported
+                continue
+
+
+# Auto-discover all versions
+_auto_discover_versions()
 
 ModelType = Literal["bezier", "baseline"]
 ActivationType = Literal["silu", "gelu", "relu"]
@@ -27,14 +63,19 @@ ActivationType = Literal["silu", "gelu", "relu"]
 
 class ModelFactory:
     """
-    Factory for creating Bezier or Baseline FluxFlow models.
+    Factory for creating Bezier or Baseline FluxFlow models with versioning support.
 
     Usage:
-        # Create Bezier models (original)
+        # Create Bezier models (original) - defaults to v0.6.0
         factory = ModelFactory(model_type="bezier")
         vae_encoder = factory.create_vae_encoder()
         vae_decoder = factory.create_vae_decoder()
         flow = factory.create_flow_processor()
+
+        # Create versioned Bezier models
+        factory = ModelFactory(model_type="bezier", model_version="0.3.0")
+        # or
+        factory = ModelFactory(model_type="bezier", model_version="0.6.0")
 
         # Create Baseline models (for comparison)
         factory = ModelFactory(
@@ -52,6 +93,7 @@ class ModelFactory:
     def __init__(
         self,
         model_type: ModelType = "bezier",
+        model_version: str = "0.6.0",
         # Common config
         vae_dim: int = 128,
         feature_maps_dim: int = 128,
@@ -64,7 +106,10 @@ class ModelFactory:
         baseline_flow_blocks: int = 17,
         baseline_flow_ffn_expansion: float = 4.0,
         # Bezier-specific config (uses defaults)
-        bezier_flow_blocks: int = 12,
+        bezier_flow_blocks: int = 10,
+        # Version-specific config
+        v060_downscales: int = 3,  # v0.6.0: Reduced from 4 (8x instead of 16x compression)
+        v030_downscales: int = 4,  # v0.3.0: Original compression (16x)
     ):
         """
         Initialize model factory.
@@ -87,6 +132,7 @@ class ModelFactory:
             bezier_flow_blocks: Number of transformer blocks (12 default)
         """
         self.model_type = model_type
+        self.model_version = model_version
         self.vae_dim = vae_dim
         self.feature_maps_dim = feature_maps_dim
         self.flow_d_model = flow_d_model
@@ -117,13 +163,17 @@ class ModelFactory:
         """
         Create VAE encoder (FluxCompressor).
 
-        Note: Currently both Bezier and Baseline use the same encoder.
-        The main difference is in the decoder (upsampling blocks).
+        For versioned bezier models, uses the appropriate versioned FluxCompressor.
+        For baseline models, uses the current implementation.
 
         Returns:
             FluxCompressor instance
         """
-        return FluxCompressor(
+        # Get the appropriate class based on model type and version
+        classes = self._get_versioned_classes()
+        FluxCompressor = classes["FluxCompressor"]
+
+        return FluxCompressor(  # type: ignore
             in_channels=in_channels,
             d_model=self.vae_dim,  # Latent dimension
             downscales=downscales,
@@ -146,15 +196,17 @@ class ModelFactory:
         """
         Create VAE decoder (FluxExpander).
 
-        For Baseline models, this creates a modified expander that uses
-        BaselineResidualUpsampleBlock instead of ResidualUpsampleBlock.
+        For versioned bezier models, uses the appropriate versioned FluxExpander.
+        For Baseline models, creates a modified expander with BaselineResidualUpsampleBlock.
 
         Returns:
             FluxExpander instance (Bezier or Baseline variant)
         """
         if self.model_type == "bezier":
-            # Use original FluxExpander with Bezier blocks
-            return FluxExpander(
+            # Use versioned FluxExpander for bezier models
+            classes = self._get_versioned_classes()
+            FluxExpander = classes["FluxExpander"]
+            return FluxExpander(  # type: ignore
                 d_model=self.vae_dim,
                 upscales=upscales,
                 max_hw=max_hw,
@@ -275,8 +327,8 @@ class ModelFactory:
         """
         Create flow processor (FluxFlowProcessor).
 
-        For Baseline models, this creates a modified processor that uses
-        BaselineFluxTransformerBlock and more blocks (17 vs 12).
+        For versioned bezier models, uses the appropriate versioned FluxFlowProcessor.
+        For Baseline models, creates a modified processor with BaselineFluxTransformerBlock.
 
         Returns:
             FluxFlowProcessor instance (Bezier or Baseline variant)
@@ -286,8 +338,10 @@ class ModelFactory:
         )
 
         if self.model_type == "bezier":
-            # Use original FluxFlowProcessor with Bezier blocks
-            return FluxFlowProcessor(
+            # Use versioned FluxFlowProcessor for bezier models
+            classes = self._get_versioned_classes()
+            FluxFlowProcessor = classes["FluxFlowProcessor"]
+            return FluxFlowProcessor(  # type: ignore
                 d_model=self.flow_d_model,
                 vae_dim=self.vae_dim,
                 embedding_size=self.flow_embedding_size,
@@ -365,6 +419,44 @@ class ModelFactory:
 
         return encoder
 
+    def _get_versioned_classes(self) -> dict[str, Any]:
+        """
+        Get versioned classes for VAE and Flow components.
+
+        Uses the self-registering ModelClassRegistry for bezier models.
+        For baseline or unspecified versions, uses current implementations.
+
+        Returns:
+            Dict with 'FluxCompressor', 'FluxExpander', 'FluxFlowProcessor' classes
+        """
+        if self.model_type == "bezier":
+            # Try to get registered classes for this version
+            registered_classes = ModelClassRegistry.get_classes(self.model_version)
+            if registered_classes:
+                return registered_classes  # type: ignore
+
+            # Fallback: try to dynamically import version module
+            try:
+                version_module = f".v{self.model_version.replace('.', '')}"
+                _ = __import__(version_module, fromlist=[""], globals=globals())
+                # If the module has registered itself, it should be in the registry now
+                registered_classes = ModelClassRegistry.get_classes(self.model_version)
+                if registered_classes:
+                    return registered_classes  # type: ignore
+            except ImportError:
+                pass
+
+        # Fallback to current implementations (baseline or default bezier)
+        from .v060.flow import FluxFlowProcessor as FFP_v060
+        from .v060.vae import FluxCompressor as FC_v060
+        from .v060.vae import FluxExpander as FE_v060
+
+        return {
+            "FluxCompressor": FC_v060,
+            "FluxExpander": FE_v060,
+            "FluxFlowProcessor": FFP_v060,
+        }
+
     def get_config(self) -> dict[str, Any]:
         """
         Get current factory configuration.
@@ -374,6 +466,7 @@ class ModelFactory:
         """
         config: dict[str, Any] = {
             "model_type": self.model_type,
+            "model_version": self.model_version,
             "vae_dim": self.vae_dim,
             "feature_maps_dim": self.feature_maps_dim,
             "flow_d_model": self.flow_d_model,
@@ -417,26 +510,78 @@ def create_bezier_models(
     vae_dim: int = 128,
     flow_d_model: int = 512,
     flow_embedding_size: int = 1024,
+    model_version: str = "0.7.0",
+    downscales: Optional[int] = None,
 ) -> tuple:
     """
     Convenience function to create full Bezier model set.
 
+    Uses self-registering version system - no if statements needed for new versions.
+
     Returns:
         (vae_encoder, vae_decoder, flow_processor, text_encoder)
     """
-    factory = ModelFactory(
-        model_type="bezier",
-        vae_dim=vae_dim,
-        flow_d_model=flow_d_model,
-        flow_embedding_size=flow_embedding_size,
+    from .encoders import BertTextEncoder
+
+    # Get classes from registry (will import and register the version module if needed)
+    classes = ModelClassRegistry.get_classes(model_version)
+    if classes is None:
+        # Try to dynamically import the version module to trigger registration
+        try:
+            version_module = f"fluxflow.models.v{model_version.replace('.', '')}"
+            __import__(version_module)
+            classes = ModelClassRegistry.get_classes(model_version)
+        except ImportError:
+            pass
+
+    if classes is None:
+        raise ValueError(
+            f"Unsupported model version: {model_version}. Available: {ModelClassRegistry.list_versions()}"
+        )
+
+    Compressor = classes["FluxCompressor"]
+    Expander = classes["FluxExpander"]
+    FlowProcessor = classes["FluxFlowProcessor"]
+
+    # Get version-specific downscales
+    if downscales is None:
+        # All versions use 4 downscales for compatibility
+        downscales = 4
+
+    compressor = Compressor(
+        in_channels=3,
+        d_model=vae_dim,
+        downscales=downscales,
+        max_hw=1024,
+        use_attention=True,
+        attn_layers=4,
+        attn_heads=8,
+        attn_ff_mult=2,
+        attn_dropout=0.0,
+        use_gradient_checkpointing=True,
     )
 
-    vae_encoder = factory.create_vae_encoder()
-    vae_decoder = factory.create_vae_decoder()
-    flow = factory.create_flow_processor()
-    text_encoder = factory.create_text_encoder(embed_dim=flow_embedding_size)
+    expander = Expander(
+        d_model=vae_dim,
+        upscales=downscales,
+        max_hw=1024,
+        ctx_tokens=4,
+        use_gradient_checkpointing=True,
+    )
 
-    return vae_encoder, vae_decoder, flow, text_encoder
+    flow_processor = FlowProcessor(
+        d_model=flow_d_model,
+        vae_dim=vae_dim,
+        embedding_size=flow_embedding_size,
+        n_head=8,
+        n_layers=10,
+        max_hw=1024,
+        ctx_tokens=4,
+    )
+
+    text_encoder = BertTextEncoder(embed_dim=flow_embedding_size)
+
+    return compressor, expander, flow_processor, text_encoder
 
 
 def create_baseline_models(
@@ -447,6 +592,7 @@ def create_baseline_models(
     vae_width_mult: float = 4.5,
     vae_depth_mult: float = 1.0,
     flow_blocks: int = 17,
+    model_version: str = "0.3.0",
 ) -> tuple:
     """
     Convenience function to create full Baseline model set.
@@ -454,9 +600,16 @@ def create_baseline_models(
     NOTE: Flow processor still raises NotImplementedError (Phase 1.2).
     VAE encoder and decoder are fully functional.
 
+    Args:
+        model_version: Version for compatibility (always uses 4 downscales)
+
     Returns:
         (vae_encoder, vae_decoder, flow_processor, text_encoder)
     """
+    # Use consistent downscales for all versions
+    downscales = 4
+    upscales = downscales
+
     factory = ModelFactory(
         model_type="baseline",
         vae_dim=vae_dim,
@@ -468,8 +621,8 @@ def create_baseline_models(
         baseline_flow_blocks=flow_blocks,
     )
 
-    vae_encoder = factory.create_vae_encoder()
-    vae_decoder = factory.create_vae_decoder()
+    vae_encoder = factory.create_vae_encoder(downscales=downscales)
+    vae_decoder = factory.create_vae_decoder(upscales=upscales)
     flow = factory.create_flow_processor()  # Now implemented!
     text_encoder = factory.create_text_encoder(embed_dim=flow_embedding_size)
 
@@ -496,6 +649,7 @@ def create_models_from_config(model_config) -> tuple:
             vae_dim=model_config.vae_dim,
             flow_d_model=model_config.feature_maps_dim,
             flow_embedding_size=model_config.text_embedding_dim,
+            model_version=model_config.model_version,
         )
     elif model_config.model_type == "baseline":
         return create_baseline_models(
@@ -506,6 +660,7 @@ def create_models_from_config(model_config) -> tuple:
             vae_width_mult=model_config.baseline_vae_width_mult,
             vae_depth_mult=model_config.baseline_vae_depth_mult,
             flow_blocks=model_config.baseline_flow_blocks,
+            model_version=model_config.model_version,
         )
     else:
         raise ValueError(f"Unknown model_type: {model_config.model_type}")

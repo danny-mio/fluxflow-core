@@ -229,16 +229,17 @@ class TestPatchDiscriminator:
         assert output.shape[1] == 1  # Single channel logits
 
     def test_output_shape_depth_3(self):
-        """Depth 3 discriminator output shape."""
-        disc = PatchDiscriminator(in_channels=3, depth=3)
+        """Depth 3 discriminator output shape with optimized architecture."""
+        disc = PatchDiscriminator(in_channels=3, base_ch=32, depth=3, use_spectral_norm=False)
         x = torch.randn(4, 3, 128, 128)
 
         output = disc(x)
 
-        # 3 downsamples: 128 -> 64 -> 32 -> 16
+        # Optimized architecture: 4 downsamples total (1 initial + 3 blocks)
+        # 128 -> 64 -> 32 -> 16 -> 8, then head gives 7x7
         assert output.shape[0] == 4
         assert output.shape[1] == 1
-        assert output.shape[2:] == (16, 16) or output.shape[2:] == (8, 8)
+        assert output.shape[2:] == (7, 7)
 
     def test_output_shape_depth_5(self):
         """Depth 5 discriminator output shape."""
@@ -357,18 +358,32 @@ class TestPatchDiscriminator:
         assert output.shape[1] == 1
 
     def test_spectral_normalization_applied(self):
-        """PatchDiscriminator should use spectral normalization."""
-        disc = PatchDiscriminator(in_channels=3, depth=4)
+        """PatchDiscriminator spectral normalization is configurable."""
+        # Test with spectral norm enabled
+        disc_with_sn = PatchDiscriminator(in_channels=3, depth=3, use_spectral_norm=True)
 
-        # Check for spectral norm in conv layers
         has_spectral_norm = False
-        for module in disc.modules():
+        for module in disc_with_sn.modules():
             if isinstance(module, nn.Conv2d):
                 if hasattr(module, "weight_u"):
                     has_spectral_norm = True
                     break
 
-        assert has_spectral_norm, "PatchDiscriminator should use spectral normalization"
+        assert has_spectral_norm, "PatchDiscriminator should apply spectral norm when enabled"
+
+        # Test with spectral norm disabled (default)
+        disc_without_sn = PatchDiscriminator(in_channels=3, depth=3, use_spectral_norm=False)
+
+        has_spectral_norm = False
+        for module in disc_without_sn.modules():
+            if isinstance(module, nn.Conv2d):
+                if hasattr(module, "weight_u"):
+                    has_spectral_norm = True
+                    break
+
+        assert (
+            not has_spectral_norm
+        ), "PatchDiscriminator should not apply spectral norm when disabled"
 
 
 class TestDiscriminatorIntegration:

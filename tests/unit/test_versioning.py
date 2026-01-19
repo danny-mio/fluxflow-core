@@ -190,9 +190,9 @@ class TestVersionedSaveAndLoad:
 @pytest.fixture
 def simple_pipeline():
     """Create minimal FluxPipeline for testing."""
-    from fluxflow.models.vae import FluxCompressor, FluxExpander
     from fluxflow.models.flow import FluxFlowProcessor
     from fluxflow.models.pipeline import FluxPipeline
+    from fluxflow.models.vae import FluxCompressor, FluxExpander
 
     compressor = FluxCompressor(d_model=32, downscales=2, max_hw=256, attn_layers=1)
     flow = FluxFlowProcessor(d_model=32, vae_dim=32, n_layers=2, n_head=4, max_hw=256)
