@@ -930,9 +930,10 @@ class FluxFlowPipeline(DiffusionPipeline):
                 full_input = torch.cat([lat_input, hw_input], dim=1)
 
                 # Predict noise
+                # Flow processors expect normalized timesteps in [0, 1].
                 t_batch = torch.full(
-                    (full_input.size(0),), t.item(), device=device, dtype=torch.long
-                )
+                    (full_input.size(0),), t.item() / 999.0, device=device, dtype=torch.float32
+                ).clamp(0.0, 1.0)
                 model_output = self.flow_processor(full_input, text_embeddings, t_batch)
                 model_output = model_output[:, :-1, :]  # Remove hw vector
 
