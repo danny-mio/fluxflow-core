@@ -436,6 +436,7 @@ class TestSchedulerStateSaving:
 
         # Step scheduler a few times
         for _ in range(10):
+            optimizer.step()
             scheduler.step()
 
         # Save scheduler state
@@ -455,6 +456,7 @@ class TestSchedulerStateSaving:
 
         # Step 10 times
         for _ in range(10):
+            optimizer.step()
             scheduler.step()
 
         lr_after_10_steps = optimizer.param_groups[0]["lr"]

@@ -21,8 +21,8 @@ def _normalize_model_timesteps(timesteps: torch.Tensor) -> torch.Tensor:
     if timesteps.dtype.is_floating_point:
         max_t = float(timesteps.max().item()) if timesteps.numel() > 0 else 0.0
         if max_t <= 1.0:
-            return timesteps.clamp(0.0, 1.0)
-    return (timesteps.float() / 999.0).clamp(0.0, 1.0)
+            return timesteps.round(decimals=5).clamp(0.0, 1.0)
+    return (timesteps.float() / 1000.0).round(decimals=5).clamp(0.0, 1.0)
 
 
 def img_to_random_packet(
@@ -389,7 +389,7 @@ def save_sample_images(
             noise_img = torch.randn_like(img_seq)
 
             noise_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=1000)
-            noise_scheduler.set_timesteps(num_inference_steps, device=device)  # type: ignore[arg-type]
+            noise_scheduler.set_timesteps(num_inference_steps, device=device)  # type: ignore[attr-defined]
 
             t = torch.randint(0, 1000, (B,), device=device)
             noised_img = noise_scheduler.add_noise(img_seq, noise_img, t)  # type: ignore[attr-defined]

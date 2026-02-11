@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-11
+
+### Added
+- Versioned model registry with auto-discovery and v0.6.0/v0.7.0 model implementations
+- `model_version` in configuration with validation and default v0.6.0
+- v0.7.x checkpoint loader support with legacy auto-detection routing
+
+### Changed
+- Sampling and inference utilities normalize timesteps for v-prediction
+- Sample generation follows iterative denoising with scheduler-based noise
+- Legacy import paths now map to v0.6.0 model modules
+
 ## [0.5.0] - 2025-12-23
 
 ### Added

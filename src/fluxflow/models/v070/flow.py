@@ -382,9 +382,12 @@ class FluxFlowProcessor(nn.Module):
                 ctx_agg = ctx_agg + img_seq.mean(dim=1)
             return img_seq, ctx_agg
 
-        img_seq, ctx_agg = checkpoint(
-            partial(transformer_blocks_fn), img_seq, ctx_agg, use_reentrant=False
-        )
+        if torch.is_grad_enabled() and (img_seq.requires_grad or ctx_agg.requires_grad):
+            img_seq, ctx_agg = checkpoint(
+                partial(transformer_blocks_fn), img_seq, ctx_agg, use_reentrant=False
+            )
+        else:
+            img_seq, ctx_agg = transformer_blocks_fn(img_seq, ctx_agg)
 
         # Pre-compute projection to VAE space for all samples (batched)
         img_seq_v_all = self.dmodel_to_vae(img_seq)  # [B, T, Dv+CONTEXT_DIMS]

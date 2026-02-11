@@ -18,7 +18,7 @@ from fluxflow.models.versioning import save_versioned_checkpoint
 save_versioned_checkpoint(
     pipeline,
     "outputs/model/",
-    model_version="0.3.0",
+    model_version="0.7.0",
     training_info={"steps": 50000, "dataset": "COCO"}
 )
 ```
@@ -49,7 +49,7 @@ pipeline = FluxPipeline.from_pretrained(
 python scripts/migrate_checkpoints.py \
     old_model.safetensors \
     versioned_model/ \
-    --version 0.3.0
+    --version 0.7.0
 ```
 
 ## Documentation
@@ -72,7 +72,7 @@ python scripts/migrate_checkpoints.py \
 All changes are **opt-in** (default behavior unchanged):
 
 - `FluxPipeline.from_pretrained(path, use_versioning=False)`
-- `save_model(..., save_metadata=False, model_version="0.3.0")`
+- `save_model(..., save_metadata=False, model_version="0.7.0")`
 - New: `load_versioned_checkpoint(path)`
 - New: `save_versioned_checkpoint(model, path, model_version)`
 

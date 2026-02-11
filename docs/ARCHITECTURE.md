@@ -93,8 +93,8 @@ graph TB
 
         TEMBED --> FLOW1[Transformer Block 1<br/>RoPE + Parallel Attn]
         CROSSATTN --> FLOW1
-        FLOW1 --> FLOW2[Transformer Blocks 2-11<br/>Bezier MLP]
-        FLOW2 --> FLOW12[Transformer Block 12]
+        FLOW1 --> FLOW2[Transformer Blocks 2-9<br/>Bezier MLP]
+        FLOW2 --> FLOW10[Transformer Block 10]
         FLOW12 --> VPROJ[Output Projection<br/>to velocity v]
         VPROJ --> VPRED[Predicted v<br/>B x T+1 x D]
 
@@ -205,7 +205,7 @@ graph TB
 **Stages:**
 1. Timestep embedding (sinusoidal + MLP)
 2. Text injection via cross-attention
-3. Transformer blocks (default: 12 layers)
+3. Transformer blocks (default: 10 layers)
    - Rotary position embeddings (RoPE)
    - Parallel attention (Q from latent, KV from latent+text)
    - Bezier activation MLPs
