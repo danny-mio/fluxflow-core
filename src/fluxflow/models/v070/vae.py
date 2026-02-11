@@ -24,6 +24,19 @@ from .conditioning import SPADE
 CONTEXT_DIMS = 5
 
 
+def _should_checkpoint(args: tuple[object, ...]) -> bool:
+    return torch.is_grad_enabled() and any(
+        isinstance(arg, torch.Tensor) and arg.requires_grad for arg in args
+    )
+
+
+def _maybe_checkpoint(fn, *args, **kwargs):
+    if _should_checkpoint(args):
+        return checkpoint(fn, *args, **kwargs)
+    kwargs.pop("use_reentrant", None)
+    return fn(*args, **kwargs)
+
+
 class Clamp(nn.Module):
     """Clamps tensor values to specified range."""
 
@@ -135,7 +148,7 @@ class ProgressiveUpscaler(nn.Module):
         if self.use_gradient_checkpointing and x.requires_grad:
             # Checkpoint each layer individually to reduce memory usage
             for layer in self.layers:
-                x = checkpoint(layer, x, context, use_reentrant=True)
+                x = _maybe_checkpoint(layer, x, context, use_reentrant=True)
             return x
         else:
             # Normal forward pass without checkpointing
@@ -404,7 +417,7 @@ class FluxCompressor(nn.Module):
             return x
 
         if self.use_gradient_checkpointing and img.requires_grad:
-            x = checkpoint(encode_block, img, use_reentrant=True)
+            x = _maybe_checkpoint(encode_block, img, use_reentrant=True)
         else:
             x = encode_block(img)
 
@@ -444,7 +457,7 @@ class FluxCompressor(nn.Module):
             return seq
 
         if self.use_gradient_checkpointing and img_seq.requires_grad:
-            attended_seq = checkpoint(attn_block, img_seq, use_reentrant=True)
+            attended_seq = _maybe_checkpoint(attn_block, img_seq, use_reentrant=True)
         else:
             attended_seq = attn_block(img_seq)
 
@@ -799,7 +812,6 @@ class BaselineFluxExpander(nn.Module):
         use_gradient_checkpointing,
     ):
         """Create progressive upscaler using baseline blocks."""
-        from torch.utils.checkpoint import checkpoint
 
         class BaselineProgressiveUpscaler(nn.Module):
             """Progressive upscaler using BaselineResidualUpsampleBlock."""
@@ -834,7 +846,7 @@ class BaselineFluxExpander(nn.Module):
                 if self.use_gradient_checkpointing and x.requires_grad:
                     # Checkpoint each layer individually to reduce memory usage
                     for layer in self.layers:
-                        x = checkpoint(layer, x, context, use_reentrant=True)
+                        x = _maybe_checkpoint(layer, x, context, use_reentrant=True)
                     return x
                 else:
                     # Normal forward pass without checkpointing

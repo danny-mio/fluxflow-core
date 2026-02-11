@@ -64,8 +64,7 @@ def get_power_computation_fn(device_type: str, dtype_str: str):
     # Track cache miss
     _cache_stats["misses"] += 1
 
-    @torch.jit.script
-    def compute_powers(t):
+    def compute_powers(t: torch.Tensor):
         """
         Compute all Bezier power terms in a single fused operation.
 

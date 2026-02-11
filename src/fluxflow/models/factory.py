@@ -12,6 +12,7 @@ import importlib
 from pathlib import Path
 from typing import Any, Literal, Optional
 
+import torch
 import torch.nn as nn
 
 from . import registry
@@ -302,7 +303,13 @@ class ModelFactory:
                     return x
 
                 if self.use_gradient_checkpointing:
-                    return checkpoint(partial(upscale_all), x, context, use_reentrant=False)
+                    has_grad = torch.is_grad_enabled() and (
+                        x.requires_grad
+                        or (isinstance(context, torch.Tensor) and context.requires_grad)
+                    )
+                    if has_grad:
+                        return checkpoint(partial(upscale_all), x, context, use_reentrant=False)
+                    return upscale_all(x, context)
                 else:
                     return upscale_all(x, context)
 

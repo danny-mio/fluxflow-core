@@ -21,8 +21,8 @@ from fluxflow.models.versioning import save_versioned_checkpoint
 # Save with version metadata
 save_versioned_checkpoint(
     pipeline,
-    "outputs/model_v0.3.0/",
-    model_version="0.3.0",
+    "outputs/model_v0.7.0/",
+    model_version="0.7.0",
     training_info={
         "total_steps": 50000,
         "dataset": "COCO2017",
@@ -32,8 +32,8 @@ save_versioned_checkpoint(
 ```
 
 This creates:
-- `outputs/model_v0.3.0/model.safetensors` - Model weights
-- `outputs/model_v0.3.0/model_metadata.json` - Version and architecture info
+- `outputs/model_v0.7.0/model.safetensors` - Model weights
+- `outputs/model_v0.7.0/model_metadata.json` - Version and architecture info
 
 ### Loading Models with Versioning
 
@@ -42,11 +42,11 @@ from fluxflow.models import FluxPipeline
 
 # Option 1: Direct versioned loading
 from fluxflow.models.versioning import load_versioned_checkpoint
-pipeline = load_versioned_checkpoint("outputs/model_v0.3.0/")
+pipeline = load_versioned_checkpoint("outputs/model_v0.7.0/")
 
 # Option 2: Use from_pretrained with versioning flag
 pipeline = FluxPipeline.from_pretrained(
-    "outputs/model_v0.3.0/",
+    "outputs/model_v0.7.0/",
     use_versioning=True
 )
 ```
@@ -62,7 +62,7 @@ save_model(
     text_encoder=text_encoder,
     output_path="checkpoints/epoch_10/",
     save_metadata=True,
-    model_version="0.3.0",
+    model_version="0.7.0",
     training_info={
         "epoch": 10,
         "total_steps": 50000,
@@ -77,8 +77,8 @@ save_model(
 
 ```json
 {
-  "model_version": "0.3.0",           // REQUIRED: Model version
-  "library_version": "0.3.1",         // REQUIRED: FluxFlow version used to save
+  "model_version": "0.7.0",           // REQUIRED: Model version
+  "library_version": "0.5.0",         // REQUIRED: FluxFlow version used to save
   "architecture": {                   // REQUIRED: Auto-detected from model
     "vae_dim": 128,                   // REQUIRED
     "flow_dim": 128,                  // REQUIRED
@@ -119,9 +119,9 @@ FluxFlow uses semantic versioning (MAJOR.MINOR.PATCH) for model versions:
 - **PATCH**: Bug fixes, weight updates (fully compatible)
 
 Examples:
-- `0.3.0` → `0.3.1`: Patch version, fully compatible
-- `0.3.0` → `0.4.0`: Minor version, backward compatible
-- `0.3.0` → `1.0.0`: Major version, may require migration
+- `0.7.0` → `0.7.1`: Patch version, fully compatible
+- `0.6.0` → `0.7.0`: Minor version, backward compatible
+- `0.7.0` → `1.0.0`: Major version, may require migration
 
 ## Backward Compatibility
 
@@ -138,12 +138,12 @@ To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
 
 ## Version Compatibility Matrix
 
-| Model Version | FluxFlow 0.3.0 | FluxFlow 0.3.1+ |
-|---------------|----------------|-----------------|
-| 0.2.0 (legacy)| ✅ (inferred)  | ✅ (inferred)   |
-| 0.3.0         | ✅             | ✅              |
-| 0.3.1         | ❌             | ✅              |
-| 0.4.0         | ❌             | Future          |
+| Model Version | Support | Notes |
+|---------------|---------|-------|
+| 0.2.x (legacy) | ✅ | Legacy loader (no metadata) |
+| 0.3.x | ✅ | Versioned loader support |
+| 0.6.0 | Limited | Model registry only; no versioned loader |
+| 0.7.x | ✅ | Versioned loader support |
 
 ## Best Practices
 
@@ -151,7 +151,7 @@ To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
 
 1. **Always use versioned saves** for new models:
    ```python
-   save_versioned_checkpoint(model, path, model_version="0.3.0")
+save_versioned_checkpoint(model, path, model_version="0.7.0")
    ```
 
 2. **Include training metadata** for reproducibility:
@@ -172,7 +172,7 @@ To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
 
 1. **Use `use_versioning=True`** for better error messages:
    ```python
-   pipeline = FluxPipeline.from_pretrained(path, use_versioning=True)
+pipeline = FluxPipeline.from_pretrained(path, use_versioning=True)
    ```
 
 2. **Check metadata** before loading:
@@ -226,20 +226,20 @@ Create a custom loader for a new model version:
 ```python
 from fluxflow.models.versioning import ModelVersionLoader, ModelVersionRegistry
 
-class ModelLoaderV04(ModelVersionLoader):
-    VERSION = "0.4.0"
-    COMPATIBLE_VERSIONS = ["0.4.1"]
+class ModelLoaderV08(ModelVersionLoader):
+    VERSION = "0.8.0"
+    COMPATIBLE_VERSIONS = ["0.8.1"]
 
     def load_checkpoint(self, checkpoint_path, metadata, device, **kwargs):
-        # Custom loading logic for v0.4.x
+        # Custom loading logic for v0.8.x
         pass
 
     def save_checkpoint(self, model, output_path, metadata, **kwargs):
-        # Custom saving logic for v0.4.x
+        # Custom saving logic for v0.8.x
         pass
 
 # Register the loader
-ModelVersionRegistry.register(ModelLoaderV04)
+ModelVersionRegistry.register(ModelLoaderV08)
 ```
 
 ### Programmatic Version Checking
