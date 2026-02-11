@@ -375,9 +375,12 @@ class FluxFlowProcessor(nn.Module):
                 ctx_agg = ctx_agg + img_seq.mean(dim=1)
             return img_seq, ctx_agg
 
-        img_seq, ctx_agg = checkpoint(
-            partial(transformer_blocks_fn), img_seq, ctx_agg, use_reentrant=False
-        )
+        if torch.is_grad_enabled() and (img_seq.requires_grad or ctx_agg.requires_grad):
+            img_seq, ctx_agg = checkpoint(
+                partial(transformer_blocks_fn), img_seq, ctx_agg, use_reentrant=False
+            )
+        else:
+            img_seq, ctx_agg = transformer_blocks_fn(img_seq, ctx_agg)
 
         # Pre-compute projection to VAE space for all samples (batched)
         img_seq_v_all = self.dmodel_to_vae(img_seq)  # [B, T, Dv]
@@ -451,7 +454,7 @@ class FluxFlowProcessor(nn.Module):
 # ============================================================================
 # BASELINE MODELS (experimental/baseline-no-bezier branch)
 # These models replace Pillar-Based BezierActivation with standard FFN
-# Strategy: Use MORE transformer blocks with STANDARD FFN (4× expansion)
+# Strategy: Use MORE transformer blocks with STANDARD FFN (4x expansion)
 # ============================================================================
 
 
@@ -461,7 +464,7 @@ class BaselineFluxTransformerBlock(nn.Module):
 
     Replaces Bezier's pillar architecture with standard 2-layer FFN:
     - Bezier: 4 pillars @ depth=3 (12 MLP layers) + FFN = 281,656 params/block
-    - Baseline: 2-layer FFN @ 4× expansion = 198,712 params/block
+    - Baseline: 2-layer FFN @ 4x expansion = 198,712 params/block
     - Compensation: Use MORE blocks (17 vs 12) to match total parameters
 
     This respects: "pillar architecture is not possible without bezier and
@@ -495,7 +498,7 @@ class BaselineFluxTransformerBlock(nn.Module):
         self.cross_attn = ParallelAttention(d_model, n_head)
 
         # Standard FFN (replaces 4 pillars + FFN)
-        # 2-layer FFN @ 4× expansion (standard transformer)
+        # 2-layer FFN @ 4x expansion (standard transformer)
         hidden_dim = int(d_model * ffn_expansion)
 
         activation: nn.Module

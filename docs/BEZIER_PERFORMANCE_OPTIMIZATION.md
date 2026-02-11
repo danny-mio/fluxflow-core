@@ -1,9 +1,9 @@
 # Bezier Activation Performance Optimization
 
-**Author:** Solution Architect → Dev Agent (Implementation)
+**Author:** FluxFlow team
 **Date:** 2025-12-23
 **Status:** ✅ **Phase 1 Complete** (JIT Expansion + Power Caching)
-**Target:** FluxFlow Core v0.3.x → v0.4.0
+**Scope:** FluxFlow Core v0.3.x → v0.5.0 (historical)
 
 ---
 
@@ -990,7 +990,7 @@ def benchmark_variant(model, name, device='cuda'):
 
 **Setup:**
 ```bash
-cd /Volumes/DanieleExt/ai/ffnew/fluxflow-core
+cd fluxflow-core
 python scripts/benchmark_jit.py  # Baseline (already exists)
 python scripts/benchmark_optimizations.py  # New (to be created)
 ```

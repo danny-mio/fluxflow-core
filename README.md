@@ -192,6 +192,12 @@ for i, img in enumerate(result.images):
     img.save(f"output_{i}.png")
 ```
 
+### Model Versions
+
+- Default model version: `0.6.0` (set by `FluxFlowConfig.model.model_version`)
+- Current alternatives: `0.3.0` (legacy), `0.7.0` (context-enhanced)
+- For versioned checkpoints, prefer `load_versioned_checkpoint()` and set `model_version` when saving
+
 ### Classifier-Free Guidance (CFG)
 
 **Available since v0.3.0**: FluxFlow supports Classifier-Free Guidance for enhanced generation control.

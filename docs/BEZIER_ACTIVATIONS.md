@@ -324,8 +324,8 @@ Despite per-activation overhead, **smaller models enable faster inference**:
 **Comparison setup (Theoretical)**: Target both models trained to FID=15 on COCO 2017 validation set.
 
 **Architecture details**:
-- Standard: 256 channels, ReLU activations, 12 transformer layers → ~500M parameters
-- Bezier: 128 channels, Bezier activations, 12 transformer layers → ~200M parameters
+- Standard: 256 channels, ReLU activations, 10 transformer layers → ~500M parameters
+- Bezier: 128 channels, Bezier activations, 10 transformer layers → ~200M parameters
 
 **Inference benchmark targets** (NVIDIA A100, batch=1, 512×512, 50 diffusion steps, FP32 precision):
 - Standard (target): 1.82s ± 0.05s (estimated based on similar architectures)
