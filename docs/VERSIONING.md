@@ -82,7 +82,7 @@ save_model(
   "architecture": {                   // REQUIRED: Auto-detected from model
     "vae_dim": 128,                   // REQUIRED
     "flow_dim": 128,                  // REQUIRED
-    "text_embed_dim": 768,            // REQUIRED
+    "text_embed_dim": 1024,           // REQUIRED
     "downscales": 4,                  // REQUIRED
     "upscales": 4,                    // REQUIRED
     "vae_attn_layers": 2,             // Auto-detected
@@ -142,8 +142,9 @@ To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
 |---------------|---------|-------|
 | 0.2.x (legacy) | ✅ | Legacy loader (no metadata) |
 | 0.3.x | ✅ | Versioned loader support |
-| 0.6.0 | Limited | Model registry only; no versioned loader |
+| 0.6.0 | Limited | No versioned loader — use legacy `FluxPipeline.from_pretrained()` path |
 | 0.7.x | ✅ | Versioned loader support |
+| 0.8.0 | ✅ | Versioned loader support (ModelLoaderV08; pillar-attention) |
 
 ## Best Practices
 
@@ -151,7 +152,7 @@ To upgrade legacy checkpoints, see [MIGRATION.md](MIGRATION.md).
 
 1. **Always use versioned saves** for new models:
    ```python
-save_versioned_checkpoint(model, path, model_version="0.7.0")
+   save_versioned_checkpoint(model, path, model_version="0.7.0")
    ```
 
 2. **Include training metadata** for reproducibility:
@@ -172,7 +173,7 @@ save_versioned_checkpoint(model, path, model_version="0.7.0")
 
 1. **Use `use_versioning=True`** for better error messages:
    ```python
-pipeline = FluxPipeline.from_pretrained(path, use_versioning=True)
+   pipeline = FluxPipeline.from_pretrained(path, use_versioning=True)
    ```
 
 2. **Check metadata** before loading:
@@ -228,7 +229,7 @@ from fluxflow.models.versioning import ModelVersionLoader, ModelVersionRegistry
 
 class ModelLoaderV08(ModelVersionLoader):
     VERSION = "0.8.0"
-    COMPATIBLE_VERSIONS = ["0.8.1"]
+    COMPATIBLE_VERSIONS = ["0.8.1", "0.8.2"]
 
     def load_checkpoint(self, checkpoint_path, metadata, device, **kwargs):
         # Custom loading logic for v0.8.x

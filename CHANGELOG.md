@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+_No unreleased changes._
+
+## [0.8.0] - 2026-02-21
+
+### Added
+- **Pillar-attention architecture** (`v080/flow.py`)
+  - `FluxTransformerBlock_v080`: adds FiLM conditioning and shared pillar cross-attention per transformer block
+  - FiLM modulation per pillar: `gamma, beta = film_pi(text_cond).chunk(2)` → `gate * (1 + gamma) + beta`
+  - Shared `pillar_cross_attn` (Q=stacked pillar outputs, KV=text_seq), `n_pillar_heads = _valid_pillar_heads(d_model, max(1, n_head // 4))` — guarantees divisibility
+  - `norm_pillar` LayerNorm shared across all 4 pillars
+  - `FluxFlowProcessor_v080`: adds `text_cond_proj` linear, passes pooled text conditioning to every block
+- **`ModelLoaderV08`** in `versioning.py`
+  - Loads/saves v0.8.0 checkpoints via `load_versioned_checkpoint()` / `save_versioned_checkpoint()`
+  - Routes by `model_version` field in `model_metadata.json`; characteristic v0.8.0 state dict keys include `transformer_blocks.N.pillar_cross_attn` and `transformer_blocks.N.film_p0`
+  - Compatible version range: `["0.8.1", "0.8.2"]`
+- **`v080/__init__.py`** — version registry entry; imports `FluxCompressor` and `FluxExpander` from `v070/vae.py` (VAE unchanged)
+- **Tests** (`tests/unit/test_flow_shapes_v080.py`): shape correctness, FiLM modulation effect, pillar cross-attn KV shape, gradient flow, GPU variant
+
+### Changed
+- VAE (`FluxCompressor`, `FluxExpander`) unchanged from v0.7.0
+- External `FluxFlowProcessor` forward signature unchanged: `forward(packed, text_embeddings, timesteps)`
+- `text_cond` extraction is internal to `FluxFlowProcessor_v080.forward()`; no training loop changes required
+- **`text_embed_dim` default corrected to 1024** across all loaders and pipelines (`versioning.py`, `pipeline.py`, `diffusion_pipeline.py`) — previous default of 768 was a legacy error from DistilBERT's internal hidden size; FluxFlow's projection output has always been 1024
+
+### Fixed
+- Pillar cross-attention head count now uses `_valid_pillar_heads()` to guarantee `d_model % n_pillar_heads == 0`; previously `n_head // 4` could produce non-divisors causing runtime shape errors
+- Versioned loader now passes `flow_vae_dim` (checkpoint-detected value) instead of `vae_latent_dim` when instantiating `FluxFlowProcessor_v080`, preventing size mismatches on metadata/weight disagreements
+
 ## [0.7.0] - 2026-02-11
 
 ### Added
@@ -17,6 +45,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Sampling and inference utilities normalize timesteps for v-prediction
 - Sample generation follows iterative denoising with scheduler-based noise
 - Legacy import paths now map to v0.6.0 model modules
+
+## [0.6.0] - internal
+
+> v0.6.0 is an **architecture version only**, not a standalone PyPI release. The v0.6.0 model module (`src/fluxflow/models/v060/`) was bundled with the v0.7.0 library release and remains the default stable architecture (`model_version: "0.6.0"` in config). It is not loadable via `load_versioned_checkpoint()` — use `FluxPipeline.from_pretrained()` for legacy v0.6.0 checkpoints.
+
+### Added
+- v0.6.0 model architecture (baseline context-enhanced flow transformer)
 
 ## [0.5.0] - 2025-12-23
 
@@ -127,7 +162,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 - **FluxExpander docstrings**: Document that `context=None` disables SPADE conditioning
 
-## [0.1.1] - 2024-11-XX
+## [0.1.1] - 2024-11-01
 
 ### Added
 - **TrainableBezier activation** for per-channel learnable transformations

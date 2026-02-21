@@ -110,6 +110,29 @@ class TestModelVersionRegistry:
         assert "0.3.0" in versions
         assert "0.2.0" in versions  # Legacy loader
 
+    def test_v080_registered(self):
+        """v0.8.0 should appear in list_versions."""
+        # Trigger auto-discovery (factory import ensures v080 is loaded)
+        import fluxflow.models.factory  # noqa: F401
+
+        versions = ModelVersionRegistry.list_versions()
+        assert "0.8.0" in versions
+
+    def test_get_loader_v080(self):
+        """Should return ModelLoaderV08 for version 0.8.0."""
+        import fluxflow.models.factory  # noqa: F401
+
+        loader = ModelVersionRegistry.get_loader("0.8.0")
+        assert loader is not None
+        assert loader.VERSION == "0.8.0"
+
+    def test_get_loader_v080_compatible(self):
+        """Compatible patch versions (0.8.1) should resolve to ModelLoaderV08."""
+        import fluxflow.models.factory  # noqa: F401
+
+        loader = ModelVersionRegistry.get_loader("0.8.1")
+        assert loader is not None
+
 
 class TestDetectionFunctions:
     """Tests for architecture and component detection."""
