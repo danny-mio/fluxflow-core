@@ -7,7 +7,7 @@
 **Training In Progress**: FluxFlow models are currently in Week 1-4 of systematic validation.
 
 **Status**:
-- ✅ Architecture implemented and tested
+- ✅ Architecture implemented and tested (including v0.8.0 pillar-attention)
 - 🔄 VAE training in progress (Bezier + ReLU baselines)
 - ⏳ Flow training pending VAE completion
 - ⏳ Empirical benchmarks pending training completion
@@ -79,7 +79,7 @@ pip install fluxflow
 - **Note**: Does NOT include training tools (use `fluxflow-training` for that)
 - **Note**: Does NOT include UI (use `fluxflow-ui` or `fluxflow-comfyui` for that)
 
-**Package available on PyPI**: [fluxflow v0.5.0](https://pypi.org/project/fluxflow/)
+**Package available on PyPI**: [fluxflow v0.8.0](https://pypi.org/project/fluxflow/)
 
 ### Development Install
 
@@ -133,7 +133,7 @@ pip install -e ".[dev]"
 - **Bezier Activations**: Learnable 3rd-degree (cubic) polynomial activation functions
 - **Compact VAE**: Variational autoencoder with 25M params (encoder) + 30M params (decoder)
 - **Flow-based Diffusion**: 150M param transformer with rotary embeddings
-- **Text Conditioning**: DistilBERT-based encoder (66M params) with Bezier projection layers
+- **Text Conditioning**: DistilBERT-based encoder (~71M params total: ~66M backbone + Bezier projection layers)
   - *Note: Current implementation uses pre-trained DistilBERT as a temporary solution. Future versions will feature a custom Bezier-based text encoder for full end-to-end training and multimodal support.*
 - **Adaptive Architecture**: Different activation strategies per component (Bezier for generative, LeakyReLU for discriminative)
 
@@ -194,9 +194,16 @@ for i, img in enumerate(result.images):
 
 ### Model Versions
 
+| Version | Description | Status |
+|---------|-------------|--------|
+| `0.8.0` | Pillar-attention (FiLM + cross-attn on pillars) | **Current** |
+| `0.7.0` | Context-enhanced flow transformer | Stable |
+| `0.6.0` | Default stable | Stable |
+| `0.3.0` | Legacy | Legacy |
+
 - Default model version: `0.6.0` (set by `FluxFlowConfig.model.model_version`)
-- Current alternatives: `0.3.0` (legacy), `0.7.0` (context-enhanced)
-- For versioned checkpoints, prefer `load_versioned_checkpoint()` and set `model_version` when saving
+- v0.8.0 checkpoints require `load_versioned_checkpoint()` — see [docs/MIGRATION.md](docs/MIGRATION.md)
+- For versioned checkpoints, use `load_versioned_checkpoint()` and set `model_version` when saving
 
 ### Classifier-Free Guidance (CFG)
 
@@ -247,7 +254,7 @@ from transformers import AutoTokenizer
 # Load components manually
 pipeline = FluxPipeline.from_pretrained("path/to/checkpoint.safetensors")
 tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
-text_encoder = BertTextEncoder(embed_dim=768)
+text_encoder = BertTextEncoder(embed_dim=1024)  # Must match text_embedding_dim in training config (default: 1024)
 
 # Encode text
 text = "a beautiful sunset"
@@ -479,7 +486,7 @@ If you use FluxFlow in your research, please cite:
 @software{fluxflow2024,
   title = {FluxFlow: Efficient Text-to-Image Generation with Bezier Activation Functions},
   author = {FluxFlow Contributors},
-  year = {2024},
+  year = {2025},
   note = {Inspired by Kolmogorov-Arnold Networks (KAN)},
   url = {https://github.com/danny-mio/fluxflow-core}
 }

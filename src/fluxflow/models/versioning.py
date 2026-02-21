@@ -211,7 +211,7 @@ class ModelLoaderV03(ModelVersionLoader):
         flow_processor = FluxFlowProcessor(
             d_model=config["flow_dim"],
             vae_dim=config["vae_dim"],
-            embedding_size=config.get("text_embed_dim", 768),
+            embedding_size=config.get("text_embed_dim", 1024),
             n_head=config.get("flow_attn_heads", 8),
             n_layers=config.get("flow_transformer_layers", 10),
             max_hw=config.get("max_hw", 1024),
@@ -372,7 +372,7 @@ class ModelLoaderV07(ModelVersionLoader):
         flow_processor = FluxFlowProcessor(
             d_model=actual_d_model,
             vae_dim=vae_latent_dim,
-            embedding_size=config.get("text_embed_dim", 768),
+            embedding_size=config.get("text_embed_dim", 1024),
             n_head=flow_attn_heads,
             n_layers=config.get("flow_transformer_layers", 10),
             max_hw=config.get("max_hw", 1024),
@@ -435,6 +435,131 @@ class ModelLoaderV07(ModelVersionLoader):
 
 # Register v0.7.x loader
 ModelVersionRegistry.register(ModelLoaderV07)
+
+
+# ============================================================
+# v0.8.x Loader (pillar-attention architecture)
+# ============================================================
+
+
+class ModelLoaderV08(ModelVersionLoader):
+    """Loader for FluxFlow model version 0.8.x (pillar-attention architecture)."""
+
+    VERSION = "0.8.0"
+    COMPATIBLE_VERSIONS = ["0.8.1", "0.8.2"]
+
+    def load_checkpoint(
+        self, checkpoint_path: Path, metadata: ModelMetadata, device: str, **kwargs
+    ) -> Any:
+        """Load v0.8.x checkpoint."""
+        from .pipeline import FluxPipeline
+        from .v070.vae import FluxCompressor, FluxExpander
+        from .v080.flow import FluxFlowProcessor_v080
+
+        config = metadata.architecture
+
+        def get_valid_n_head(d_model, preferred_heads=8):
+            if d_model % preferred_heads == 0:
+                return preferred_heads
+            for heads in range(preferred_heads, 0, -1):
+                if d_model % heads == 0:
+                    return heads
+            return 1
+
+        if checkpoint_path.suffix == ".safetensors":
+            state_dict = safetensors.torch.load_file(str(checkpoint_path))
+        else:
+            state_dict = torch.load(checkpoint_path, map_location="cpu")
+
+        diffuser_state = {
+            k.replace("diffuser.", ""): v
+            for k, v in state_dict.items()
+            if k.startswith("diffuser.")
+        }
+        if not diffuser_state:
+            diffuser_state = state_dict
+
+        actual_d_model = config.get("flow_dim", 32)
+        actual_vae_input_dim = config["vae_dim"]
+
+        for key in diffuser_state.keys():
+            if "flow_processor.vae_to_dmodel.weight" in key:
+                shape = diffuser_state[key].shape
+                actual_d_model = shape[0]
+                actual_vae_input_dim = shape[1]
+                break
+
+        from .v070.vae import CONTEXT_DIMS
+
+        vae_latent_dim = config["vae_dim"]
+        flow_vae_dim = vae_latent_dim + CONTEXT_DIMS
+        if actual_vae_input_dim != flow_vae_dim:
+            logger.warning(
+                f"Checkpoint vae_input_dim {actual_vae_input_dim} != expected {flow_vae_dim}, "
+                "using checkpoint value"
+            )
+            flow_vae_dim = actual_vae_input_dim
+
+        vae_attn_heads = get_valid_n_head(vae_latent_dim)
+        flow_attn_heads = get_valid_n_head(actual_d_model, config.get("flow_attn_heads", 8))
+
+        compressor = FluxCompressor(
+            in_channels=config.get("in_channels", 3),
+            d_model=vae_latent_dim,
+            downscales=config["downscales"],
+            max_hw=config.get("max_hw", 1024),
+            use_attention=True,
+            attn_layers=config.get("vae_attn_layers", 2),
+            attn_heads=vae_attn_heads,
+        )
+
+        flow_processor = FluxFlowProcessor_v080(
+            d_model=actual_d_model,
+            vae_dim=flow_vae_dim,
+            embedding_size=config.get("text_embed_dim", 1024),
+            n_head=flow_attn_heads,
+            n_layers=config.get("flow_transformer_layers", 10),
+            max_hw=config.get("max_hw", 1024),
+        )
+
+        expander = FluxExpander(
+            d_model=vae_latent_dim,
+            upscales=config.get("upscales", config["downscales"]),
+            max_hw=config.get("max_hw", 1024),
+        )
+
+        pipeline = FluxPipeline(compressor, flow_processor, expander)
+
+        pipeline.load_state_dict(diffuser_state, strict=False)
+        pipeline.to(device)
+        pipeline.eval()
+
+        return pipeline
+
+    def save_checkpoint(
+        self, model: Any, output_path: Path, metadata: ModelMetadata, **kwargs
+    ) -> None:
+        """Save v0.8.x checkpoint."""
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        metadata_path = output_path / "model_metadata.json"
+        metadata.save(metadata_path)
+
+        checkpoint_path = output_path / "model.safetensors"
+        state_dict = {f"diffuser.{k}": v.cpu() for k, v in model.state_dict().items()}
+
+        checkpoint_bytes = safetensors.torch.save(state_dict)
+        checksum = hashlib.sha256(checkpoint_bytes).hexdigest()
+        metadata.checksum["weights_hash"] = checksum
+        metadata.checksum["algorithm"] = "sha256"
+        metadata.save(metadata_path)
+
+        with open(checkpoint_path, "wb") as f:
+            f.write(checkpoint_bytes)
+
+
+# Register v0.8.x loader
+ModelVersionRegistry.register(ModelLoaderV08)
 
 
 # ============================================================
@@ -696,7 +821,7 @@ def _detect_architecture(model: Any) -> Dict[str, Any]:
         if hasattr(model.flow_processor, "text_proj"):
             config["text_embed_dim"] = model.flow_processor.text_proj.in_features
         else:
-            config["text_embed_dim"] = 768  # Default
+            config["text_embed_dim"] = 1024  # Default
 
     if hasattr(model, "expander"):
         config["upscales"] = len(model.expander.upscale.layers)

@@ -252,7 +252,7 @@ class FluxFlowPipeline(DiffusionPipeline):
         flow_processor = FluxFlowProcessor(
             d_model=config["flow_dim"],
             vae_dim=config["vae_dim"],
-            embedding_size=config.get("text_embed_dim", 768),
+            embedding_size=config.get("text_embed_dim", 1024),
             n_head=config.get("flow_attn_heads", 8),
             n_layers=config.get("flow_transformer_layers", 10),
             max_hw=config.get("max_hw", 1024),
@@ -264,7 +264,7 @@ class FluxFlowPipeline(DiffusionPipeline):
             max_hw=config.get("max_hw", 1024),
         )
 
-        text_encoder = BertTextEncoder(embed_dim=config.get("text_embed_dim", 768))
+        text_encoder = BertTextEncoder(embed_dim=config.get("text_embed_dim", 1024))
 
         # Load weights
         # Try loading with 'diffuser.' prefix first
@@ -436,7 +436,7 @@ class FluxFlowPipeline(DiffusionPipeline):
         flow_processor = FluxFlowProcessor(
             d_model=config["flow_dim"],
             vae_dim=config["vae_dim"],
-            embedding_size=config.get("text_embed_dim", 768),
+            embedding_size=config.get("text_embed_dim", 1024),
             n_head=config.get("flow_attn_heads", 8),
             n_layers=config.get("flow_transformer_layers", 10),
             max_hw=config.get("max_hw", 1024),
@@ -448,7 +448,7 @@ class FluxFlowPipeline(DiffusionPipeline):
             max_hw=config.get("max_hw", 1024),
         )
 
-        text_encoder = BertTextEncoder(embed_dim=config.get("text_embed_dim", 768))
+        text_encoder = BertTextEncoder(embed_dim=config.get("text_embed_dim", 1024))
 
         # Load diffuser weights (with 'diffuser.' prefix)
         diffuser_state = {
@@ -562,7 +562,7 @@ class FluxFlowPipeline(DiffusionPipeline):
                 break
 
         if "text_embed_dim" not in config:
-            config["text_embed_dim"] = 768
+            config["text_embed_dim"] = 1024
 
         # Detect downscales
         encoder_stages = [k for k in keys if "compressor.encoder_z." in k and ".0.weight" in k]

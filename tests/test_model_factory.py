@@ -389,5 +389,76 @@ class TestParameterMatching:
         assert bezier_params == baseline_params
 
 
+class TestModelFactoryV080:
+    """Test ModelFactory with v0.8.0 (pillar-attention)."""
+
+    def test_factory_init_v080(self):
+        """Factory should accept model_version='0.8.0'."""
+        factory = ModelFactory(model_type="bezier", model_version="0.8.0", vae_dim=128)
+        assert factory.model_version == "0.8.0"
+
+    def test_create_flow_processor_v080(self):
+        """Factory should return FluxFlowProcessor_v080 for version 0.8.0."""
+        from fluxflow.models.v080.flow import FluxFlowProcessor_v080
+
+        factory = ModelFactory(
+            model_type="bezier",
+            model_version="0.8.0",
+            vae_dim=32,
+            flow_d_model=32,
+            flow_embedding_size=32,
+            bezier_flow_blocks=2,
+        )
+        proc = factory.create_flow_processor(n_head=4)
+        assert isinstance(proc, FluxFlowProcessor_v080)
+
+    def test_v080_flow_processor_has_film(self):
+        """FluxFlowProcessor_v080 blocks must have FiLM layers."""
+        from fluxflow.models.v080.flow import FluxTransformerBlock_v080
+
+        factory = ModelFactory(
+            model_type="bezier",
+            model_version="0.8.0",
+            vae_dim=32,
+            flow_d_model=32,
+            flow_embedding_size=32,
+            bezier_flow_blocks=2,
+        )
+        proc = factory.create_flow_processor(n_head=4)
+        blk = proc.transformer_blocks[0]
+        assert isinstance(blk, FluxTransformerBlock_v080)
+        assert hasattr(blk, "film_p0")
+        assert hasattr(blk, "pillar_cross_attn")
+
+    def test_v080_forward_pass(self):
+        """v0.8.0 processor forward should preserve packed shape."""
+        from fluxflow.models.v070.vae import CONTEXT_DIMS
+
+        factory = ModelFactory(
+            model_type="bezier",
+            model_version="0.8.0",
+            vae_dim=32,
+            flow_d_model=32,
+            flow_embedding_size=32,
+            bezier_flow_blocks=2,
+        )
+        proc = factory.create_flow_processor(n_head=4, max_hw=64)
+
+        T = 16
+        vae_dim = 32
+        B = 1
+        packed = torch.randn(B, T + 1, vae_dim + CONTEXT_DIMS)
+        packed[:, -1, :] = 0
+        packed[:, -1, 0] = 8 / 64  # H
+        packed[:, -1, 1] = 8 / 64  # W
+        text_emb = torch.randn(B, 32)
+        t = torch.tensor([0.5])
+
+        with torch.no_grad():
+            out = proc(packed, text_emb, t)
+
+        assert out.shape == packed.shape
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

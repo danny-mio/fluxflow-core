@@ -74,7 +74,7 @@ save_versioned_checkpoint(
     model_version="0.3.0",
     training_info={
         "migrated_from": "old_model.safetensors",
-        "original_source": "training_run_42"
+        "original_source": "my-training-run"
     }
 )
 ```
@@ -86,6 +86,7 @@ Migrate multiple checkpoints at once:
 ```bash
 #!/bin/bash
 # migrate_all.sh
+set -e  # Stop on first failure
 
 for checkpoint in checkpoints/*.safetensors; do
     basename=$(basename "$checkpoint" .safetensors)
@@ -115,10 +116,10 @@ new_model/
   "architecture": {
     "vae_dim": 128,
     "flow_dim": 128,
-    "text_embed_dim": 768,          // Standardized order
+    "text_embed_dim": 1024,
     "downscales": 4,
     "upscales": 4,
-    "vae_attn_layers": 2,
+    "vae_attn_layers": 4,
     "flow_transformer_layers": 10,
     "flow_attn_heads": 8,
     "max_hw": 1024,
@@ -295,7 +296,7 @@ Add migration info to your training logs:
 ```python
 training_info = {
     "migrated_from": "original_checkpoint.safetensors",
-    "migration_date": "2025-01-15",
+    "migration_date": "YYYY-MM-DD",
     "migration_version": "0.3.1",
     "original_training_steps": 50000
 }
@@ -333,7 +334,7 @@ jobs:
   migrate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install FluxFlow
         run: pip install -e .
@@ -341,15 +342,64 @@ jobs:
       - name: Migrate Checkpoint
         run: |
           python scripts/migrate_checkpoints.py \
-            ${{ inputs.checkpoint_path }} \
+            "${{ inputs.checkpoint_path }}" \
             checkpoints/versioned/ \
             --version 0.3.0
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: versioned-checkpoint
           path: checkpoints/versioned/
+```
+
+## v0.7.0 → v0.8.0 Migration
+
+v0.8.0 introduces the **pillar-attention architecture** with FiLM conditioning and cross-attention on Bezier pillars. v0.7.0 weights **cannot be transferred** to a v0.8.0 model — the new keys (`film_p0..p3`, `pillar_cross_attn`, `norm_pillar`) are not present in v0.7.0 checkpoints and the architecture requires retraining from scratch. v0.8.0 checkpoints are fully supported by the versioned loader.
+
+### What Changed
+
+| Aspect | v0.7.0 | v0.8.0 |
+|--------|--------|--------|
+| Text→pillar path | Indirect (via `sigmoid(img_seq)`) | Direct FiLM + cross-attn |
+| New state dict keys | — | `transformer_blocks.N.film_p0..p3`, `transformer_blocks.N.pillar_cross_attn`, `transformer_blocks.N.norm_pillar` |
+| VAE | `FluxCompressor` / `FluxExpander` | **Unchanged** — imported from v070 |
+| External forward signature | `forward(packed, text_embeddings, timesteps)` | **Unchanged** |
+| Training config | — | Add `model_version: "0.8.0"` |
+
+### What Does NOT Require Migration
+
+- `FluxCompressor` / `FluxExpander` weights — fully compatible, no retraining needed
+- Training code and config (except `model_version`)
+- UI and ComfyUI integrations
+
+### Checkpoint Detection
+
+`load_versioned_checkpoint()` routes to `ModelLoaderV08` based on the `model_version` field in `model_metadata.json` — no key inspection is performed.
+
+The ComfyUI `FluxFlowModelLoader` (legacy path) performs key inspection on load, and returns a clear error when it finds v0.8.0-specific keys (`transformer_blocks.0.pillar_cross_attn`, `transformer_blocks.0.film_p0`) to prevent silent architecture mismatches. Use `load_versioned_checkpoint()` to avoid this guard.
+
+### Using v0.8.0 in Training
+
+Add to your YAML config:
+
+```yaml
+model:
+  model_version: "0.8.0"
+  vae_dim: 128
+  feat_dim: 128
+```
+
+Save and load with versioned API:
+
+```python
+from fluxflow.models.versioning import save_versioned_checkpoint, load_versioned_checkpoint
+
+# Save
+save_versioned_checkpoint(model, output_path)
+
+# Load
+model = load_versioned_checkpoint(checkpoint_path, device="cuda")
 ```
 
 ## See Also
