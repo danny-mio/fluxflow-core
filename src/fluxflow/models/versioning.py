@@ -515,7 +515,7 @@ class ModelLoaderV08(ModelVersionLoader):
 
         flow_processor = FluxFlowProcessor_v080(
             d_model=actual_d_model,
-            vae_dim=flow_vae_dim,
+            vae_dim=vae_latent_dim,
             embedding_size=config.get("text_embed_dim", 1024),
             n_head=flow_attn_heads,
             n_layers=config.get("flow_transformer_layers", 10),
