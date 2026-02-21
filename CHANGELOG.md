@@ -32,7 +32,7 @@ _No unreleased changes._
 
 ### Fixed
 - Pillar cross-attention head count now uses `_valid_pillar_heads()` to guarantee `d_model % n_pillar_heads == 0`; previously `n_head // 4` could produce non-divisors causing runtime shape errors
-- Versioned loader now passes `flow_vae_dim` (checkpoint-detected value) instead of `vae_latent_dim` when instantiating `FluxFlowProcessor_v080`, preventing size mismatches on metadata/weight disagreements
+- Versioned loader now passes `vae_latent_dim` (raw latent dim) instead of `flow_vae_dim` when instantiating `FluxFlowProcessor_v080`; `FluxFlowProcessor_v080` adds `CONTEXT_DIMS` internally so passing the pre-added value caused `vae_to_dmodel` to be sized `vae_dim + 2×CONTEXT_DIMS`, always mismatching real checkpoints
 
 ## [0.7.0] - 2026-02-11
 
