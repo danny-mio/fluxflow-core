@@ -211,7 +211,7 @@ class ModelLoaderV03(ModelVersionLoader):
         flow_processor = FluxFlowProcessor(
             d_model=config["flow_dim"],
             vae_dim=config["vae_dim"],
-            embedding_size=config.get("text_embed_dim", 768),
+            embedding_size=config.get("text_embed_dim", 1024),
             n_head=config.get("flow_attn_heads", 8),
             n_layers=config.get("flow_transformer_layers", 10),
             max_hw=config.get("max_hw", 1024),
@@ -372,7 +372,7 @@ class ModelLoaderV07(ModelVersionLoader):
         flow_processor = FluxFlowProcessor(
             d_model=actual_d_model,
             vae_dim=vae_latent_dim,
-            embedding_size=config.get("text_embed_dim", 768),
+            embedding_size=config.get("text_embed_dim", 1024),
             n_head=flow_attn_heads,
             n_layers=config.get("flow_transformer_layers", 10),
             max_hw=config.get("max_hw", 1024),
@@ -453,8 +453,8 @@ class ModelLoaderV08(ModelVersionLoader):
     ) -> Any:
         """Load v0.8.x checkpoint."""
         from .pipeline import FluxPipeline
-        from .v080.flow import FluxFlowProcessor_v080
         from .v070.vae import FluxCompressor, FluxExpander
+        from .v080.flow import FluxFlowProcessor_v080
 
         config = metadata.architecture
 
@@ -515,8 +515,8 @@ class ModelLoaderV08(ModelVersionLoader):
 
         flow_processor = FluxFlowProcessor_v080(
             d_model=actual_d_model,
-            vae_dim=vae_latent_dim,
-            embedding_size=config.get("text_embed_dim", 768),
+            vae_dim=flow_vae_dim,
+            embedding_size=config.get("text_embed_dim", 1024),
             n_head=flow_attn_heads,
             n_layers=config.get("flow_transformer_layers", 10),
             max_hw=config.get("max_hw", 1024),
@@ -821,7 +821,7 @@ def _detect_architecture(model: Any) -> Dict[str, Any]:
         if hasattr(model.flow_processor, "text_proj"):
             config["text_embed_dim"] = model.flow_processor.text_proj.in_features
         else:
-            config["text_embed_dim"] = 768  # Default
+            config["text_embed_dim"] = 1024  # Default
 
     if hasattr(model, "expander"):
         config["upscales"] = len(model.expander.upscale.layers)

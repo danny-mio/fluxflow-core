@@ -282,7 +282,7 @@ class TestFluxPipelineConfigDetection:
 
         # Check defaults
         assert config["max_hw"] == 1024
-        assert config.get("text_embed_dim", 768) == 768  # Default when not detected
+        assert config["text_embed_dim"] == 1024  # Default when not detected
 
 
 class TestFluxPipelineIntegration:
