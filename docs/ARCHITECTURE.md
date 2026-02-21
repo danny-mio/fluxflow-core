@@ -60,7 +60,7 @@ graph TB
     end
 
     subgraph "Text Encoding"
-        TXT --> BERT[BertTextEncoder<br/>DistilBERT 6L 768H<br/>66M params]
+        TXT --> BERT[BertTextEncoder<br/>DistilBERT 6L 768H<br/>71.0M params]
         BERT --> |Mean Pool| PROJ[MLP Projection<br/>768-512-D_text]
         PROJ --> |Bezier Act| TEMB[Text Embeddings<br/>B x D_text]
     end
@@ -75,7 +75,7 @@ graph TB
         CEXP --> REPARAM[Reparameterization<br/>mu, sigma to z]
         REPARAM --> FLAT[Flatten to Tokens<br/>B x T x D]
         FLAT --> POSENC[Hybrid PE<br/>Fixed + Content]
-        POSENC --> SATTN[Self-Attention<br/>2 layers, 8 heads]
+        POSENC --> SATTN[Self-Attention<br/>4 layers, 8 heads]
         SATTN --> APPHW[Append HW Vector<br/>B x T+1 x D]
         APPHW --> LATENT[Latent Packet<br/>B x T+1 x D]
 
@@ -95,7 +95,7 @@ graph TB
         CROSSATTN --> FLOW1
         FLOW1 --> FLOW2[Transformer Blocks 2-9<br/>Bezier MLP]
         FLOW2 --> FLOW10[Transformer Block 10]
-        FLOW12 --> VPROJ[Output Projection<br/>to velocity v]
+        FLOW10 --> VPROJ[Output Projection<br/>to velocity v]
         VPROJ --> VPRED[Predicted v<br/>B x T+1 x D]
 
         VPRED -.->|v-prediction loss| VLOSS[MSE v, v_target<br/>v = alpha*eps - sigma*z0]
@@ -128,7 +128,7 @@ graph TB
     end
 
     subgraph "Discriminator - Training Only"
-        RECON --> DISC[PatchDiscriminator<br/>Spectral Norm<br/>35M params]
+        RECON --> DISC[PatchDiscriminator<br/>45.1M params]
         IMG --> DISC
         DISC --> |Hinge Loss| GLOSS[GAN Loss<br/>+ R1 Penalty]
     end
@@ -155,7 +155,7 @@ graph TB
 
     class BERT,PROJ,TEMB text
     class COORD,DS1,DS2,DS3,DS4,CEXP,REPARAM,FLAT,SATTN,POSENC,APPHW,LATENT encoder
-    class TEMBED,CROSSATTN,FLOW1,FLOW2,FLOW12,VPROJ,VPRED,ADDNOISE,ZINIT,ZT,DENOISE flow
+    class TEMBED,CROSSATTN,FLOW1,FLOW2,FLOW10,VPROJ,VPRED,ADDNOISE,ZINIT,ZT,DENOISE flow
     class UNPACK,CTXPOOL,CTX,RESHAPE,UP1,UP2,UP3,UP4,SPADE1,SPADE2,SPADE3,SPADE4,RGBPROJ,RECON,Z0 decoder
     class DISC,GLOSS disc
     class KL,VLOSS,RECLOSS,VAELOSS,FLOWLOSS loss
@@ -250,7 +250,7 @@ graph TB
 **Stages:**
 1. DistilBERT backbone (6 layers, 768 hidden)
 2. Mean pooling over sequence
-3. MLP projection (768 → 512 → D_text) with Bezier activations
+3. Two-stage Bezier projection: Linear(768→2560) → LayerNorm(2560) → BezierActivation → Linear(512→D_text×5) → LayerNorm(D_text×5) → BezierActivation → D_text
 4. Xavier initialization
 
 **Design Note:**
@@ -275,7 +275,7 @@ The current implementation uses pre-trained DistilBERT as a practical starting p
 
 **Stages:**
 1. Progressive downsampling (4 stages, 2x each)
-2. Spectral normalization (all conv layers)
+2. Optional spectral normalization (`use_spectral_norm=False` by default)
 3. LeakyReLU activations (memory-efficient)
 4. Patch-level discrimination (not global)
 5. Optional projection conditioning (Miyato-style)
@@ -283,7 +283,6 @@ The current implementation uses pre-trained DistilBERT as a practical starting p
 **Key Features:**
 - Hinge loss (non-saturating)
 - R1 gradient penalty (every 16 steps)
-- Spectral normalization for stability
 - LeakyReLU for memory efficiency during GAN training
 
 ## Data Flow
@@ -502,6 +501,61 @@ Unlike symmetric autoencoders:
 - Allows independent optimization
 - Better for progressive training (VAE → Flow)
 
+## Model Versions
+
+| Version | Module | Key Change | Status |
+|---------|--------|-----------|--------|
+| `0.8.0` | `v080/flow.py` | Pillar-attention: FiLM + cross-attn on pillars | **Current** |
+| `0.7.0` | `v070/flow.py` | Context-enhanced transformer blocks | Stable |
+| `0.6.0` | `v060/` | Default stable architecture | Stable |
+| `0.3.0` | `v030/` | Legacy architecture | Legacy |
+
+### v0.8.0: Pillar-Attention Architecture
+
+**Key idea**: Add direct text conditioning to each Bezier pillar, making pillar activation shapes text-aware.
+
+**Problem with v0.7.0**: Text reaches pillars only indirectly — via `sigmoid(img_seq)` compression after cross-attention. This is lossy and prevents pillar activations from adapting directly to the prompt.
+
+**Solution**: Two new sub-modules per `FluxTransformerBlock_v080`:
+
+| Module | Type | Purpose |
+|--------|------|---------|
+| `film_p0 … film_p3` | `nn.Linear(d_model, 2*d_model)` × 4 | FiLM modulation per pillar |
+| `pillar_cross_attn` | `ParallelAttention(d_model, n_pillar_heads)` shared | Text cross-attn on raw pillar outputs |
+| `norm_pillar` | `nn.LayerNorm(d_model)` shared | LayerNorm before cross-attn |
+
+`n_pillar_heads = max(1, n_head // 4)` — auto-computed, no new config required.
+
+**Forward pass (new steps highlighted):**
+```
+1. Self-attention on img_seq                           (unchanged)
+2. Cross-attention img_seq × text_seq                  (unchanged)
+3. Form gate: g = sigmoid(img_seq)
+
+4. [NEW] FiLM per pillar (text_cond = pooled text):
+   gamma_i, beta_i = film_pi(text_cond).chunk(2, dim=-1)
+   g_pi = g * (1 + gamma_i[:, None, :]) + beta_i[:, None, :]
+
+5. Pillar MLP on FiLM-modulated gate:
+   raw_pi = pillar_i(g_pi * p{i}_x if p{i}_x is not None else g_pi)
+
+6. [NEW] Shared pillar cross-attention (Q=raw_pi, KV=text_seq):
+   img_pi = raw_pi + pillar_cross_attn(norm_pillar(raw_pi), text_seq)
+
+7. FFN + BezierActivation on [img_seq, p0…p3]          (unchanged)
+8. Return img_seq, img_p0, img_p1, img_p2, img_p3
+```
+
+`text_cond` is the `[B, D]` tensor: `text_cond_proj(text_embeddings + time_embed(timesteps))`, extracted inside `FluxFlowProcessor_v080.forward()`. The external forward signature is **unchanged**.
+
+**VAE is unchanged** — `v080/__init__.py` imports `FluxCompressor` and `FluxExpander` directly from `v070/vae.py`.
+
+**Parameter overhead per block** (d=128, h=8):
+- FiLM layers (`film_p0..p3`): 4 × (128 × 256 + 256) = 132,096
+- Pillar cross-attn: ~66,048
+- `norm_pillar`: 256
+- **Total per block: ~+198,400 vs v0.7.0**
+
 ## Training Insights
 
 ### Two-Stage Training
@@ -559,12 +613,11 @@ where target_v = α_t * noise - σ_t * z₀
 
 ### Possible Improvements
 
-1. **Classifier-free guidance**: Add unconditional training
-2. **Multi-aspect ratios**: Dynamic latent sizes
-3. **Super-resolution**: Cascade larger sizes
-4. **Controlnet**: Spatial conditioning (edges, depth)
-5. **LoRA fine-tuning**: Efficient adaptation
-6. **Latent caching**: Pre-encode all images
+1. **Multi-aspect ratios**: Dynamic latent sizes
+2. **Super-resolution**: Cascade larger sizes
+3. **Controlnet**: Spatial conditioning (edges, depth)
+4. **LoRA fine-tuning**: Efficient adaptation
+5. **Latent caching**: Pre-encode all images
 
 ### Research Directions
 
