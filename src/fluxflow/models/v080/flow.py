@@ -21,6 +21,14 @@ from ..v070.flow import ParallelAttention, RotaryPositionalEmbedding, pillarLaye
 from ..v070.vae import CONTEXT_DIMS
 
 
+def _valid_pillar_heads(d_model: int, preferred: int) -> int:
+    """Return largest value <= preferred that evenly divides d_model."""
+    for h in range(max(preferred, 1), 0, -1):
+        if d_model % h == 0:
+            return h
+    return 1
+
+
 class FluxTransformerBlock_v080(nn.Module):
     """
     Transformer block with pillar-attention architecture (v0.8.0).
@@ -69,7 +77,7 @@ class FluxTransformerBlock_v080(nn.Module):
         self.film_p3 = nn.Linear(d_model, 2 * d_model)
 
         # Shared pillar cross-attention (Q=pillar output, KV=text_seq)
-        n_pillar_heads = max(1, n_head // 4)
+        n_pillar_heads = _valid_pillar_heads(d_model, max(1, n_head // 4))
         self.pillar_cross_attn = ParallelAttention(d_model, n_pillar_heads)
         self.norm_pillar = nn.LayerNorm(d_model)
 
