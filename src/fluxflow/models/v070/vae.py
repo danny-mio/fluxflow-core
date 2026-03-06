@@ -461,9 +461,9 @@ class FluxCompressor(nn.Module):
         else:
             attended_seq = attn_block(img_seq)
 
-        # Generate context from self-attention output for SPADE conditioning
-        # Context is pooled across all attended tokens (global attentional context)
-        context = self.context_proj(attended_seq.mean(dim=1, keepdim=True))  # [B, 1, CONTEXT_DIMS]
+        # Generate per-token context from self-attention output for SPADE conditioning
+        # Each token gets its own spatial context (not global average) for true spatial SPADE
+        context_expanded = self.context_proj(attended_seq)  # [B, T, CONTEXT_DIMS]
 
         # Use clean tokens (z) for the main latent representation
         img_seq = z_tokens
@@ -473,9 +473,6 @@ class FluxCompressor(nn.Module):
         hw_vec[:, 0, 0] = H / float(self.max_hw)
         hw_vec[:, 0, 1] = W / float(self.max_hw)
         # Last CONTEXT_DIMS dimensions are context (will be used by expander for SPADE)
-
-        # Concatenate context to each token in img_seq
-        context_expanded = context.expand(-1, img_seq.size(1), -1)  # [B, T, CONTEXT_DIMS]
         img_seq_with_context = torch.cat(
             [img_seq, context_expanded], dim=-1
         )  # [B, T, D+CONTEXT_DIMS]
