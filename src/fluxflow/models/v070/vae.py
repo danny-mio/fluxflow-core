@@ -17,7 +17,6 @@ from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
 from ..activations import BezierActivation, TrainableBezier
-from ..conditioning import ContextAttentionMixer
 from .conditioning import SPADE
 
 # Number of context dimensions for v0.7.0
@@ -510,11 +509,6 @@ class FluxExpander(nn.Module):
             use_gradient_checkpointing=use_gradient_checkpointing,
         )
 
-        # Pool context from image tokens
-        self.context_mixer = ContextAttentionMixer(
-            d_model, n_head=max(4, d_model // 64), use_cls=True
-        )
-
         # Final RGB conversion - CRITICAL FOR COLOR QUALITY
         # Wide channels (96 -> 48) preserve color information
         # TrainableBezier on RGB channels learns per-channel color correction
@@ -775,11 +769,6 @@ class BaselineFluxExpander(nn.Module):
             width_multiplier=width_multiplier,
             depth_multiplier=depth_multiplier,
             use_gradient_checkpointing=use_gradient_checkpointing,
-        )
-
-        # Pool context from image tokens (same as Bezier)
-        self.context_mixer = ContextAttentionMixer(
-            d_model, n_head=max(4, d_model // 64), use_cls=True
         )
 
         # Final RGB conversion - same as Bezier but with standard activations
