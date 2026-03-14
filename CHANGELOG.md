@@ -6,7 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Removed
+- **Dead `context_mixer` module** (v060 & v070 `FluxExpander` / `FluxExpanderBaseline`): `ContextAttentionMixer` was instantiated in `__init__` but never called in `forward()`. Removed the dead submodule and its unused import to eliminate wasted parameters and clarify the architecture. Existing checkpoints are unaffected (no state dict keys change).
 
 ## [0.8.0] - 2026-02-21
 
