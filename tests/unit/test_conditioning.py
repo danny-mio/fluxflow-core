@@ -116,10 +116,10 @@ class TestSPADE:
         assert isinstance(spade.bn, nn.GroupNorm)
         assert not spade.bn.affine
 
-        # Should have conv layers
+        # Should have conv layers (beta-only: no mlp_gamma)
         assert spade.mlp_shared is not None
-        assert spade.mlp_gamma is not None
         assert spade.mlp_beta is not None
+        assert not hasattr(spade, "mlp_gamma")
 
     def test_output_shape(self):
         """Output should have same shape as input features."""
