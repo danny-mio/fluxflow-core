@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- **SPADE: beta-only additive conditioning** (v060 & v070): Removed the multiplicative `gamma` path (`out = (1+gamma)*GroupNorm(x) + beta` → `out = GroupNorm(x) + beta`). Under MSE/L1 loss the model was learning near-zero or negative gamma values to damp down spatially uncertain sharp features, producing blurry reconstructions while SPADE was active. The additive-only design lets context inject spatial bias without suppressing sharp convolution features. Checkpoints with `mlp_gamma.*` keys load cleanly via existing `strict=False` loaders (extra keys are silently ignored).
+
 ### Removed
 - **Dead `context_mixer` module** (v060 & v070 `FluxExpander` / `FluxExpanderBaseline`): `ContextAttentionMixer` was instantiated in `__init__` but never called in `forward()`. Removed the dead submodule and its unused import to eliminate wasted parameters and clarify the architecture. Existing checkpoints are unaffected (no state dict keys change).
 
