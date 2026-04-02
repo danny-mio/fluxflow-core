@@ -117,6 +117,23 @@ class BezierActivation(nn.Module):
         self.bezier_activation = BezierActivationModule(t_pre_activation, p_preactivation)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # torch.jit.script compiled functions silently fall back to CPU on MPS.
+        # Temporarily disable jit_fn for the duration of this call so that the
+        # pure-PyTorch fallback path in BezierActivationModule is used instead.
+        mps_override = x.device.type == "mps" and self.bezier_activation.jit_fn is not None
+        if mps_override:
+            saved_jit = self.bezier_activation.jit_fn
+            self.bezier_activation.jit_fn = None
+
+        try:
+            result = self._forward_inner(x)
+        finally:
+            if mps_override:
+                self.bezier_activation.jit_fn = saved_jit
+
+        return result
+
+    def _forward_inner(self, x: torch.Tensor) -> torch.Tensor:
         dims = x.dim()
 
         if dims == 2:  # [B, D]

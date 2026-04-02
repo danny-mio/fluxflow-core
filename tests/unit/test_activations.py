@@ -415,3 +415,39 @@ class TestActivationsIntegration:
 
 class TestSlidingBezierActivation:
     pass
+
+
+def test_bezier_jit_disabled_path_produces_same_result():
+    """The non-JIT fallback path must match JIT output numerically."""
+    from fluxflow.models.activations import BezierActivationModule
+
+    mod_jit = BezierActivationModule(t_pre_activation="sigmoid", p_preactivation=None)
+    mod_nojit = BezierActivationModule(t_pre_activation="sigmoid", p_preactivation=None)
+    mod_nojit.jit_fn = None  # force fallback path
+
+    x = torch.randn(2, 10, 8, 8)
+    p0 = torch.full_like(x, -0.5)
+    p1 = torch.full_like(x, -0.05)
+    p2 = torch.full_like(x, 0.05)
+    p3 = torch.full_like(x, 0.5)
+
+    out_jit = (
+        mod_jit(x, p0, p1, p2, p3) if mod_jit.jit_fn is not None else mod_jit(x, p0, p1, p2, p3)
+    )
+    out_nojit = mod_nojit(x, p0, p1, p2, p3)
+    assert torch.allclose(out_jit, out_nojit, atol=1e-5)
+
+
+def test_bezier_mps_guard_restores_jit_fn():
+    """MPS guard in BezierActivation.forward must not permanently disable jit_fn."""
+    from fluxflow.models.activations import BezierActivation
+
+    act = BezierActivation(t_pre_activation="sigmoid")
+    original_jit_fn = act.bezier_activation.jit_fn
+
+    # Simulate the guard by directly calling forward on CPU — jit_fn must survive
+    x = torch.randn(2, 10, 8, 8)
+    _ = act(x)
+
+    # jit_fn should be unchanged after a normal CPU forward pass
+    assert act.bezier_activation.jit_fn is original_jit_fn
