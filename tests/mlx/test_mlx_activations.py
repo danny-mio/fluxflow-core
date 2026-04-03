@@ -39,7 +39,7 @@ def test_trainable_bezier_channel_only_broadcasts():
 
 def test_cubic_bezier_matches_pytorch():
     """MLX Bezier output must match PyTorch Bezier within fp32 tolerance."""
-    import torch
+    torch = pytest.importorskip("torch")
     from fluxflow.mlx.layers.activations import _cubic_bezier
 
     # Use fixed values to avoid randomness in comparison
