@@ -17,13 +17,13 @@ class BezierActivation(nn.Module):
         B, C, H, W = x.shape
         assert C % 5 == 0, f"Channel dimension must be divisible by 5, got {C}"
         F_ = C // 5
-        # Reshape: [B, 5, F, H, W]
-        x = x.reshape(B, 5, F_, H, W)
-        t = x[:, 0]
-        p0 = x[:, 1]
-        p1 = x[:, 2]
-        p2 = x[:, 3]
-        p3 = x[:, 4]
+        # Reshape: [B, F, 5, H, W] — consecutive 5-channel blocks map to [t,p0,p1,p2,p3]
+        x = x.reshape(B, F_, 5, H, W)
+        t = x[:, :, 0]
+        p0 = x[:, :, 1]
+        p1 = x[:, :, 2]
+        p2 = x[:, :, 3]
+        p3 = x[:, :, 4]
         return _cubic_bezier(t, p0, p1, p2, p3)
 
 

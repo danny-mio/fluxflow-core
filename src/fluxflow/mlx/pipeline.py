@@ -46,7 +46,10 @@ class FluxFlowPipelineMLX:
         """
         base, _ = os.path.splitext(checkpoint_path)
         npz_path = base + ".npz"
-        if not os.path.exists(npz_path):
+        npz_stale = not os.path.exists(npz_path) or (
+            os.path.getmtime(checkpoint_path) > os.path.getmtime(npz_path)
+        )
+        if npz_stale:
             convert_checkpoint(checkpoint_path, npz_path)
 
         arrays = dict(mx.load(npz_path))
