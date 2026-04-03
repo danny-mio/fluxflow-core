@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fluxflow"
-version = "0.8.0"
+version = "0.8.1"
 description = "Core model and inference for FluxFlow text-to-image generation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,9 +38,13 @@ dependencies = [
     "orjson>=3.8.0",
     "pydantic>=2.0.0",
     "pyyaml>=6.0.0",
+    # Security floor constraints for transitive dependencies
+    "requests>=2.33.0",    # CVE: insecure temp file reuse in extract_zipped_paths()
+    "Pygments>=2.20.0",    # CVE: ReDoS in AdlLexer (archetype.py)
 ]
 
 [project.optional-dependencies]
+mlx = ["mlx>=0.18"]
 dev = [
     # Testing
     "pytest>=7.4.0",
@@ -120,3 +124,7 @@ disable_error_code = ["attr-defined", "arg-type", "assignment", "no-any-return"]
 [[tool.mypy.overrides]]
 module = "fluxflow.utils.io"
 disable_error_code = ["assignment"]
+
+[[tool.mypy.overrides]]
+module = "fluxflow.models.encoders"
+disable_error_code = ["call-arg"]

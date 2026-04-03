@@ -13,6 +13,9 @@ on:
       - '**.md'
       - 'docs/**'
 
+permissions:
+  contents: read
+
 jobs:
   link-check:
     name: Check Markdown Links

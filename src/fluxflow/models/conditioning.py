@@ -62,8 +62,13 @@ class SPADE(nn.Module):
     Spatially-Adaptive Denormalization (SPADE).
 
     Applies context-dependent spatial modulation:
-    out = (1 + gamma) * GroupNorm(x) + beta
-    where gamma and beta are spatially varying and predicted from context.
+    out = GroupNorm(x) + beta
+    where beta is spatially varying and predicted from context.
+
+    Beta-only (additive) design: context can inject spatial bias but cannot
+    suppress existing sharp features via a multiplicative gamma term.  This
+    avoids the MSE-induced blurring where the model learns to damp down
+    high-frequency features through a near-zero or negative gamma.
 
     Args:
         context_nc: Number of channels in the context map
@@ -79,13 +84,12 @@ class SPADE(nn.Module):
                 break
         self.bn = nn.GroupNorm(num_groups, num_features, affine=False)
 
-        # Conv block to produce gamma/beta from context
+        # Conv block to produce beta from context (additive only)
         hidden_dim = 128
         self.mlp_shared = nn.Sequential(
             nn.Conv2d(context_nc, hidden_dim, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
         )
-        self.mlp_gamma = nn.Conv2d(hidden_dim, num_features, kernel_size=3, padding=1)
         self.mlp_beta = nn.Conv2d(hidden_dim, num_features, kernel_size=3, padding=1)
 
     def forward(self, x, context):
@@ -107,13 +111,10 @@ class SPADE(nn.Module):
                     context, size=x.shape[2:], mode="bilinear", align_corners=False
                 )
 
-            # Produce gamma, beta from context
+            # Produce beta from context and apply additively
             actv = self.mlp_shared(context)
-            gamma = self.mlp_gamma(actv)
             beta = self.mlp_beta(actv)
-
-            # Apply affine transform
-            out = normalized * (1 + gamma) + beta
+            out = normalized + beta
         else:
             # Identity modulation: just return normalized features
             out = normalized

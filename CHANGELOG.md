@@ -8,6 +8,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 _No unreleased changes._
 
+## [0.8.1] - 2026-04-03
+
+### Added
+- **`fluxflow[mlx]` optional package**: Native Apple Silicon inference via MLX.
+  `pip install fluxflow[mlx]` then `from fluxflow.mlx import FluxFlowPipelineMLX`.
+  Includes weight converter (`.safetensors` → `.npz`, original never modified),
+  MLX re-implementations of all core layers (Bezier activations, SPADE, FiLM, VAE decoder),
+  and an experimental `mlx_forward` bridge for gradient-free hybrid MPS+MLX routing.
+- **`fluxflow.utils.mps.mps_safe_pool2d`**: MPS-safe adaptive pooling utility replacing
+  ad-hoc try/except patterns in training code.
+- **`scripts/profile_mps.py`** (fluxflow-training): Profiles CPU fallbacks during a VAE
+  forward+backward pass on MPS. Run on Apple Silicon to identify remaining bottlenecks.
+- **`examples/config-mps.yaml`** (fluxflow-training): Recommended training config for
+  Apple Silicon (batch_size=2, grad_accum=8, fp16=off, gradient_checkpointing=on).
+
+### Fixed
+- **Bezier JIT disabled on MPS**: `torch.jit.script` compiled functions were silently
+  falling back to CPU on MPS. JIT is now bypassed for MPS tensors; the pure-PyTorch
+  fallback path is used instead.
+- **MPS cache clearing**: `torch.mps.empty_cache()` added alongside `torch.cuda.empty_cache()`
+  in VAETrainer and FlowTrainer.
+
+### Changed
+- **SPADE: beta-only additive conditioning** (v060 & v070): Removed the multiplicative `gamma` path (`out = (1+gamma)*GroupNorm(x) + beta` → `out = GroupNorm(x) + beta`). Under MSE/L1 loss the model was learning near-zero or negative gamma values to damp down spatially uncertain sharp features, producing blurry reconstructions while SPADE was active. The additive-only design lets context inject spatial bias without suppressing sharp convolution features. Checkpoints with `mlp_gamma.*` keys load cleanly via existing `strict=False` loaders (extra keys are silently ignored).
+
+### Removed
+- **Dead `context_mixer` module** (v060 & v070 `FluxExpander` / `FluxExpanderBaseline`): `ContextAttentionMixer` was instantiated in `__init__` but never called in `forward()`. Removed the dead submodule and its unused import to eliminate wasted parameters and clarify the architecture. Existing checkpoints are unaffected (no state dict keys change).
+
 ## [0.8.0] - 2026-02-21
 
 ### Added

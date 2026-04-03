@@ -17,7 +17,6 @@ from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
 from ..activations import BezierActivation, TrainableBezier
-from ..conditioning import ContextAttentionMixer
 from .conditioning import SPADE
 
 # Number of context dimensions for v0.7.0
@@ -461,9 +460,9 @@ class FluxCompressor(nn.Module):
         else:
             attended_seq = attn_block(img_seq)
 
-        # Generate context from self-attention output for SPADE conditioning
-        # Context is pooled across all attended tokens (global attentional context)
-        context = self.context_proj(attended_seq.mean(dim=1, keepdim=True))  # [B, 1, CONTEXT_DIMS]
+        # Generate per-token context from self-attention output for SPADE conditioning
+        # Each token gets its own spatial context (not global average) for true spatial SPADE
+        context_expanded = self.context_proj(attended_seq)  # [B, T, CONTEXT_DIMS]
 
         # Use clean tokens (z) for the main latent representation
         img_seq = z_tokens
@@ -473,9 +472,6 @@ class FluxCompressor(nn.Module):
         hw_vec[:, 0, 0] = H / float(self.max_hw)
         hw_vec[:, 0, 1] = W / float(self.max_hw)
         # Last CONTEXT_DIMS dimensions are context (will be used by expander for SPADE)
-
-        # Concatenate context to each token in img_seq
-        context_expanded = context.expand(-1, img_seq.size(1), -1)  # [B, T, CONTEXT_DIMS]
         img_seq_with_context = torch.cat(
             [img_seq, context_expanded], dim=-1
         )  # [B, T, D+CONTEXT_DIMS]
@@ -511,11 +507,6 @@ class FluxExpander(nn.Module):
             context_size=CONTEXT_DIMS,  # Context dimensions for SPADE
             use_spade=True,
             use_gradient_checkpointing=use_gradient_checkpointing,
-        )
-
-        # Pool context from image tokens
-        self.context_mixer = ContextAttentionMixer(
-            d_model, n_head=max(4, d_model // 64), use_cls=True
         )
 
         # Final RGB conversion - CRITICAL FOR COLOR QUALITY
@@ -778,11 +769,6 @@ class BaselineFluxExpander(nn.Module):
             width_multiplier=width_multiplier,
             depth_multiplier=depth_multiplier,
             use_gradient_checkpointing=use_gradient_checkpointing,
-        )
-
-        # Pool context from image tokens (same as Bezier)
-        self.context_mixer = ContextAttentionMixer(
-            d_model, n_head=max(4, d_model // 64), use_cls=True
         )
 
         # Final RGB conversion - same as Bezier but with standard activations
