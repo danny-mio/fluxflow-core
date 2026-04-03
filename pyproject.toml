@@ -38,6 +38,9 @@ dependencies = [
     "orjson>=3.8.0",
     "pydantic>=2.0.0",
     "pyyaml>=6.0.0",
+    # Security floor constraints for transitive dependencies
+    "requests>=2.33.0",    # CVE: insecure temp file reuse in extract_zipped_paths()
+    "Pygments>=2.20.0",    # CVE: ReDoS in AdlLexer (archetype.py)
 ]
 
 [project.optional-dependencies]
