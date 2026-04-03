@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-04-03
+
 ### Added
 - **`fluxflow[mlx]` optional package**: Native Apple Silicon inference via MLX.
   `pip install fluxflow[mlx]` then `from fluxflow.mlx import FluxFlowPipelineMLX`.
