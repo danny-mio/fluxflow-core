@@ -41,6 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mlx = ["mlx>=0.18"]
 dev = [
     # Testing
     "pytest>=7.4.0",
