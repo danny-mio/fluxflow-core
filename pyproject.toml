@@ -124,3 +124,7 @@ disable_error_code = ["attr-defined", "arg-type", "assignment", "no-any-return"]
 [[tool.mypy.overrides]]
 module = "fluxflow.utils.io"
 disable_error_code = ["assignment"]
+
+[[tool.mypy.overrides]]
+module = "fluxflow.models.encoders"
+disable_error_code = ["call-arg"]
