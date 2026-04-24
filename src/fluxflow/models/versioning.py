@@ -563,6 +563,124 @@ ModelVersionRegistry.register(ModelLoaderV08)
 
 
 # ============================================================
+# v0.10.x Loader (independent context branch, 2*vae_dim packed tokens)
+# ============================================================
+
+# NOTE: There is no v0.9.0 — the version jumps directly from 0.8.x to 0.10.0.
+_LIBRARY_MAX_VERSION = "0.10.0"
+
+
+class ModelLoaderV010(ModelVersionLoader):
+    """Loader for FluxFlow model version 0.10.x (independent context branch)."""
+
+    VERSION = "0.10.0"
+    COMPATIBLE_VERSIONS = ["0.10.1", "0.10.2"]
+
+    def load_checkpoint(
+        self, checkpoint_path: Path, metadata: ModelMetadata, device: str, **kwargs
+    ) -> Any:
+        """Load v0.10.x checkpoint."""
+        from .pipeline import FluxPipeline
+        from .v100.flow import FluxFlowProcessor_v100
+        from .v100.vae import FluxCompressor_v100, FluxExpander_v100
+
+        config = metadata.architecture
+
+        def get_valid_n_head(d_model: int, preferred_heads: int = 8) -> int:
+            if d_model % preferred_heads == 0:
+                return preferred_heads
+            for heads in range(preferred_heads, 0, -1):
+                if d_model % heads == 0:
+                    return heads
+            return 1
+
+        if checkpoint_path.suffix == ".safetensors":
+            state_dict = safetensors.torch.load_file(str(checkpoint_path))
+        else:
+            state_dict = torch.load(checkpoint_path, map_location="cpu")
+
+        diffuser_state = {
+            k.replace("diffuser.", ""): v
+            for k, v in state_dict.items()
+            if k.startswith("diffuser.")
+        }
+        if not diffuser_state:
+            diffuser_state = state_dict
+
+        actual_d_model = config.get("flow_dim", 32)
+        vae_latent_dim = config["vae_dim"]
+
+        # Detect actual flow d_model from checkpoint weights
+        for key in diffuser_state.keys():
+            if "flow_processor.vae_to_dmodel.weight" in key:
+                shape = diffuser_state[key].shape
+                actual_d_model = shape[0]
+                break
+
+        # v0.10.0: packed token width = 2 * vae_dim (context_dims == vae_dim)
+        flow_vae_dim = vae_latent_dim * 2
+
+        vae_attn_heads = get_valid_n_head(vae_latent_dim)
+        flow_attn_heads = get_valid_n_head(actual_d_model, config.get("flow_attn_heads", 8))
+
+        compressor = FluxCompressor_v100(
+            in_channels=config.get("in_channels", 3),
+            d_model=vae_latent_dim,
+            downscales=config["downscales"],
+            max_hw=config.get("max_hw", 1024),
+            attn_layers=config.get("vae_attn_layers", 4),
+            attn_heads=vae_attn_heads,
+        )
+
+        flow_processor = FluxFlowProcessor_v100(
+            d_model=actual_d_model,
+            vae_dim=vae_latent_dim,
+            embedding_size=config.get("text_embed_dim", 1024),
+            n_head=flow_attn_heads,
+            n_layers=config.get("flow_transformer_layers", 10),
+            max_hw=config.get("max_hw", 1024),
+        )
+
+        expander = FluxExpander_v100(
+            d_model=vae_latent_dim,
+            upscales=config.get("upscales", config["downscales"]),
+            max_hw=config.get("max_hw", 1024),
+        )
+
+        pipeline = FluxPipeline(compressor, flow_processor, expander)
+        pipeline.load_state_dict(diffuser_state, strict=False)
+        pipeline.to(device)
+        pipeline.eval()
+
+        return pipeline
+
+    def save_checkpoint(
+        self, model: Any, output_path: Path, metadata: ModelMetadata, **kwargs
+    ) -> None:
+        """Save v0.10.x checkpoint."""
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        metadata_path = output_path / "model_metadata.json"
+        metadata.save(metadata_path)
+
+        checkpoint_path = output_path / "model.safetensors"
+        state_dict = {f"diffuser.{k}": v.cpu() for k, v in model.state_dict().items()}
+
+        checkpoint_bytes = safetensors.torch.save(state_dict)
+        checksum = hashlib.sha256(checkpoint_bytes).hexdigest()
+        metadata.checksum["weights_hash"] = checksum
+        metadata.checksum["algorithm"] = "sha256"
+        metadata.save(metadata_path)
+
+        with open(checkpoint_path, "wb") as f:
+            f.write(checkpoint_bytes)
+
+
+# Register v0.10.x loader
+ModelVersionRegistry.register(ModelLoaderV010)
+
+
+# ============================================================
 # Legacy Loader (pre-0.3.0, no version metadata)
 # ============================================================
 
@@ -701,9 +819,10 @@ def load_versioned_checkpoint(checkpoint_path: Path, device: Optional[str] = Non
     loader_class = ModelVersionRegistry.get_loader(version)
     if loader_class is None:
         # Try to determine if it's a newer version
-        if metadata and _is_newer_version(version, "0.3.1"):
+        if metadata and _is_newer_version(version, _LIBRARY_MAX_VERSION):
             raise CheckpointError(
-                f"Checkpoint version {version} is newer than library version 0.3.1. "
+                f"Checkpoint version {version} is newer than library version "
+                f"{_LIBRARY_MAX_VERSION}. "
                 "Please upgrade fluxflow: pip install --upgrade fluxflow"
             )
         else:
@@ -809,6 +928,8 @@ def _detect_architecture(model: Any) -> Dict[str, Any]:
         # FluxFlowProcessor doesn't store d_model, infer from linear layer
         if hasattr(model.flow_processor, "dmodel_to_vae"):
             config["flow_dim"] = model.flow_processor.dmodel_to_vae.in_features
+            # packed_token_dim: 2*vae_dim for v0.10.0, vae_dim+5 for older versions
+            config["packed_token_dim"] = model.flow_processor.dmodel_to_vae.out_features
         config["flow_transformer_layers"] = len(model.flow_processor.transformer_blocks)
         # Infer n_head from self_attn layer
         if len(model.flow_processor.transformer_blocks) > 0:
