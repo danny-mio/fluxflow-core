@@ -617,9 +617,6 @@ class ModelLoaderV010(ModelVersionLoader):
                 actual_d_model = shape[0]
                 break
 
-        # v0.10.0: packed token width = 2 * vae_dim (context_dims == vae_dim)
-        flow_vae_dim = vae_latent_dim * 2
-
         vae_attn_heads = get_valid_n_head(vae_latent_dim)
         flow_attn_heads = get_valid_n_head(actual_d_model, config.get("flow_attn_heads", 8))
 
