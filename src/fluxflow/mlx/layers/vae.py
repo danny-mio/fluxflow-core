@@ -1,4 +1,9 @@
-"""MLX VAE decoder components for FluxFlow (v070 architecture)."""
+"""MLX VAE decoder components for FluxFlow (v070 architecture).
+
+Note: the module-level CONTEXT_DIMS constant has been removed for v0.10.0 compatibility.
+Use FluxExpander(context_dims=...) to set the context dimensionality explicitly.
+For v0.7.0/v0.8.0 compatibility, default context_dims=5 is preserved.
+"""
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -6,8 +11,10 @@ import mlx.nn as nn
 from .activations import BezierActivation, TrainableBezier
 from .conditioning import SPADE
 
-# Number of context dimensions (matches PyTorch v070)
-CONTEXT_DIMS = 5
+# Deprecated: use FluxExpander(context_dims=5) instead.
+# Retained only for any external code that imported this constant.
+# Will be removed in a future release.
+_LEGACY_CONTEXT_DIMS = 5
 
 
 def _nchw_to_nhwc(x: mx.array) -> mx.array:
@@ -195,14 +202,23 @@ class FluxExpander(nn.Module):
         max_hw: Maximum spatial dimension for denormalization (default: 1024)
     """
 
-    def __init__(self, d_model: int = 128, upscales: int = 4, max_hw: int = 1024):
+    def __init__(
+        self,
+        d_model: int = 128,
+        upscales: int = 4,
+        max_hw: int = 1024,
+        context_dims: int | None = None,
+    ):
         super().__init__()
         self.max_hw = max_hw
+        self.d_model = d_model
+        # None = copy d_model (v0.10.0 default); explicit value preserves v0.7.0 compat (=5)
+        self.context_dims = context_dims if context_dims is not None else d_model
 
         self.upscale = ProgressiveUpscaler(
             channels=d_model,
             steps=upscales,
-            context_size=CONTEXT_DIMS,
+            context_size=self.context_dims,
             use_spade=True,
         )
 
@@ -239,20 +255,22 @@ class FluxExpander(nn.Module):
         Extract image tokens, context, and spatial dims from packed representation.
 
         Args:
-            packed: [B, T+1, D+CONTEXT_DIMS]
+            packed: [B, T+1, D+context_dims]
+                    For v0.10.0 context_dims == d_model so total width = 2*D.
+                    For v0.7.0/v0.8.0 use context_dims=5 at construction time.
 
         Returns:
             img_seq: [B, T, D]
-            context: [B, T, CONTEXT_DIMS]
+            context: [B, T, context_dims]
             h: int
             w: int
         """
-        img_seq_with_context = packed[:, :-1, :]  # [B, T, D+CONTEXT_DIMS]
-        img_seq = img_seq_with_context[:, :, :-CONTEXT_DIMS]  # [B, T, D]
-        context = img_seq_with_context[:, :, -CONTEXT_DIMS:]  # [B, T, CONTEXT_DIMS]
+        img_seq_with_context = packed[:, :-1, :]  # [B, T, D+context_dims]
+        D = self.d_model
+        img_seq = img_seq_with_context[:, :, :D]   # [B, T, D]
+        context = img_seq_with_context[:, :, D:]   # [B, T, context_dims]
 
-        hw_token = packed[:, -1, :]  # [B, D+CONTEXT_DIMS]
-        # Read h/w from first two elements of HW token, assume batch-uniform dims
+        hw_token = packed[:, -1, :]  # [B, D+context_dims]
         h = int(round(float(hw_token[0, 0].item()) * self.max_hw))
         w = int(round(float(hw_token[0, 1].item()) * self.max_hw))
         h = max(h, 1)
@@ -262,7 +280,8 @@ class FluxExpander(nn.Module):
     def __call__(self, packed: mx.array, use_context: bool = True) -> mx.array:
         """
         Args:
-            packed: [B, T+1, D+CONTEXT_DIMS]
+            packed: [B, T+1, D+context_dims]
+                    For v0.10.0: context_dims == d_model so packed has width 2*D.
             use_context: Whether to pass context to SPADE
 
         Returns:
@@ -278,11 +297,11 @@ class FluxExpander(nn.Module):
         feat = feat.reshape(B, h, w, D)  # [B, h, w, D]
         feat = mx.transpose(feat, (0, 3, 1, 2))  # [B, D, h, w] NCHW
 
-        # Reshape context for SPADE: [B, CONTEXT_DIMS, h, w]
+        # Reshape context for SPADE: [B, context_dims, h, w]
         if use_context:
-            ctx = context[:, :t_valid, :]  # [B, T, CONTEXT_DIMS]
-            ctx = ctx.reshape(B, h, w, CONTEXT_DIMS)  # [B, h, w, CONTEXT_DIMS]
-            ctx = mx.transpose(ctx, (0, 3, 1, 2))  # [B, CONTEXT_DIMS, h, w] NCHW
+            ctx = context[:, :t_valid, :]  # [B, T, context_dims]
+            ctx = ctx.reshape(B, h, w, self.context_dims)  # [B, h, w, context_dims]
+            ctx = mx.transpose(ctx, (0, 3, 1, 2))  # [B, context_dims, h, w] NCHW
         else:
             ctx = None
 

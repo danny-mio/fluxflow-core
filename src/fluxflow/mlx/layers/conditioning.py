@@ -6,10 +6,14 @@ import mlx.nn as nn
 
 class SPADE(nn.Module):
     """
-    Beta-only SPADE: out = GroupNorm(x) + beta.
+    Beta-only SPADE: out = GroupNorm(x) + beta_scale * beta.
 
     Context is bilinearly upsampled if spatial dims don't match x.
     Operates on NCHW tensors; transposes internally for MLX Conv2d calls.
+
+    beta_scale is a learnable scalar initialised to 0 so that the layer acts as plain
+    GroupNorm at initialisation.  It grows freely during training.  This mirrors the
+    PyTorch SPADEWithLearnableScale in v100/conditioning.py.
     """
 
     def __init__(self, context_nc: int, num_features: int):
@@ -28,6 +32,8 @@ class SPADE(nn.Module):
             nn.ReLU(),
         )
         self.mlp_beta = nn.Conv2d(hidden, num_features, kernel_size=3, padding=1)
+        # Learnable scale: starts at 0 (identity at init). MLX parameter idiom: mx.array attribute.
+        self.beta_scale = mx.zeros((1,))
 
     def __call__(self, x: mx.array, context: mx.array | None) -> mx.array:
         # x: [B, C, H, W] (NCHW)
@@ -53,8 +59,9 @@ class SPADE(nn.Module):
         # Apply convs (MLX conv expects NHWC)
         ctx_nhwc = mx.transpose(context, (0, 2, 3, 1))
         actv = self.mlp_shared(ctx_nhwc)
-        beta_nhwc = self.mlp_beta(actv)
-        beta = mx.transpose(beta_nhwc, (0, 3, 1, 2))  # NCHW
+        raw_beta_nhwc = self.mlp_beta(actv)
+        raw_beta = mx.transpose(raw_beta_nhwc, (0, 3, 1, 2))  # NCHW
+        beta = self.beta_scale * raw_beta
         return normalized + beta
 
 

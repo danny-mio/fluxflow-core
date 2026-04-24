@@ -10,13 +10,14 @@ def test_flux_expander_output_shape():
     d_model = 32
     upscales = 2
     max_hw = 64
-    dec = FluxExpander(d_model=d_model, upscales=upscales, max_hw=max_hw)
+    # context_dims=5 to match v0.7.0/v0.8.0 packed format
+    dec = FluxExpander(d_model=d_model, upscales=upscales, max_hw=max_hw, context_dims=5)
 
-    # Packed: [B, T+1, D] where T=h*w, D=d_model+CONTEXT_DIMS(5)
+    # Packed: [B, T+1, D+5] where T=h*w
     # h=2, w=2 spatial tokens at initial resolution
     B, h, w = 1, 2, 2
     T = h * w
-    D = d_model + 5  # CONTEXT_DIMS=5
+    D = d_model + 5  # context_dims=5
     img_tokens = mx.zeros((B, T, d_model))
     ctx_tokens = mx.zeros((B, T, 5))
     # HW token encodes h/max_hw, w/max_hw
@@ -37,7 +38,8 @@ def test_flux_expander_output_range():
     d_model = 16
     upscales = 1
     max_hw = 32
-    dec = FluxExpander(d_model=d_model, upscales=upscales, max_hw=max_hw)
+    # context_dims=5 to match v0.7.0/v0.8.0 packed format
+    dec = FluxExpander(d_model=d_model, upscales=upscales, max_hw=max_hw, context_dims=5)
 
     B, h, w = 1, 2, 2
     T = h * w
