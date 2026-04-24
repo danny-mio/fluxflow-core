@@ -103,7 +103,10 @@ class _ProgressiveUpscaler(nn.Module):
         super().__init__()
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.layers = nn.ModuleList(
-            [_ResidualUpsampleBlock(channels, context_size, use_spade=use_spade) for _ in range(steps)]
+            [
+                _ResidualUpsampleBlock(channels, context_size, use_spade=use_spade)
+                for _ in range(steps)
+            ]
         )
 
     def forward(self, x: torch.Tensor, context: torch.Tensor | None) -> torch.Tensor:
@@ -146,7 +149,9 @@ class _AttnBlock(nn.Module):
         super().__init__()
         hidden = dim * ff_mult
         self.norm1 = nn.LayerNorm(dim)
-        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads, dropout=drop, batch_first=True)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=dim, num_heads=heads, dropout=drop, batch_first=True
+        )
         self.norm2 = nn.LayerNorm(dim)
         self.ff = nn.Sequential(
             nn.Linear(dim, hidden * 5),
@@ -462,7 +467,8 @@ class FluxCompressor_v100(nn.Module):
         B, D, H, W = z.shape
         pe_fixed = self._build_2d_sincos_pe(H, W, D, device=z.device, dtype=z.dtype)
         pe_content = latent.flatten(2).permute(0, 2, 1)  # [B, T, D]
-        z_tokens = self.final_norm(z.flatten(2).permute(0, 2, 1) + pe_fixed.unsqueeze(0) + pe_content)
+        z_raw = z.flatten(2).permute(0, 2, 1) + pe_fixed.unsqueeze(0) + pe_content
+        z_tokens = self.final_norm(z_raw)
         z_tokens = torch.tanh(z_tokens)  # [B, T, D]
 
         # ---- context branch (independent) ----

@@ -22,10 +22,9 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
-from ..activations import BezierActivation, TrainableBezier, xavier_init
+from ..activations import TrainableBezier
 from ..conditioning import ContextAttentionMixer, GatedContextInjection
-from ..v070.flow import ParallelAttention, RotaryPositionalEmbedding, pillarLayer
-from ..v080.flow import FluxTransformerBlock_v080, _valid_pillar_heads
+from ..v080.flow import FluxTransformerBlock_v080
 
 
 class FluxFlowProcessor_v100(nn.Module):
