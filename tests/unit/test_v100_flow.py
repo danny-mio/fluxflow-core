@@ -4,7 +4,6 @@ Run *before* implementation — all tests must fail until implementation exists.
 """
 
 import torch
-import pytest
 
 
 class TestFluxFlowProcessorV100:
@@ -62,13 +61,12 @@ class TestFluxFlowProcessorV100:
 
     def test_no_context_dims_constant_import(self):
         """v100/flow.py must not import CONTEXT_DIMS from v070."""
-        import importlib
         import fluxflow.models.v100.flow as flow_module
 
         # If CONTEXT_DIMS was imported, it would be an int attribute on the module
-        assert not hasattr(flow_module, "CONTEXT_DIMS"), (
-            "v100/flow.py must not use module-level CONTEXT_DIMS"
-        )
+        assert not hasattr(
+            flow_module, "CONTEXT_DIMS"
+        ), "v100/flow.py must not use module-level CONTEXT_DIMS"
 
     def test_forward_batch_size_two(self):
         """Forward must work with batch_size > 1."""

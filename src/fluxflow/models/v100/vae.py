@@ -12,6 +12,7 @@ Full retraining is required; no weight migration from v0.8.0 is supported.
 """
 
 import math
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -78,7 +79,7 @@ class _ResidualUpsampleBlock(nn.Module):
             x = self.spade(x, context)
         x = self.conv1(x)
         identity_up = self.skip_upsample(identity)
-        return x + 0.1 * identity_up
+        return cast(torch.Tensor, x + 0.1 * identity_up)
 
 
 class _ProgressiveUpscaler(nn.Module):
@@ -225,8 +226,8 @@ class FluxCompressor_v100(nn.Module):
         downscales: int = 4,
         max_hw: int = 1024,
         use_attention: bool = True,  # kept for API compat
-        attn_layers: int = 4,        # kept for API compat (unused)
-        attn_heads: int = 8,         # kept for API compat (unused)
+        attn_layers: int = 4,  # kept for API compat (unused)
+        attn_heads: int = 8,  # kept for API compat (unused)
         attn_ff_mult: int = 2,
         attn_dropout: float = 0.0,
         ctx_attn_layers: int = 4,
@@ -400,7 +401,7 @@ class FluxCompressor_v100(nn.Module):
         """Build 2D sinusoidal positional encoding [H*W, D]."""
         key = (H, W, D, device)
         if key in self._pos_cache:
-            return self._pos_cache[key]
+            return cast(torch.Tensor, self._pos_cache[key])
 
         half = D // 2
 
@@ -591,8 +592,8 @@ class FluxExpander_v100(nn.Module):
         """
         img_seq_with_context = packed[:, :-1, :].contiguous()  # [B, T, 2D]
         D = self.d_model
-        img_seq = img_seq_with_context[:, :, :D].contiguous()   # [B, T, D]
-        context = img_seq_with_context[:, :, D:].contiguous()   # [B, T, D]
+        img_seq = img_seq_with_context[:, :, :D].contiguous()  # [B, T, D]
+        context = img_seq_with_context[:, :, D:].contiguous()  # [B, T, D]
         H = (packed[:, -1, 0] * self.max_hw).round().clamp(min=1).long()
         W = (packed[:, -1, 1] * self.max_hw).round().clamp(min=1).long()
         return img_seq, context, H, W
@@ -612,32 +613,28 @@ class FluxExpander_v100(nn.Module):
         B, L, D = img_seq.shape
 
         if B > 1 and (H == H[0]).all() and (W == W[0]).all():
-            h, w = H[0].item(), W[0].item()
+            h, w = int(H[0].item()), int(W[0].item())
             t_valid = h * w
             assert t_valid <= L, f"Mismatch: tokens {L} < h*w {t_valid}"
 
             feat = rearrange(img_seq[:, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
 
             if use_context:
-                ctx = rearrange(
-                    context[:, :t_valid], "b (h w) c -> b c h w", h=h, w=w
-                ).contiguous()
+                ctx = rearrange(context[:, :t_valid], "b (h w) c -> b c h w", h=h, w=w).contiguous()
             else:
                 ctx = None
 
             upscaled = self.upscale(feat, ctx)
             rgb = self.to_rgb_conv(upscaled)
-            return self.rgb_activation(rgb)
+            return cast(torch.Tensor, self.rgb_activation(rgb))
         else:
             outputs = []
             for i in range(B):
-                h, w = H[i].item(), W[i].item()
+                h, w = int(H[i].item()), int(W[i].item())
                 t_valid = h * w
                 assert t_valid <= L, f"Mismatch: tokens {L} < h*w {t_valid}"
 
-                feat_i = rearrange(
-                    img_seq[i : i + 1, :t_valid], "b (h w) d -> b d h w", h=h, w=w
-                )
+                feat_i = rearrange(img_seq[i : i + 1, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
                 if use_context:
                     ctx_i = rearrange(
                         context[i : i + 1, :t_valid], "b (h w) c -> b c h w", h=h, w=w

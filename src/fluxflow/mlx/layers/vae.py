@@ -267,8 +267,8 @@ class FluxExpander(nn.Module):
         """
         img_seq_with_context = packed[:, :-1, :]  # [B, T, D+context_dims]
         D = self.d_model
-        img_seq = img_seq_with_context[:, :, :D]   # [B, T, D]
-        context = img_seq_with_context[:, :, D:]   # [B, T, context_dims]
+        img_seq = img_seq_with_context[:, :, :D]  # [B, T, D]
+        context = img_seq_with_context[:, :, D:]  # [B, T, context_dims]
 
         hw_token = packed[:, -1, :]  # [B, D+context_dims]
         h = int(round(float(hw_token[0, 0].item()) * self.max_hw))

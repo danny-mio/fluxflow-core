@@ -4,7 +4,6 @@ Run *before* implementation — all tests must fail until implementation exists.
 """
 
 import torch
-import pytest
 
 
 class TestFluxCompressorV100:
@@ -94,9 +93,9 @@ class TestFluxCompressorV100:
         """v100.vae must not export CONTEXT_DIMS as module-level constant."""
         import fluxflow.models.v100.vae as vae_module
 
-        assert not hasattr(vae_module, "CONTEXT_DIMS"), (
-            "v100/vae.py must not define module-level CONTEXT_DIMS"
-        )
+        assert not hasattr(
+            vae_module, "CONTEXT_DIMS"
+        ), "v100/vae.py must not define module-level CONTEXT_DIMS"
 
     def test_gradient_flows_through_compressor(self):
         """Gradients must flow from packed output back to img input."""
@@ -157,10 +156,10 @@ class TestFluxExpanderV100:
         from fluxflow.models.v100.vae import FluxExpander_v100
 
         exp = FluxExpander_v100(d_model=32, upscales=2)
-        B, T, D = 1, 16, 32
+        B, T, D = 1, 16, 32  # T=16 → H_lat=4, W_lat=4
         packed = torch.zeros(B, T + 1, 2 * D)
-        packed[:, -1, 0] = 16 / 1024.0
-        packed[:, -1, 1] = 16 / 1024.0
+        packed[:, -1, 0] = 4 / 1024.0
+        packed[:, -1, 1] = 4 / 1024.0
         with torch.no_grad():
             out = exp(packed, use_context=False)
         assert out.shape[0] == 1

@@ -380,20 +380,18 @@ def save_sample_images(
             text_embeddings = full_text_embeddings[i : i + batch_size]
             B = text_embeddings.size(0)
 
-            # Start from random latent packet, then denoise iteratively for parity with UI inference.
-            z_img = (torch.rand((B, 3, height, width), device=device) * 2) - 1
-            latent_z = diffuser.compressor(z_img)
-
-            img_seq = latent_z[:, :-1, :].contiguous()
-            hw_vec = latent_z[:, -1:, :].contiguous()
-            noise_img = torch.randn_like(img_seq)
-
-            noise_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=1000)
-            noise_scheduler.set_timesteps(num_inference_steps, device=device)  # type: ignore[attr-defined]
-
-            t = torch.randint(0, 1000, (B,), device=device)
-            noised_img = noise_scheduler.add_noise(img_seq, noise_img, t)  # type: ignore[attr-defined]
-            noised_latent = torch.cat([noised_img, hw_vec], dim=1)
+            # Start from pure Gaussian noise — matches the training distribution at t=999,
+            # where x_t ≈ noise.  Using compressor(random_image) + add_noise at a random t
+            # produces a structured starting point that the DPM loop was never trained for.
+            context_dims = diffuser.compressor.get_context_dims()
+            dummy = torch.zeros(B, 3, height, width, device=device)
+            noised_latent = img_to_random_packet(
+                dummy,
+                d_model=diffuser.compressor.d_model,
+                context_dims=context_dims,
+                downscales=getattr(diffuser.compressor, "downscales", 4),
+                max_hw=getattr(diffuser.compressor, "max_hw", 1024),
+            ).to(dtype=text_embeddings.dtype)
 
             if use_cfg:
                 null_embeddings = torch.zeros_like(text_embeddings)

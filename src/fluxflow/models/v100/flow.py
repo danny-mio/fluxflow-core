@@ -185,7 +185,7 @@ class FluxFlowProcessor_v100(nn.Module):
         img_seq_v_all = self.dmodel_to_vae(img_seq)
 
         if B > 1 and (H == H[0]).all() and (W == W[0]).all():
-            h, w = H[0].item(), W[0].item()
+            h, w = int(H[0].item()), int(W[0].item())
             t_valid = min(h * w, T)
             if t_valid < h * w:
                 h = int(t_valid**0.5)
@@ -211,7 +211,7 @@ class FluxFlowProcessor_v100(nn.Module):
         else:
             outputs = []
             for i in range(B):
-                h, w = H[i].item(), W[i].item()
+                h, w = int(H[i].item()), int(W[i].item())
                 t_valid = min(h * w, T)
                 if t_valid < h * w:
                     h = int(t_valid**0.5)

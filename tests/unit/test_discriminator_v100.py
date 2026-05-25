@@ -1,7 +1,6 @@
 """Tests for PatchDiscriminator with v0.10.0 ctx_dim=256."""
 
 import torch
-import pytest
 
 
 class TestPatchDiscriminatorV100:
@@ -15,8 +14,8 @@ class TestPatchDiscriminatorV100:
         img = torch.randn(2, 3, 64, 64)
         ctx = torch.randn(2, 256)
         with torch.no_grad():
-            logits = disc(img, ctx_vec=ctx)
-        assert logits.shape[0] == 2
+            out = disc(img, ctx_vec=ctx)
+        assert out.shape[0] == 2
 
     def test_ctx_proj_backward_reaches_ctx_vec(self):
         """Gradient must flow from discriminator output to ctx_vec."""
@@ -26,7 +25,7 @@ class TestPatchDiscriminatorV100:
         img = torch.randn(1, 3, 64, 64)
         ctx = torch.randn(1, 256, requires_grad=True)
         with torch.no_grad():
-            logits = disc(img, ctx_vec=ctx.detach())
+            disc(img, ctx_vec=ctx.detach())
         # Re-do with grad enabled
         ctx2 = torch.randn(1, 256, requires_grad=True)
         logits2 = disc(img, ctx_vec=ctx2)

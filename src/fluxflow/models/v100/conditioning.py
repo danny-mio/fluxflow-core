@@ -6,6 +6,8 @@ The beta_scale learnable scalar starts at 0 so SPADE acts as plain GroupNorm at 
 preventing large magnitude context signals from destabilising early training.
 """
 
+from typing import cast
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -56,6 +58,6 @@ class SPADEWithLearnableScale(SPADE):
             actv = self.mlp_shared(context)
             raw_beta = self.mlp_beta(actv)
             beta = self.beta_scale * raw_beta
-            return normalized + beta
+            return cast(torch.Tensor, normalized + beta)
 
-        return normalized
+        return cast(torch.Tensor, normalized)
