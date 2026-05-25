@@ -314,13 +314,14 @@ class TestVAEShapesIntegration:
 
     def test_typical_vae_workflow(self):
         """Test typical VAE encoder-decoder workflow shapes."""
-        # Typical VAE dimensions
-        batch_size = 4
-        img_size = 256
+        # Reduced spatial dims: ConvTranspose2d(128, 640, k=16) creates a ~4GB im2col
+        # workspace per batch item at 256×256; batch=4 at img_size=256 → >30GB.
+        batch_size = 1
+        img_size = 64
         latent_channels = 128
         downscales = 4
 
-        # After encoding: 256 -> 128 -> 64 -> 32 -> 16
+        # After encoding: 64 -> 32 -> 16 -> 8 -> 4
         latent_size = img_size // (2**downscales)
 
         # Simulated latent
@@ -333,7 +334,8 @@ class TestVAEShapesIntegration:
             use_spade=False,
         )
 
-        decoded = upscaler(latent, context=None)
+        with torch.no_grad():
+            decoded = upscaler(latent, context=None)
 
         # Should match original image size
         assert decoded.shape == (batch_size, latent_channels, img_size, img_size)

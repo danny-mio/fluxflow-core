@@ -116,6 +116,10 @@ class PatchDiscriminator(nn.Module):
             self.ctx_proj = nn.Linear(ctx_dim, c)
             self.feat_proj = nn.Identity()
 
+    def get_ctx_dim(self) -> int:
+        """Return the context vector dimension this discriminator expects."""
+        return int(self.ctx_dim)
+
     def forward(self, x, ctx_vec=None, return_feats=False):
         """
         Args:
