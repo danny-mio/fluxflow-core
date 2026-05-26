@@ -19,15 +19,20 @@ from .conditioning import SPADE, LeanContext2D
 
 
 class BertTextEncoder(nn.Module):
-    """
-    Text encoder using DistilBERT transformer.
+    """DistilBERT-based text encoder with a linear projection head.
 
-    Encodes text input_ids to dense embeddings suitable for conditioning.
+    Encodes tokenised text into a fixed-size embedding via DistilBERT
+    (``language_model``) followed by a linear projection (``ouput_layer``).
+
+    Fine-grained optimizer control is available via :meth:`parameter_groups`,
+    which exposes ``'backbone'`` (all ``language_model`` parameters) and
+    ``'projection'`` (all ``ouput_layer`` parameters) as separate groups,
+    enabling independent learning rates and freeze/unfreeze scheduling.
 
     Args:
-        embed_dim: Output embedding dimension
-        pretrain_model: Optional pretrained model name (e.g., 'distilbert-base-uncased')
-                       If None, initializes from scratch
+        embed_dim: Output embedding dimension.
+        pretrain_model: HuggingFace model ID or local path for DistilBERT
+            weights. Pass ``None`` to skip pretrained weight loading.
     """
 
     def __init__(self, embed_dim, pretrain_model=None):
@@ -74,6 +79,24 @@ class BertTextEncoder(nn.Module):
         # Freeze language model weights to avoid updating during training
         for param in self.language_model.parameters():
             param.requires_grad = False
+
+    def parameter_groups(self) -> dict[str, list]:
+        """Return named parameter groups for fine-grained optimizer control.
+
+        Returns:
+            dict with keys ``'backbone'`` (DistilBERT ``language_model`` params) and
+            ``'projection'`` (``ouput_layer`` params). Callers may pass each list
+            directly to an optimizer's ``params`` argument.
+
+        Note:
+            ``apply_bezier_activation`` is a stateless module with no ``nn.Parameter``.
+            If learnable control points are ever added to ``BezierActivation``, they
+            must be explicitly assigned to one group here.
+        """
+        return {
+            "backbone": list(self.language_model.parameters()),
+            "projection": list(self.ouput_layer.parameters()),
+        }
 
     def forward(self, input_ids, attention_mask=None):
         """

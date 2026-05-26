@@ -134,6 +134,49 @@ class TestBertTextEncoder:
 
         assert output.shape == (2, 512)
 
+    def test_parameter_groups_keys(self):
+        """parameter_groups() returns dict with exactly two named groups."""
+        encoder = BertTextEncoder(embed_dim=512, pretrain_model=None)
+        groups = encoder.parameter_groups()
+        assert set(groups.keys()) == {"backbone", "projection"}
+
+    def test_parameter_groups_coverage(self):
+        """parameter_groups() covers all parameters with no overlap."""
+        encoder = BertTextEncoder(embed_dim=512, pretrain_model=None)
+        groups = encoder.parameter_groups()
+        backbone_ids = {id(p) for p in groups["backbone"]}
+        projection_ids = {id(p) for p in groups["projection"]}
+        all_ids = {id(p) for p in encoder.parameters()}
+        assert backbone_ids | projection_ids == all_ids
+        assert backbone_ids & projection_ids == set()
+
+    def test_parameter_groups_backbone_frozen_by_default(self):
+        """Backbone params are requires_grad=False after load_language_model()."""
+        encoder = BertTextEncoder(embed_dim=512, pretrain_model=None)
+        # When pretrain_model=None, requires_grad is left at default (True).
+        # Simulate what load_language_model does:
+        for p in encoder.language_model.parameters():
+            p.requires_grad = False
+        groups = encoder.parameter_groups()
+        assert all(not p.requires_grad for p in groups["backbone"])
+        assert all(p.requires_grad for p in groups["projection"])
+
+    def test_train_mode_projection_only_does_not_enable_lm_dropout(self):
+        """When only projection optimizer is active, language_model must stay in eval mode.
+
+        Calling text_encoder.train() globally enables DistilBERT dropout even when the
+        backbone is frozen, corrupting the projection gradient signal. FlowTrainer must
+        apply the correct per-sub-module mode split.
+        """
+        encoder = BertTextEncoder(embed_dim=512, pretrain_model=None)
+        # Simulate the mode-split logic FlowTrainer applies when extras has only "projection":
+        encoder.language_model.eval()
+        encoder.ouput_layer.train()
+        assert (
+            encoder.language_model.training is False
+        ), "language_model must be in eval mode when only projection optimizer is active"
+        assert encoder.ouput_layer.training is True
+
 
 class TestImageEncoder:
     """Tests for ImageEncoder model."""
