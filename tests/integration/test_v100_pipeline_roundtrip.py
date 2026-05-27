@@ -4,8 +4,8 @@ Tests the full image → compress → decompress pipeline using v0.10.0 models,
 and verifies versioned save/load.
 """
 
-import torch
 import pytest
+import torch
 
 
 def test_full_roundtrip():

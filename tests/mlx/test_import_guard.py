@@ -3,8 +3,8 @@ import pytest
 
 def test_import_guard_raises_without_mlx(monkeypatch):
     """Importing fluxflow.mlx without mlx installed raises ImportError."""
-    import sys
     import builtins
+    import sys
 
     # Remove mlx and fluxflow.mlx from sys.modules to force re-import
     mlx_modules = [k for k in sys.modules if k.startswith("mlx")]
@@ -23,6 +23,7 @@ def test_import_guard_raises_without_mlx(monkeypatch):
         builtins.__import__ = mock_import
         with pytest.raises(ImportError, match="pip install fluxflow"):
             import importlib
+
             import fluxflow.mlx  # noqa: F401
 
             importlib.reload(fluxflow.mlx)

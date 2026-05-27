@@ -1,4 +1,5 @@
 import torch
+
 from fluxflow.utils.mps import mps_safe_pool2d
 
 
@@ -24,6 +25,7 @@ def test_pool2d_preserves_values_on_uniform_input():
 def test_pool2d_fallback_branch_via_mock():
     """Exercises the except branch by mocking adaptive_avg_pool2d to raise."""
     import unittest.mock as mock
+
     from fluxflow.utils import mps as mps_mod
 
     x = torch.ones(1, 4, 6, 6) * 2.0
@@ -37,6 +39,7 @@ def test_pool2d_fallback_branch_via_mock():
 def test_pool2d_fallback_tiled_mean():
     """Fallback tiled mean is exact for divisible sizes."""
     import unittest.mock as mock
+
     from fluxflow.utils import mps as mps_mod
 
     x = torch.arange(16, dtype=torch.float32).reshape(1, 1, 4, 4)

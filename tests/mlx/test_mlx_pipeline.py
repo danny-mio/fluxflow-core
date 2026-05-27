@@ -53,8 +53,8 @@ def test_pipeline_decode_output_shape():
 
 def test_pipeline_npz_cached():
     """from_checkpoint must reuse existing .npz and not recreate it."""
-    from fluxflow.mlx.pipeline import FluxFlowPipelineMLX
     from fluxflow.mlx.convert import convert_checkpoint
+    from fluxflow.mlx.pipeline import FluxFlowPipelineMLX
 
     with tempfile.TemporaryDirectory() as d:
         ckpt = os.path.join(d, "model.safetensors")
