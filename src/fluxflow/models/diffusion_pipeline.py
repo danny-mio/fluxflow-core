@@ -870,44 +870,33 @@ class FluxFlowPipeline(DiffusionPipeline):
         total_batch = batch_size * num_images_per_prompt
 
         if latents is None:
-            # Create random initial image and compress to latent
-            shape = (total_batch, 3, height, width)
-            if generator is not None:
-                if isinstance(generator, list):
-                    latents_list = [
-                        torch.randn(
-                            (1, 3, height, width),
-                            generator=g,
-                            device=device,
-                            dtype=text_embeddings.dtype,
-                        )
-                        for g in generator
-                    ]
-                    latents = torch.cat(latents_list, dim=0)
-                else:
-                    latents = torch.randn(
-                        shape,
-                        generator=generator,
-                        device=device,
-                        dtype=text_embeddings.dtype,
-                    )
-            else:
-                latents = torch.randn(shape, device=device, dtype=text_embeddings.dtype)
+            # Start from N(0,1) directly in latent token space.
+            # Training always begins from Gaussian noise in latent space at t=999;
+            # compressing pixel-space randn produces a different distribution (wrong starting state).
+            h_tokens = height // 16
+            w_tokens = width // 16
+            T = h_tokens * w_tokens
+            packed_dim = self.flow_processor.vae_to_dmodel.in_features  # 2*vae_dim
 
-            # Normalize to [-1, 1]
-            latents = latents * 2 - 1
+            gen = generator[0] if isinstance(generator, list) else generator
+            lat = torch.randn(
+                [total_batch, T, packed_dim],
+                generator=gen,
+                device=device,
+                dtype=text_embeddings.dtype,
+            )
 
-            # Compress to latent space
-            with torch.no_grad():
-                latents = self.compressor(latents)
+            hw_vec = torch.zeros(
+                [total_batch, 1, packed_dim], device=device, dtype=text_embeddings.dtype
+            )
+            hw_vec[:, 0, 0] = h_tokens / self.flow_processor.max_hw
+            hw_vec[:, 0, 1] = w_tokens / self.flow_processor.max_hw
         else:
             # Validate provided latents format
             vae_dim = getattr(self.compressor, "d_model", latents.shape[-1])
             self._validate_latent_format(latents, total_batch, vae_dim)
-
-        # Split into image sequence and hw vector
-        hw_vec = latents[:, -1:, :].clone()
-        lat = latents[:, :-1, :].clone()
+            hw_vec = latents[:, -1:, :].clone()
+            lat = latents[:, :-1, :].clone()
 
         # 4. Prepare scheduler
         self.scheduler.set_timesteps(num_inference_steps, device=device)
