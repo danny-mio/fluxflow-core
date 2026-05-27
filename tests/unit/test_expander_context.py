@@ -32,7 +32,7 @@ class TestFluxExpanderContext:
         assert output.shape == (B, 3, 32, 32)
 
     def test_with_context_disabled(self):
-        """Test FluxExpander with use_context=False."""
+        """Test FluxExpander with use_context=False (model-level bypass; SPADE always on by default)."""
         expander = FluxExpander(d_model=32, upscales=2)
 
         # Create packed representation
@@ -46,14 +46,14 @@ class TestFluxExpanderContext:
 
         packed = torch.cat([img_seq, hw_vector], dim=1)
 
-        # Forward WITHOUT context (SPADE disabled)
+        # Forward WITHOUT context (model-level bypass; SPADE always on by default)
         output = expander(packed, use_context=False)
 
-        # Should still work, just without SPADE modulation
+        # Should still work, just without context modulation
         assert output.shape == (B, 3, 32, 32)
 
     def test_context_does_not_allocate_zeros_tensor(self):
-        """Test that use_context=False doesn't allocate unnecessary tensors."""
+        """Test that use_context=False (model-level bypass) doesn't allocate unnecessary tensors."""
         expander = FluxExpander(d_model=32, upscales=2)
 
         B, H, W, D = 1, 8, 8, 32
@@ -78,7 +78,7 @@ class TestFluxExpanderContext:
         # Note: This test verifies the fix - previously would allocate torch.zeros_like(feat)
 
     def test_variable_dimensions_with_context_disabled(self):
-        """Test variable dimension path with use_context=False."""
+        """Test variable dimension path with use_context=False (model-level bypass)."""
         expander = FluxExpander(d_model=32, upscales=2)
 
         # Same dimensions for both samples (to allow concatenation)
@@ -124,11 +124,11 @@ class TestFluxExpanderContext:
         output_false = expander(packed, use_context=False)
         assert output_false.shape == (B, 3, 32, 32)
 
-        # Outputs should be different (SPADE modulation changes output)
+        # Outputs should be different (context modulation changes output)
         assert not torch.allclose(output_true, output_false, atol=1e-6)
 
     def test_gradient_flow_without_context(self):
-        """Test that gradients flow correctly with use_context=False."""
+        """Test that gradients flow correctly with use_context=False (model-level bypass)."""
         expander = FluxExpander(d_model=32, upscales=2)
 
         B, H, W, D = 1, 8, 8, 32

@@ -125,7 +125,6 @@ class TrainingConfig(BaseModel):
     # Training modes
     train_vae: bool = Field(default=False, description="Train VAE (compressor+expander)")
     train_no_gan: bool = Field(default=False, description="Disable GAN training for VAE")
-    train_spade: bool = Field(default=True, description="Use SPADE conditioning")
     train_diff: bool = Field(default=False, description="Train flow model")
     train_diff_full: bool = Field(default=False, description="Train flow with full schedule")
 

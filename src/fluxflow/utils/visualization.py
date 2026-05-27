@@ -80,7 +80,6 @@ def safe_vae_sample(
     Saves:
     - Compressed latent (.ptz.gz)
     - Reconstruction with context
-    - Reconstruction without context
     - Noise reconstruction tests
 
     Args:
@@ -142,15 +141,6 @@ def safe_vae_sample(
         save_image(
             out_img,
             os.path.join(output_path, f"{prefix}-{image_hash}-ctx.webp"),
-            normalize=True,
-            value_range=(-1, 1),
-        )
-
-        # Decode without context
-        out_img = torch.clamp(diffuser.expander(out_latent, False), min=-1, max=1)
-        save_image(
-            out_img,
-            os.path.join(output_path, f"{prefix}-{image_hash}-nc.webp"),
             normalize=True,
             value_range=(-1, 1),
         )
