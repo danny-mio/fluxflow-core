@@ -223,6 +223,9 @@ def generate_latent_images(
     device = batch_z.device
     scheduler = scheduler_cls(
         num_train_timesteps=1000,
+        beta_schedule="scaled_linear",
+        beta_start=0.00085,
+        beta_end=0.012,
         algorithm_type="dpmsolver++",
         solver_order=2,
         prediction_type=prediction_type,
@@ -274,6 +277,9 @@ def _generate_with_cfg(
     """
     scheduler = DPMSolverMultistepScheduler(
         num_train_timesteps=1000,
+        beta_schedule="scaled_linear",
+        beta_start=0.00085,
+        beta_end=0.012,
         algorithm_type="dpmsolver++",
         solver_order=2,
         prediction_type="v_prediction",
