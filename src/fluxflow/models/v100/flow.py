@@ -229,6 +229,7 @@ class FluxFlowProcessor_v100(nn.Module):
         self.text_cond_proj = nn.Linear(embedding_size, d_model)
 
         self.context_injection = GatedContextInjection(d_model, d_model)
+        self.norm_ctx = nn.LayerNorm(d_model)
         self.transformer_blocks = nn.ModuleList(
             [FluxTransformerBlock_v100(d_model, n_head) for _ in range(n_layers)]
         )
@@ -302,7 +303,7 @@ class FluxFlowProcessor_v100(nn.Module):
         ) -> tuple[torch.Tensor, torch.Tensor]:
             p0 = p1 = p2 = p3 = None
             for block in self.transformer_blocks:
-                img_seq = self.context_injection(img_seq, ctx_agg)
+                img_seq = self.context_injection(img_seq, self.norm_ctx(ctx_agg))
                 img_seq, p0, p1, p2, p3 = block(
                     img_seq,
                     text_seq,

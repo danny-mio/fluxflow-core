@@ -203,3 +203,61 @@ class TestFluxTransformerBlockV100:
                     assert (
                         "v080" not in node.module
                     ), f"v100/flow.py must not import from v080: {node.module}"
+
+
+class TestFluxFlowProcessorV100CtxAgg:
+    """TDD tests for ctx_agg drift fix — write BEFORE implementation."""
+
+    def test_norm_ctx_attribute_exists(self):
+        """FluxFlowProcessor_v100 must have a norm_ctx LayerNorm."""
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        proc = FluxFlowProcessor_v100(d_model=64, vae_dim=32, embedding_size=64, n_layers=2)
+        assert hasattr(proc, "norm_ctx"), "norm_ctx attribute must exist on FluxFlowProcessor_v100"
+        assert isinstance(proc.norm_ctx, torch.nn.LayerNorm)
+        assert proc.norm_ctx.normalized_shape == (64,)
+
+    def test_norm_ctx_prevents_gate_saturation(self):
+        """
+        With large ctx_agg (simulating deep-layer accumulation), norm_ctx must
+        keep the GatedContextInjection gate output in a non-saturated range.
+        Without norm_ctx, sigmoid(Linear(100*randn)) saturates to near 0 or 1.
+        With norm_ctx, LayerNorm(100*randn) ≈ LayerNorm(randn) → responsive gate.
+        """
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        proc = FluxFlowProcessor_v100(d_model=64, vae_dim=32, embedding_size=64, n_layers=1)
+        B, D = 4, 64
+
+        # Large ctx_agg simulates 10-layer accumulation
+        ctx_agg_large = torch.randn(B, D) * 100.0
+        normed = proc.norm_ctx(ctx_agg_large)
+
+        # After LayerNorm, magnitude must be normalised (mean~0, std~1 per sample)
+        per_sample_std = normed.std(dim=-1)
+        assert (
+            per_sample_std > 0.1
+        ).all(), f"norm_ctx must normalize ctx_agg; per-sample std={per_sample_std}"
+
+        # Gate must not be saturated: gate values should vary across features
+        gate_vals = proc.context_injection.gate(normed)  # [B, D], values in (0,1)
+        gate_std = gate_vals.std(dim=-1)
+        assert (
+            gate_std > 1e-3
+        ).all(), f"Gate should vary across features after norm_ctx; std={gate_std}"
+
+    def test_forward_shape_unchanged(self):
+        """norm_ctx must not change the forward output shape contract."""
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        proc = FluxFlowProcessor_v100(d_model=64, vae_dim=32, embedding_size=64, n_layers=2)
+        T = 16
+        packed = torch.zeros(1, T + 1, 64)
+        packed[0, -1, 0] = 4 / 1024.0  # H=4
+        packed[0, -1, 1] = 4 / 1024.0  # W=4
+        packed[:, :-1, :] = torch.randn(1, T, 64)
+        text = torch.randn(1, 64)
+        t = torch.tensor([0.5])
+        with torch.no_grad():
+            out = proc(packed, text, t)
+        assert out.shape == packed.shape
