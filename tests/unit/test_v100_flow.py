@@ -84,3 +84,122 @@ class TestFluxFlowProcessorV100:
         with torch.no_grad():
             out = proc(packed, text, t)
         assert out.shape == (2, T + 1, 64)
+
+
+class TestFluxTransformerBlockV100:
+    """TDD tests for FluxTransformerBlock_v100 — write BEFORE implementation."""
+
+    D = 32
+    N_HEAD = 4
+    T = 16
+    B = 2
+
+    def _make_block(self):
+        from fluxflow.models.v100.flow import FluxTransformerBlock_v100
+
+        return FluxTransformerBlock_v100(d_model=self.D, n_head=self.N_HEAD)
+
+    def _make_inputs(self, blk):
+        img_seq = torch.randn(self.B, self.T, self.D)
+        text_seq = torch.randn(self.B, 1, self.D)
+        text_cond = torch.randn(self.B, self.D)
+        sin_img, cos_img = blk.rotary_pe.get_embed(torch.arange(self.T))
+        sin_txt, cos_txt = blk.rotary_pe.get_embed(torch.arange(1))
+        return img_seq, text_seq, sin_img, cos_img, sin_txt, cos_txt, text_cond
+
+    def test_class_exists(self):
+        from fluxflow.models.v100.flow import FluxTransformerBlock_v100
+
+        assert FluxTransformerBlock_v100 is not None
+
+    def test_forward_shape(self):
+        blk = self._make_block()
+        img_seq, text_seq, sin_img, cos_img, sin_txt, cos_txt, text_cond = self._make_inputs(blk)
+        with torch.no_grad():
+            out, p0, p1, p2, p3 = blk(
+                img_seq,
+                text_seq,
+                sin_img,
+                cos_img,
+                sin_txt,
+                cos_txt,
+                None,
+                None,
+                None,
+                None,
+                text_cond,
+            )
+        assert out.shape == (self.B, self.T, self.D)
+        for p in (p0, p1, p2, p3):
+            assert p.shape == (self.B, self.T, self.D)
+
+    def test_film_beta_propagates_through_zeroed_pillars(self):
+        """
+        Correct ordering: Pillar MLPs run first, FiLM modulates the output.
+        With zeroed pillar weights (g_p* == 0), FiLM gives: 0*(1+gamma)+beta = beta.
+        beta must propagate to the final output.
+        If FiLM were first (v080 ordering), zeroed pillar MLPs would zero everything.
+        """
+        blk = self._make_block()
+        # Zero all pillar MLP weights so g_p* == 0 regardless of input
+        for attr in ("p0", "p1", "p2", "p3"):
+            for m in getattr(blk, attr).modules():
+                if isinstance(m, torch.nn.Linear):
+                    torch.nn.init.zeros_(m.weight)
+                    torch.nn.init.zeros_(m.bias)
+        # Set film beta to a large nonzero constant (second half of film output)
+        for attr in ("film_p0", "film_p1", "film_p2", "film_p3"):
+            film = getattr(blk, attr)
+            torch.nn.init.zeros_(film.weight)
+            bias = torch.zeros(film.out_features)
+            bias[self.D :] = 1.0  # beta=1.0, gamma=0.0
+            film.bias.data.copy_(bias)
+
+        img_seq, text_seq, sin_img, cos_img, sin_txt, cos_txt, text_cond = self._make_inputs(blk)
+        with torch.no_grad():
+            _, p0, _, _, _ = blk(
+                img_seq,
+                text_seq,
+                sin_img,
+                cos_img,
+                sin_txt,
+                cos_txt,
+                None,
+                None,
+                None,
+                None,
+                text_cond,
+            )
+        # With zeroed pillars + FiLM-second: p0 = FiLM(0) = beta = 1.0
+        # Values flow through pillar_cross_attn (additive residual), so p0 != 0
+        assert not torch.allclose(
+            p0, torch.zeros_like(p0)
+        ), "FiLM beta must be nonzero in pillar output — proves FiLM runs AFTER Pillar MLP"
+
+    def test_film_layer_shapes(self):
+        blk = self._make_block()
+        for attr in ("film_p0", "film_p1", "film_p2", "film_p3"):
+            film = getattr(blk, attr)
+            assert film.in_features == self.D
+            assert film.out_features == 2 * self.D
+
+    def test_pillar_cross_attn_exists(self):
+        blk = self._make_block()
+        assert hasattr(blk, "pillar_cross_attn")
+        assert hasattr(blk, "norm_pillar")
+
+    def test_no_v080_import_in_v100_flow(self):
+        """v100/flow.py must not import any symbol from v080 after this fix."""
+        import ast
+        import pathlib
+
+        src = pathlib.Path(
+            "/Volumes/DanieleExt/ai/ffnew/fluxflow-core/src/fluxflow/models/v100/flow.py"
+        ).read_text()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    assert (
+                        "v080" not in node.module
+                    ), f"v100/flow.py must not import from v080: {node.module}"

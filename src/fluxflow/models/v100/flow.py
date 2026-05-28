@@ -22,16 +22,160 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
-from ..activations import TrainableBezier
+from ..activations import BezierActivation, TrainableBezier, xavier_init
 from ..conditioning import ContextAttentionMixer, GatedContextInjection
-from ..v080.flow import FluxTransformerBlock_v080
+from ..v070.flow import ParallelAttention, RotaryPositionalEmbedding, pillarLayer
+
+
+def _valid_pillar_heads(d_model: int, preferred: int) -> int:
+    """Return largest value <= preferred that evenly divides d_model."""
+    for h in range(max(preferred, 1), 0, -1):
+        if d_model % h == 0:
+            return h
+    return 1
+
+
+class FluxTransformerBlock_v100(nn.Module):
+    """
+    Transformer block with pillar-attention architecture (v0.10.0).
+
+    Corrects the FiLM ordering from v0.8.0:
+        v0.8.0: FiLM(g) → PillarMLP(FiLM(g))      [low-variance FiLM input, attenuated gradients]
+        v0.10.0: PillarMLP(g) → FiLM(PillarMLP(g)) [full-variance FiLM input, clean gradient flow]
+
+    Args:
+        d_model: Model dimensionality
+        n_head: Number of attention heads
+    """
+
+    def __init__(self, d_model: int, n_head: int) -> None:
+        super().__init__()
+        self.bezier_activation = BezierActivation()
+        self.p_preactivation = nn.SiLU()
+        self.self_attn = ParallelAttention(d_model, n_head)
+        self.cross_attn = ParallelAttention(d_model, n_head)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+
+        self.p0 = pillarLayer(
+            in_size=d_model, out_size=d_model, depth=3, activation=self.p_preactivation
+        )
+        self.p1 = pillarLayer(
+            in_size=d_model, out_size=d_model, depth=3, activation=self.p_preactivation
+        )
+        self.p2 = pillarLayer(
+            in_size=d_model, out_size=d_model, depth=3, activation=self.p_preactivation
+        )
+        self.p3 = pillarLayer(
+            in_size=d_model, out_size=d_model, depth=3, activation=self.p_preactivation
+        )
+
+        self.ffn = nn.Sequential(nn.Linear(d_model, d_model))
+        self.rotary_pe = RotaryPositionalEmbedding(d_model // n_head)
+
+        # FiLM: independent per-pillar, projects text_cond [B, D] → [B, 2*D]
+        self.film_p0 = nn.Linear(d_model, 2 * d_model)
+        self.film_p1 = nn.Linear(d_model, 2 * d_model)
+        self.film_p2 = nn.Linear(d_model, 2 * d_model)
+        self.film_p3 = nn.Linear(d_model, 2 * d_model)
+
+        n_pillar_heads = _valid_pillar_heads(d_model, max(1, n_head // 4))
+        self.pillar_cross_attn = ParallelAttention(d_model, n_pillar_heads)
+        self.norm_pillar = nn.LayerNorm(d_model)
+
+        self.apply(xavier_init)
+
+    def _film_modulate(
+        self, gate: torch.Tensor, film_layer: nn.Linear, text_cond: torch.Tensor
+    ) -> torch.Tensor:
+        gamma, beta = film_layer(text_cond).chunk(2, dim=-1)
+        result: torch.Tensor = gate * (1 + gamma[:, None, :]) + beta[:, None, :]
+        return result
+
+    def forward(
+        self,
+        img_seq: torch.Tensor,
+        text_seq: torch.Tensor,
+        sin_img: torch.Tensor,
+        cos_img: torch.Tensor,
+        sin_txt: torch.Tensor,
+        cos_txt: torch.Tensor,
+        p0_x,
+        p1_x,
+        p2_x,
+        p3_x,
+        text_cond: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            img_seq: [B, T_img, D]
+            text_seq: [B, T_txt, D]
+            sin_img, cos_img: Rotary embeddings for image tokens
+            sin_txt, cos_txt: Rotary embeddings for text tokens
+            p0_x … p3_x: Cross-block pillar features (None for first block)
+            text_cond: Pooled text+time conditioning [B, D]
+
+        Returns:
+            tuple: (updated img_seq, img_p0, img_p1, img_p2, img_p3)
+        """
+        # 1. Self-attention
+        normed = self.norm1(img_seq)
+        img_seq = img_seq + self.self_attn(
+            normed,
+            normed,
+            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
+            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
+        )
+
+        # 2. Cross-attention img_seq × text_seq
+        img_seq = img_seq + self.cross_attn(
+            self.norm2(img_seq),
+            self.norm2(text_seq),
+            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
+            lambda x: self.rotary_pe.apply_rotary(x, sin_txt, cos_txt),
+        )
+
+        # 3. Sigmoid gate
+        g = torch.sigmoid(img_seq)
+
+        # 4. Pillar MLPs FIRST on raw gate (corrected vs v0.8.0)
+        g_p0 = self.p0(g * p0_x if p0_x is not None else g)
+        g_p1 = self.p1(g * p1_x if p1_x is not None else g)
+        g_p2 = self.p2(g * p2_x if p2_x is not None else g)
+        g_p3 = self.p3(g * p3_x if p3_x is not None else g)
+
+        # 5. FiLM modulation on Pillar MLP output (corrected vs v0.8.0)
+        raw_p0 = self._film_modulate(g_p0, self.film_p0, text_cond)
+        raw_p1 = self._film_modulate(g_p1, self.film_p1, text_cond)
+        raw_p2 = self._film_modulate(g_p2, self.film_p2, text_cond)
+        raw_p3 = self._film_modulate(g_p3, self.film_p3, text_cond)
+
+        # 6. Shared pillar cross-attention (Q=pillar, KV=text_seq)
+        raw_stacked = torch.cat([raw_p0, raw_p1, raw_p2, raw_p3], dim=1)
+        normed_stacked = self.norm_pillar(raw_stacked)
+        attended = self.pillar_cross_attn(normed_stacked, text_seq, lambda x: x, lambda x: x)
+        raw_stacked = raw_stacked + attended
+        T_img = img_seq.shape[1]
+        img_p0 = raw_stacked[:, :T_img, :]
+        img_p1 = raw_stacked[:, T_img : 2 * T_img, :]
+        img_p2 = raw_stacked[:, 2 * T_img : 3 * T_img, :]
+        img_p3 = raw_stacked[:, 3 * T_img :, :]
+
+        # 7. FFN + BezierActivation
+        img_seq = img_seq + self.ffn(self.norm3(img_seq))
+        img_seq = self.bezier_activation(
+            torch.cat([img_seq, img_p0, img_p1, img_p2, img_p3], dim=-1)
+        )
+
+        return img_seq, img_p0, img_p1, img_p2, img_p3
 
 
 class FluxFlowProcessor_v100(nn.Module):
     """
     Flow prediction model for FluxFlow v0.10.0 (2*vae_dim packed tokens).
 
-    Identical to FluxFlowProcessor_v080 (pillar-attention) except:
+    Extends the v0.8.0 pillar-attention design with corrected Pillar→FiLM ordering:
     - vae_to_dmodel accepts 2*vae_dim inputs (not vae_dim + CONTEXT_DIMS).
     - dmodel_to_vae produces 2*vae_dim outputs.
     - context_dims attribute is explicitly stored and inspectable.
@@ -86,7 +230,7 @@ class FluxFlowProcessor_v100(nn.Module):
 
         self.context_injection = GatedContextInjection(d_model, d_model)
         self.transformer_blocks = nn.ModuleList(
-            [FluxTransformerBlock_v080(d_model, n_head) for _ in range(n_layers)]
+            [FluxTransformerBlock_v100(d_model, n_head) for _ in range(n_layers)]
         )
 
         self.flow_predictor = nn.Sequential(
@@ -147,7 +291,7 @@ class FluxFlowProcessor_v100(nn.Module):
         text_cond = self.text_cond_proj(cond)
 
         first_block = self.transformer_blocks[0]
-        assert isinstance(first_block, FluxTransformerBlock_v080)
+        assert isinstance(first_block, FluxTransformerBlock_v100)
         sin_img, cos_img = first_block.rotary_pe.get_embed(torch.arange(T, device=img_seq.device))
         sin_txt, cos_txt = first_block.rotary_pe.get_embed(
             torch.arange(text_seq.size(1), device=img_seq.device)
