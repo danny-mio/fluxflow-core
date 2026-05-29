@@ -564,6 +564,32 @@ class TestOptimizerStateRoundtrip:
         assert result is not None
         assert result["epoch"] == 2
 
+    def test_full_optimizer_object_roundtrip(self, tmp_path):
+        """Saving a full optimizer object (not just state_dict) must load under safe_globals."""
+        model = nn.Linear(4, 4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+        loss = model(torch.randn(2, 4)).sum()
+        loss.backward()
+        optimizer.step()
+
+        # Save a full optimizer object (not .state_dict()) — mirrors downstream test pattern.
+        save_training_state(
+            output_path=str(tmp_path),
+            epoch=1,
+            batch_idx=5,
+            global_step=5,
+            samples_trained=20,
+            total_samples=100,
+            learning_rates={"optimizer": 1e-3},
+            optimizers={"optimizer": optimizer},
+        )
+
+        state = load_training_state(str(tmp_path))
+        assert state is not None
+        assert state["epoch"] == 1
+        assert "optimizer_states" in state
+
 
 class TestIOIntegration:
     """Integration tests for I/O operations."""

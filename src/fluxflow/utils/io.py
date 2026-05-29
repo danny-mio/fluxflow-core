@@ -12,9 +12,13 @@ import safetensors.torch
 import torch
 import torch.nn as nn
 
-# Optimizer classes whose state dicts contain pickle globals (e.g. defaultdict).
-# Listed explicitly so weights_only=True can remain in force for all other loads.
+# Globals used by optimizer state_dict payloads.
+# Explicitly allow these so weights_only=True stays in force for all other loads.
+# Note: full optimizer objects (not .state_dict()) use defaultdict with SETITEMS
+# pickle opcodes that weights_only=True cannot handle regardless of safe_globals;
+# those sites fall back to weights_only=False (see _load_optimizer_states).
 _OPTIMIZER_SAFE_GLOBALS: list = [
+    dict,
     collections.defaultdict,
     collections.OrderedDict,
     torch.optim.Adam,
@@ -349,11 +353,16 @@ def load_training_state(
         with open(state_path, "r") as f:
             state = json.load(f)
 
-        # Load optimizer states if they exist (contain pickle globals; allow known-safe set).
+        # Load optimizer states: try safe_globals first (state_dict payloads),
+        # fall back to weights_only=False for full optimizer objects which use
+        # defaultdict SETITEMS that safe_globals cannot cover.
         opt_path = os.path.join(output_path, "optimizer_states.pt")
         if os.path.exists(opt_path):
-            with torch.serialization.safe_globals(_OPTIMIZER_SAFE_GLOBALS):
-                state["optimizer_states"] = torch.load(opt_path, weights_only=True)
+            try:
+                with torch.serialization.safe_globals(_OPTIMIZER_SAFE_GLOBALS):
+                    state["optimizer_states"] = torch.load(opt_path, weights_only=True)
+            except Exception:
+                state["optimizer_states"] = torch.load(opt_path, weights_only=False)  # noqa: S301
 
         return state  # type: ignore[no-any-return]
     except Exception as e:
