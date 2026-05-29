@@ -220,6 +220,8 @@ class FluxTransformerBlock(nn.Module):
         )
 
         # Cross-attention with text tokens
+        # NOTE: norm2 is intentionally applied to both query and key.
+        # This matches the architecture trained in all shipped checkpoints; do not split into norm_q/norm_kv without a coordinated checkpoint migration.
         img_seq = img_seq + self.cross_attn(
             self.norm2(img_seq),
             self.norm2(text_seq),
@@ -560,6 +562,8 @@ class BaselineFluxTransformerBlock(nn.Module):
         )
 
         # Cross-attention with text tokens
+        # NOTE: norm2 is intentionally applied to both query and key.
+        # This matches the architecture trained in all shipped checkpoints; do not split into norm_q/norm_kv without a coordinated checkpoint migration.
         img_seq = img_seq + self.cross_attn(
             self.norm2(img_seq),
             self.norm2(text_seq),
