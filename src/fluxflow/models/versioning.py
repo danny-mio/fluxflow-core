@@ -229,7 +229,7 @@ class ModelLoaderV03(ModelVersionLoader):
         if checkpoint_path.suffix == ".safetensors":
             state_dict = safetensors.torch.load_file(str(checkpoint_path))
         else:
-            state_dict = torch.load(checkpoint_path, map_location=device)
+            state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
 
         # Strip 'diffuser.' prefix if present
         diffuser_state = {
@@ -315,7 +315,7 @@ class ModelLoaderV07(ModelVersionLoader):
         if checkpoint_path.suffix == ".safetensors":
             state_dict = safetensors.torch.load_file(str(checkpoint_path))
         else:
-            state_dict = torch.load(checkpoint_path, map_location="cpu")
+            state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
 
         # Strip 'diffuser.' prefix if present
         diffuser_state = {
@@ -390,7 +390,7 @@ class ModelLoaderV07(ModelVersionLoader):
         if checkpoint_path.suffix == ".safetensors":
             state_dict = safetensors.torch.load_file(str(checkpoint_path))
         else:
-            state_dict = torch.load(checkpoint_path, map_location=device)
+            state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
 
         # Strip 'diffuser.' prefix if present
         diffuser_state = {
@@ -469,7 +469,7 @@ class ModelLoaderV08(ModelVersionLoader):
         if checkpoint_path.suffix == ".safetensors":
             state_dict = safetensors.torch.load_file(str(checkpoint_path))
         else:
-            state_dict = torch.load(checkpoint_path, map_location="cpu")
+            state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
 
         diffuser_state = {
             k.replace("diffuser.", ""): v
@@ -597,7 +597,7 @@ class ModelLoaderV010(ModelVersionLoader):
         if checkpoint_path.suffix == ".safetensors":
             state_dict = safetensors.torch.load_file(str(checkpoint_path))
         else:
-            state_dict = torch.load(checkpoint_path, map_location="cpu")
+            state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
 
         diffuser_state = {
             k.replace("diffuser.", ""): v
@@ -704,7 +704,7 @@ class ModelLoaderLegacy(ModelVersionLoader):
         if checkpoint_path.suffix == ".safetensors":
             state_dict = safetensors.torch.load_file(str(checkpoint_path))
         else:
-            state_dict = torch.load(checkpoint_path, map_location=device)
+            state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
 
         config = FluxPipeline._detect_config(state_dict)
 

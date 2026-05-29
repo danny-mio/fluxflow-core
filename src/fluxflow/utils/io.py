@@ -309,7 +309,7 @@ def load_training_state(
 
     if checkpoint_path and os.path.exists(checkpoint_path):
         try:
-            checkpoint = torch.load(checkpoint_path, weights_only=False)
+            checkpoint = torch.load(checkpoint_path, weights_only=True)
 
             # Load model and optimizer states if provided
             if model is not None and "model_state_dict" in checkpoint:
@@ -335,7 +335,7 @@ def load_training_state(
         # Load optimizer states if they exist
         opt_path = os.path.join(output_path, "optimizer_states.pt")
         if os.path.exists(opt_path):
-            state["optimizer_states"] = torch.load(opt_path, weights_only=False)
+            state["optimizer_states"] = torch.load(opt_path, weights_only=True)
 
         return state  # type: ignore[no-any-return]
     except Exception as e:

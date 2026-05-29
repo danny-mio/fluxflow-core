@@ -128,7 +128,7 @@ class FluxPipeline(nn.Module):
         if checkpoint_path.endswith(".safetensors"):
             state_dict = safetensors.torch.load_file(checkpoint_path)
         else:
-            state_dict = torch.load(checkpoint_path, map_location=device)
+            state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
 
         # Validate checkpoint version
         cls._validate_checkpoint_version(state_dict)
