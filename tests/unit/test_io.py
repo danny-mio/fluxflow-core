@@ -477,6 +477,94 @@ class TestSchedulerStateSaving:
         assert abs(new_optimizer.param_groups[0]["lr"] - lr_after_10_steps) < 1e-6
 
 
+class TestOptimizerStateRoundtrip:
+    """Verify real Adam optimizer state survives save/load via load_training_state."""
+
+    def test_adam_state_roundtrip_via_save_load(self, temp_dir):
+        """Real Adam state dict (with pickle globals) must survive safe_globals load."""
+        model = nn.Linear(8, 8)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+        # Trigger one step so exp_avg / exp_avg_sq buffers are populated.
+        loss = model(torch.randn(4, 8)).sum()
+        loss.backward()
+        optimizer.step()
+
+        opt_state = optimizer.state_dict()
+        # State must contain defaultdict-backed 'state' mapping — the exact
+        # object type PyTorch 2.10 blocks without safe_globals.
+        assert isinstance(opt_state["state"], dict)
+        assert len(opt_state["state"]) > 0  # buffers were created
+
+        save_training_state(
+            output_path=str(temp_dir),
+            epoch=1,
+            batch_idx=0,
+            global_step=1,
+            samples_trained=4,
+            total_samples=100,
+            learning_rates={"vae": 1e-3},
+            optimizers={"vae": opt_state},
+        )
+
+        state = load_training_state(str(temp_dir))
+        assert state is not None
+        loaded_opt = state["optimizer_states"]["vae"]
+        assert "state" in loaded_opt
+        assert "param_groups" in loaded_opt
+
+    def test_adamw_state_roundtrip_via_save_load(self, temp_dir):
+        """AdamW optimizer state must also round-trip."""
+        model = nn.Linear(8, 8)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+
+        loss = model(torch.randn(4, 8)).sum()
+        loss.backward()
+        optimizer.step()
+
+        save_training_state(
+            output_path=str(temp_dir),
+            epoch=1,
+            batch_idx=0,
+            global_step=1,
+            samples_trained=4,
+            total_samples=100,
+            learning_rates={"vae": 1e-3},
+            optimizers={"vae": optimizer.state_dict()},
+        )
+
+        state = load_training_state(str(temp_dir))
+        assert state is not None
+        loaded_opt = state["optimizer_states"]["vae"]
+        assert len(loaded_opt["state"]) > 0
+
+    def test_checkpoint_pt_with_optimizer_roundtrip(self, tmp_path):
+        """load_training_state with a checkpoint.pt containing optimizer state."""
+        model = nn.Linear(4, 4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+        loss = model(torch.randn(2, 4)).sum()
+        loss.backward()
+        optimizer.step()
+
+        checkpoint_path = tmp_path / "checkpoint.pt"
+        torch.save(
+            {
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "epoch": 2,
+            },
+            checkpoint_path,
+        )
+
+        new_model = nn.Linear(4, 4)
+        new_optimizer = torch.optim.Adam(new_model.parameters(), lr=1e-3)
+
+        result = load_training_state(str(checkpoint_path), model=new_model, optimizer=new_optimizer)
+        assert result is not None
+        assert result["epoch"] == 2
+
+
 class TestIOIntegration:
     """Integration tests for I/O operations."""
 

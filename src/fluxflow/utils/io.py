@@ -6,9 +6,23 @@ import shutil
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+import collections
+
 import safetensors.torch
 import torch
 import torch.nn as nn
+
+# Optimizer classes whose state dicts contain pickle globals (e.g. defaultdict).
+# Listed explicitly so weights_only=True can remain in force for all other loads.
+_OPTIMIZER_SAFE_GLOBALS: list = [
+    collections.defaultdict,
+    collections.OrderedDict,
+    torch.optim.Adam,
+    torch.optim.AdamW,
+    torch.optim.SGD,
+    torch.optim.RMSprop,
+    torch.optim.Adagrad,
+]
 
 
 def copy_and_replace(source_path: str, destination_path: str) -> None:
@@ -309,7 +323,10 @@ def load_training_state(
 
     if checkpoint_path and os.path.exists(checkpoint_path):
         try:
-            checkpoint = torch.load(checkpoint_path, weights_only=True)
+            # Optimizer state dicts contain pickle globals (defaultdict, Adam, …);
+            # allow only the known-safe set while keeping weights_only=True.
+            with torch.serialization.safe_globals(_OPTIMIZER_SAFE_GLOBALS):
+                checkpoint = torch.load(checkpoint_path, weights_only=True)
 
             # Load model and optimizer states if provided
             if model is not None and "model_state_dict" in checkpoint:
@@ -332,10 +349,11 @@ def load_training_state(
         with open(state_path, "r") as f:
             state = json.load(f)
 
-        # Load optimizer states if they exist
+        # Load optimizer states if they exist (contain pickle globals; allow known-safe set).
         opt_path = os.path.join(output_path, "optimizer_states.pt")
         if os.path.exists(opt_path):
-            state["optimizer_states"] = torch.load(opt_path, weights_only=True)
+            with torch.serialization.safe_globals(_OPTIMIZER_SAFE_GLOBALS):
+                state["optimizer_states"] = torch.load(opt_path, weights_only=True)
 
         return state  # type: ignore[no-any-return]
     except Exception as e:
