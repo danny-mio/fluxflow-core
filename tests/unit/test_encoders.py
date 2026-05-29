@@ -178,6 +178,68 @@ class TestBertTextEncoder:
         assert encoder.ouput_layer.training is True
 
 
+class TestBertTextEncoderOutputLayerAlias:
+    """Tests for output_layer property alias and state-dict remap."""
+
+    def test_output_layer_alias_identity(self):
+        """output_layer property must return the same object as ouput_layer."""
+        encoder = BertTextEncoder(embed_dim=256, pretrain_model=None)
+        assert encoder.output_layer is encoder.ouput_layer
+
+    def test_output_layer_setter_propagates(self):
+        """Setting output_layer must update ouput_layer."""
+        encoder = BertTextEncoder(embed_dim=256, pretrain_model=None)
+        new_module = nn.Identity()
+        encoder.output_layer = new_module
+        assert encoder.ouput_layer is new_module
+
+    def test_load_state_dict_remaps_corrected_key(self):
+        """State dict saved with 'output_layer.' prefix must load into 'ouput_layer.'."""
+        encoder = BertTextEncoder(embed_dim=256, pretrain_model=None)
+
+        # Build a state dict using the corrected (non-typo'd) key prefix.
+        original_state = encoder.state_dict()
+        remapped_state = {
+            k.replace("ouput_layer.", "output_layer.", 1): v for k, v in original_state.items()
+        }
+        # Confirm remapping actually occurred so the test is meaningful.
+        assert any(k.startswith("output_layer.") for k in remapped_state)
+
+        # Must load without error.
+        encoder2 = BertTextEncoder(embed_dim=256, pretrain_model=None)
+        missing, unexpected = encoder2.load_state_dict(remapped_state)
+        assert not missing, f"Missing keys: {missing}"
+        assert not unexpected, f"Unexpected keys: {unexpected}"
+
+    def test_load_state_dict_typo_key_unchanged(self):
+        """State dict already using the typo'd 'ouput_layer.' key must still load."""
+        encoder = BertTextEncoder(embed_dim=256, pretrain_model=None)
+        original_state = encoder.state_dict()
+        # Should contain the typo'd form as-is.
+        assert any(k.startswith("ouput_layer.") for k in original_state)
+
+        encoder2 = BertTextEncoder(embed_dim=256, pretrain_model=None)
+        missing, unexpected = encoder2.load_state_dict(original_state)
+        assert not missing
+        assert not unexpected
+
+    def test_load_state_dict_weights_preserved(self):
+        """Weights loaded via corrected key must match the original tensor values."""
+        torch.manual_seed(0)
+        encoder = BertTextEncoder(embed_dim=256, pretrain_model=None)
+        original_state = encoder.state_dict()
+
+        remapped = {
+            k.replace("ouput_layer.", "output_layer.", 1): v for k, v in original_state.items()
+        }
+
+        encoder2 = BertTextEncoder(embed_dim=256, pretrain_model=None)
+        encoder2.load_state_dict(remapped)
+
+        for key in original_state:
+            assert torch.allclose(original_state[key], encoder2.state_dict()[key])
+
+
 class TestImageEncoder:
     """Tests for ImageEncoder model."""
 

@@ -70,6 +70,44 @@ class BertTextEncoder(nn.Module):
         # Initialize weights using Xavier initialization
         self.apply(xavier_init)
 
+    # ------------------------------------------------------------------
+    # Compatibility shim: the attribute was shipped with a typo.
+    # Checkpoints store weights under "ouput_layer.*"; the corrected name
+    # "output_layer" is exposed as a property so new code can use it.
+    # ------------------------------------------------------------------
+
+    @property
+    def output_layer(self) -> nn.Sequential:
+        """Alias for the typo'd ``ouput_layer``. Prefer this name in new code."""
+        return self.ouput_layer
+
+    def __setattr__(self, name: str, value: nn.Module) -> None:  # type: ignore[override]
+        if name == "output_layer":
+            # Route the corrected name to the canonical (typo'd) attribute so
+            # that ``nn.Module`` registers the submodule under the right key.
+            super().__setattr__("ouput_layer", value)
+        else:
+            super().__setattr__(name, value)
+
+    def load_state_dict(  # type: ignore[override]
+        self, state_dict: dict, strict: bool = True
+    ) -> tuple[list[str], list[str]]:
+        """Remap corrected key prefix to typo'd prefix for forward compatibility.
+
+        Checkpoints saved after a rename (``output_layer.`` → ``ouput_layer.``)
+        still load correctly into models that keep the typo'd attribute name.
+        """
+        remapped = {
+            (
+                k.replace("output_layer.", "ouput_layer.", 1)
+                if k.startswith("output_layer.")
+                else k
+            ): v
+            for k, v in state_dict.items()
+        }
+        result = super().load_state_dict(remapped, strict=strict)
+        return (list(result.missing_keys), list(result.unexpected_keys))
+
     def load_language_model(self, pretrain_model):
         """Load pretrained DistilBERT model and freeze weights."""
         self.language_model = DistilBertModel.from_pretrained(
