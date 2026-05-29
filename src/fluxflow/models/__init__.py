@@ -47,7 +47,6 @@ from .v060.flow import (
 
 # Import from default version (v0.6.0) for backward compatibility
 from .v060.vae import (
-    Clamp,
     FluxCompressor,
     FluxExpander,
     ProgressiveUpscaler,
@@ -85,7 +84,6 @@ __all__ = [
     "FluxExpander",
     "ResidualUpsampleBlock",
     "ProgressiveUpscaler",
-    "Clamp",
     # Flow
     "FluxFlowProcessor",
     "FluxTransformerBlock",
