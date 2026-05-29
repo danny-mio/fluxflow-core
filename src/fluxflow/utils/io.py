@@ -1,12 +1,11 @@
 """Model checkpoint save/load utilities for FluxFlow."""
 
+import collections
 import json
 import os
 import shutil
 from datetime import datetime
 from typing import Any, Dict, Optional
-
-import collections
 
 import safetensors.torch
 import torch
