@@ -575,6 +575,37 @@ class FluxExpander_v100(nn.Module):
             channel_only=True,
         )
 
+        # Seam-smoother: zero-init residual 3x3 conv with reflect padding.
+        # Blends adjacent latent tokens to avoid 16-pixel grid artifacts at token
+        # boundaries. Initialised to zero so the residual starts as a no-op,
+        # preserving exact backward-compatibility with existing checkpoints; the
+        # conv learns only the blending needed to reduce reconstruction/adversarial
+        # loss at token seams.
+        self.seam_smoother = nn.Conv2d(
+            in_channels=d_model,
+            out_channels=d_model,
+            kernel_size=3,
+            padding=1,
+            padding_mode="reflect",
+        )
+        nn.init.zeros_(self.seam_smoother.weight)
+        assert self.seam_smoother.bias is not None  # bias=True by default in nn.Conv2d
+        nn.init.zeros_(self.seam_smoother.bias)
+
+        # Seam-smoother for the context (SPADE conditioning) tokens.
+        # Same zero-init residual design; context tokens have identical spatial
+        # layout and exhibit the same token-boundary seam issue.
+        self.seam_smoother_ctx = nn.Conv2d(
+            in_channels=d_model,
+            out_channels=d_model,
+            kernel_size=3,
+            padding=1,
+            padding_mode="reflect",
+        )
+        nn.init.zeros_(self.seam_smoother_ctx.weight)
+        assert self.seam_smoother_ctx.bias is not None  # bias=True by default in nn.Conv2d
+        nn.init.zeros_(self.seam_smoother_ctx.bias)
+
     def unpack(
         self, packed: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -618,9 +649,13 @@ class FluxExpander_v100(nn.Module):
             assert t_valid <= L, f"Mismatch: tokens {L} < h*w {t_valid}"
 
             feat = rearrange(img_seq[:, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
+            feat = feat + self.seam_smoother(
+                feat
+            )  # zero-init residual; learns to blend token seams
 
             if use_context:
                 ctx = rearrange(context[:, :t_valid], "b (h w) c -> b c h w", h=h, w=w).contiguous()
+                ctx = ctx + self.seam_smoother_ctx(ctx)  # zero-init residual; blends context seams
             else:
                 ctx = None
 
@@ -635,10 +670,16 @@ class FluxExpander_v100(nn.Module):
                 assert t_valid <= L, f"Mismatch: tokens {L} < h*w {t_valid}"
 
                 feat_i = rearrange(img_seq[i : i + 1, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
+                feat_i = feat_i + self.seam_smoother(
+                    feat_i
+                )  # zero-init residual; blends token seams
                 if use_context:
                     ctx_i = rearrange(
                         context[i : i + 1, :t_valid], "b (h w) c -> b c h w", h=h, w=w
                     ).contiguous()
+                    ctx_i = ctx_i + self.seam_smoother_ctx(
+                        ctx_i
+                    )  # zero-init residual; blends context seams  # noqa: E501
                 else:
                     ctx_i = None
 
