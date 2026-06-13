@@ -7,6 +7,7 @@ Key changes vs v0.7.0/v0.8.0:
 - Packed latent shape: [B, T+1, 2*D] (was [B, T+1, D+5]).
 - SPADEWithLearnableScale (beta_scale=0 at init) in the expander.
 - z-path token_attn and context_proj removed; replaced by ctx_token_attn in context branch.
+- v0.10.0-bezier-coupled: WideTrainableBezier logvar, drop tanh on z_tokens, drop pe_content leak.
 
 Full retraining is required; no weight migration from v0.8.0 is supported.
 """
@@ -19,7 +20,7 @@ import torch.nn as nn
 from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
-from ..activations import BezierActivation, TrainableBezier
+from ..activations import BezierActivation, TrainableBezier, WideTrainableBezier
 from .conditioning import SPADEWithLearnableScale
 
 
@@ -315,8 +316,13 @@ class FluxCompressor_v100(nn.Module):
         self.mu_activation = TrainableBezier(
             shape=(d_model,), channel_only=True, p0=-0.5, p1=-0.1, p2=0.1, p3=0.5
         )
-        self.logvar_activation = TrainableBezier(
-            shape=(d_model,), channel_only=True, p0=-1.0, p1=-0.2, p2=0.2, p3=1.0
+        self.logvar_activation = WideTrainableBezier(
+            shape=(d_model,),
+            channel_only=True,
+            p0=-8.0,
+            p1=-2.0,
+            p2=2.0,
+            p3=4.0,
         )
 
         self.final_norm = nn.LayerNorm(d_model)
@@ -465,12 +471,15 @@ class FluxCompressor_v100(nn.Module):
         logvar = self.logvar_activation(self.logvar_proj(latent))
         z = self.reparameterize(mu, logvar)  # [B, D, H_lat, W_lat]
 
+        # ---- z path: clean Gaussian, no tanh, no pe_content leak ----
+        # See docs/plans/2026-06-13-v0.10.0-redesign-design.md §2.1
         B, D, H, W = z.shape
         pe_fixed = self._build_2d_sincos_pe(H, W, D, device=z.device, dtype=z.dtype)
-        pe_content = latent.flatten(2).permute(0, 2, 1)  # [B, T, D]
-        z_raw = z.flatten(2).permute(0, 2, 1) + pe_fixed.unsqueeze(0) + pe_content
+        z_raw = z.flatten(2).permute(0, 2, 1) + pe_fixed.unsqueeze(0)
+        # NB: pe_content REMOVED (was a deterministic skip around the bottleneck).
         z_tokens = self.final_norm(z_raw)
-        z_tokens = torch.tanh(z_tokens)  # [B, T, D]
+        # NB: tanh REMOVED. LayerNorm gives unit variance; squashing the tails
+        # is what limited sharpness in v0.10.0-pre.
 
         # ---- context branch (independent) ----
         def ctx_encode_block(img: torch.Tensor) -> torch.Tensor:
