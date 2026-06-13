@@ -21,7 +21,7 @@ from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
 from ..activations import BezierActivation, TrainableBezier, WideTrainableBezier
-from .conditioning import SPADEWithLearnableScale
+from .conditioning import SPADE_v100b
 
 
 def _should_checkpoint(args: tuple) -> bool:
@@ -56,7 +56,7 @@ class _ResidualUpsampleBlock(nn.Module):
         super().__init__()
         self.use_spade = use_spade
         if self.use_spade:
-            self.spade = SPADEWithLearnableScale(context_size, channels)
+            self.spade = SPADE_v100b(context_size, channels)
 
         self.conv1 = nn.Sequential(
             nn.ConvTranspose2d(channels, channels * 5, kernel_size=16, stride=2, padding=7),
