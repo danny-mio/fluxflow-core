@@ -1,5 +1,7 @@
 """2D axial Rotary Positional Embedding for v0.10.0 flow transformer."""
 
+import math
+
 import torch
 
 
@@ -68,3 +70,30 @@ def build_axial_rope_2d(
     cos_h = cos_h_1d[:, None, :].expand(H, W, half).reshape(H * W, half)
 
     return sin_w, cos_w, sin_h, cos_h
+
+
+def sinusoidal_embedding(t: torch.Tensor, dim: int) -> torch.Tensor:
+    """
+    Continuous sinusoidal time embedding (DDPM-style).
+
+    Replaces the v0.10.0 Embedding(1000) discrete time index with a continuous
+    embedding so the flow can be conditioned on any t in [0, 1] without
+    quantization loss.
+
+    Args:
+        t: Time tensor of shape [B] with values typically in [0, 1].
+        dim: Embedding dimension (must be even).
+
+    Returns:
+        Embedding tensor of shape [B, dim].
+    """
+    assert dim % 2 == 0, f"sinusoidal_embedding dim must be even; got {dim}"
+    half = dim // 2
+    freqs = torch.exp(
+        -math.log(10000.0) * torch.arange(half, device=t.device, dtype=t.dtype) / max(half - 1, 1)
+    )  # [half]
+    # Frequencies already span 4 orders of magnitude (1.0 down to 1e-4), so
+    # t in [0, 1] yields enough phase spread across `half` channels to keep
+    # nearby timesteps distinguishable without an extra scale factor.
+    args = t[:, None] * freqs[None, :]  # [B, half]
+    return torch.cat([torch.sin(args), torch.cos(args)], dim=-1)  # [B, dim]
