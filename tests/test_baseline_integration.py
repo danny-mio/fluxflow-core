@@ -10,6 +10,7 @@ import pytest
 import torch
 
 from fluxflow.models.factory import ModelFactory, create_baseline_models, create_bezier_models
+from fluxflow.models.pipeline import _masked_mean_pool
 
 
 class TestCrossModelAblation:
@@ -103,11 +104,13 @@ class TestCrossModelAblation:
 
         assert bezier_params == baseline_params
 
-    @pytest.mark.skip(
-        reason="pending M3.2 pipeline plumbing: text encoder now returns (text_seq, text_mask); Flow still expects [B, embed_dim]"
-    )
     def test_flow_accepts_packed_input(self, baseline_components):
-        """Test that flow accepts and preserves packed latent format."""
+        """Test that flow accepts and preserves packed latent format.
+
+        Uses the M3.2 _masked_mean_pool compat shim to pool the per-token text
+        encoder output back to [B, E]; M4 will rewrite this test to pass the
+        per-token tuple directly once the flow processor consumes it natively.
+        """
         batch_size = 2
         spatial_tokens = 16
         vae_dim = 128
@@ -120,7 +123,8 @@ class TestCrossModelAblation:
         packed[:, -1, 1] = 4 / 1024  # W
 
         with torch.no_grad():
-            text_emb = baseline_components["text_encoder"](text_tokens)
+            text_seq, text_mask = baseline_components["text_encoder"](text_tokens)
+            text_emb = _masked_mean_pool(text_seq, text_mask)
             flow_out = baseline_components["flow"](packed, text_emb, timesteps)
 
         # Should preserve shape

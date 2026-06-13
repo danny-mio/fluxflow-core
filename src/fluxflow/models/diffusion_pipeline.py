@@ -17,6 +17,7 @@ from diffusers.utils import BaseOutput
 from transformers import AutoTokenizer
 
 from .encoders import BertTextEncoder
+from .pipeline import _masked_mean_pool
 from .v060.flow import FluxFlowProcessor
 from .v060.vae import FluxCompressor, FluxExpander
 
@@ -721,9 +722,9 @@ class FluxFlowPipeline(DiffusionPipeline):
         num_images_per_prompt: int = 1,
         do_classifier_free_guidance: bool = False,
         negative_prompt: Optional[Union[str, List[str]]] = None,
-    ) -> torch.Tensor:
+    ) -> tuple:
         """
-        Encode text prompt into embeddings.
+        Encode text prompt into per-token embeddings.
 
         Args:
             prompt: Text prompt(s) to encode
@@ -733,7 +734,9 @@ class FluxFlowPipeline(DiffusionPipeline):
             negative_prompt: Negative prompt for CFG
 
         Returns:
-            Text embeddings tensor
+            (text_seq, text_mask): Per-token embeddings [B, T_txt, E] and bool
+            mask [B, T_txt]. When CFG is enabled, uncond tensors are concatenated
+            along the batch dim ahead of the conditional tensors.
         """
         device = device or self._execution_device
 
@@ -755,12 +758,13 @@ class FluxFlowPipeline(DiffusionPipeline):
         input_ids = text_inputs.input_ids.to(device)
         attention_mask = (input_ids != self.tokenizer.pad_token_id).long().to(device)
 
-        # Encode
-        text_embeddings = self.text_encoder(input_ids, attention_mask=attention_mask)
+        # Encode (returns per-token text_seq + bool mask)
+        text_seq, text_mask = self.text_encoder(input_ids, attention_mask=attention_mask)
 
         # Duplicate for num_images_per_prompt
         if num_images_per_prompt > 1:
-            text_embeddings = text_embeddings.repeat_interleave(num_images_per_prompt, dim=0)
+            text_seq = text_seq.repeat_interleave(num_images_per_prompt, dim=0)
+            text_mask = text_mask.repeat_interleave(num_images_per_prompt, dim=0)
 
         # Classifier-free guidance
         if do_classifier_free_guidance:
@@ -778,17 +782,17 @@ class FluxFlowPipeline(DiffusionPipeline):
             )
 
             uncond_ids = uncond_inputs.input_ids.to(device)
-            uncond_mask = (uncond_ids != self.tokenizer.pad_token_id).long().to(device)
-            uncond_embeddings = self.text_encoder(uncond_ids, attention_mask=uncond_mask)
+            uncond_mask_long = (uncond_ids != self.tokenizer.pad_token_id).long().to(device)
+            uncond_seq, uncond_mask = self.text_encoder(uncond_ids, attention_mask=uncond_mask_long)
 
             if num_images_per_prompt > 1:
-                uncond_embeddings = uncond_embeddings.repeat_interleave(
-                    num_images_per_prompt, dim=0
-                )
+                uncond_seq = uncond_seq.repeat_interleave(num_images_per_prompt, dim=0)
+                uncond_mask = uncond_mask.repeat_interleave(num_images_per_prompt, dim=0)
 
-            text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
+            text_seq = torch.cat([uncond_seq, text_seq])
+            text_mask = torch.cat([uncond_mask, text_mask])
 
-        return text_embeddings
+        return text_seq, text_mask
 
     @torch.no_grad()
     def __call__(
@@ -858,7 +862,7 @@ class FluxFlowPipeline(DiffusionPipeline):
         do_classifier_free_guidance = guidance_scale > 1.0
 
         # 2. Encode prompt
-        text_embeddings = self.encode_prompt(
+        text_seq, text_mask = self.encode_prompt(
             prompt=prompt,
             device=device,
             num_images_per_prompt=num_images_per_prompt,
@@ -883,12 +887,10 @@ class FluxFlowPipeline(DiffusionPipeline):
                 [total_batch, T, packed_dim],
                 generator=gen,
                 device=device,
-                dtype=text_embeddings.dtype,
+                dtype=text_seq.dtype,
             )
 
-            hw_vec = torch.zeros(
-                [total_batch, 1, packed_dim], device=device, dtype=text_embeddings.dtype
-            )
+            hw_vec = torch.zeros([total_batch, 1, packed_dim], device=device, dtype=text_seq.dtype)
             hw_vec[:, 0, 0] = h_tokens / self.flow_processor.max_hw
             hw_vec[:, 0, 1] = w_tokens / self.flow_processor.max_hw
         else:
@@ -904,6 +906,12 @@ class FluxFlowPipeline(DiffusionPipeline):
 
         # 5. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
+
+        # M4-COMPAT-SHIM: flow processor's external signature still expects pooled
+        # [B, E]. Pool once here since text_seq/text_mask are constant across the
+        # denoising loop. M4 will remove this shim and pass (text_seq, text_mask)
+        # directly into flow_processor.
+        text_embeddings = _masked_mean_pool(text_seq, text_mask)
 
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):

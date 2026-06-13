@@ -70,12 +70,14 @@ class TestFluxPipeline:
     def test_forward_with_flow(self, pipeline):
         """Test forward pass with flow processing."""
         batch_size = 1
+        text_tokens = 4
         img = torch.randn(batch_size, 3, 64, 64)
-        text_embeddings = torch.randn(batch_size, 128)
+        text_seq = torch.randn(batch_size, text_tokens, 128)
+        text_mask = torch.ones(batch_size, text_tokens, dtype=torch.bool)
         timesteps = torch.tensor([0.5])
 
         with torch.no_grad():
-            output = pipeline(img, text_embeddings, timesteps, use_flow=True)
+            output = pipeline(img, text_seq, text_mask, timesteps, use_flow=True)
 
         assert output.shape == (batch_size, 3, 64, 64)
         assert torch.isfinite(output).all()
@@ -84,16 +86,17 @@ class TestFluxPipeline:
         """Test that missing embeddings raises ValueError."""
         img = torch.randn(1, 3, 64, 64)
 
-        with pytest.raises(ValueError, match="Missing text_embeddings"):
+        with pytest.raises(ValueError, match="Missing text_seq"):
             pipeline(img, use_flow=True)
 
     def test_forward_missing_timesteps_raises(self, pipeline):
         """Test that missing timesteps raises ValueError."""
         img = torch.randn(1, 3, 64, 64)
-        text_embeddings = torch.randn(1, 128)
+        text_seq = torch.randn(1, 4, 128)
+        text_mask = torch.ones(1, 4, dtype=torch.bool)
 
-        with pytest.raises(ValueError, match="Missing text_embeddings or timesteps"):
-            pipeline(img, text_embeddings=text_embeddings, use_flow=True)
+        with pytest.raises(ValueError, match="Missing text_seq, text_mask, or timesteps"):
+            pipeline(img, text_seq=text_seq, text_mask=text_mask, use_flow=True)
 
     def test_ctx_tokens_propagation(self, small_compressor, small_flow_processor, small_expander):
         """Test that ctx_tokens is propagated to submodules."""
@@ -337,10 +340,11 @@ class TestFluxPipelineIntegration:
     def test_gradient_flow(self, full_pipeline):
         """Test that gradients flow through pipeline."""
         img = torch.randn(1, 3, 64, 64, requires_grad=True)
-        text_embeddings = torch.randn(1, 128)
+        text_seq = torch.randn(1, 4, 128)
+        text_mask = torch.ones(1, 4, dtype=torch.bool)
         timesteps = torch.tensor([0.5])
 
-        output = full_pipeline(img, text_embeddings, timesteps, use_flow=True)
+        output = full_pipeline(img, text_seq, text_mask, timesteps, use_flow=True)
         loss = output.mean()
         loss.backward()
 

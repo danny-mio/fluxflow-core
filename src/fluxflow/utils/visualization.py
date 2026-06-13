@@ -12,6 +12,8 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.utils import save_image
 
+from fluxflow.models.pipeline import _masked_mean_pool
+
 # Global cache for safe_vae_sample function
 _VAE_SAMPLE_CACHE: Dict[str, Tuple[torch.Tensor, str]] = {}
 
@@ -190,7 +192,8 @@ def safe_vae_sample(
 @torch.no_grad()
 def generate_latent_images(
     batch_z: torch.Tensor,
-    text_embeddings: torch.Tensor,
+    text_seq: torch.Tensor,
+    text_mask: torch.Tensor,
     diffuser: Any,
     scheduler_cls: Any = DPMSolverMultistepScheduler,
     steps: int = 20,
@@ -201,7 +204,8 @@ def generate_latent_images(
 
     Args:
         batch_z: Noised latent packet [B, T+1, D]
-        text_embeddings: Text conditioning [B, D_text]
+        text_seq: Per-token text conditioning [B, T_txt, E]
+        text_mask: Bool mask over text tokens [B, T_txt]
         diffuser: FluxPipeline model
         scheduler_cls: Diffusers scheduler class
         steps: Number of denoising steps
@@ -227,6 +231,11 @@ def generate_latent_images(
     hw_vec = batch_z[:, -1:, :].clone()
     lat = batch_z[:, :-1, :].clone()
 
+    # M4-COMPAT-SHIM: flow processor still expects pooled [B, E] text. Pool
+    # once outside the loop (text inputs are constant). M4 will remove the
+    # shim and pass (text_seq, text_mask) directly into flow_processor.
+    text_embeddings = _masked_mean_pool(text_seq, text_mask)
+
     for t in scheduler.timesteps:
         t_batch = torch.full((lat.size(0),), t.item(), device=device, dtype=torch.float32)
         t_batch = _normalize_model_timesteps(t_batch)
@@ -243,8 +252,10 @@ def generate_latent_images(
 @torch.no_grad()
 def _generate_with_cfg(
     noised_latent: torch.Tensor,
-    text_embeddings: torch.Tensor,
-    null_embeddings: torch.Tensor,
+    text_seq: torch.Tensor,
+    text_mask: torch.Tensor,
+    null_seq: torch.Tensor,
+    null_mask: torch.Tensor,
     diffuser: Any,
     guidance_scale: float,
     device: torch.device,
@@ -255,8 +266,10 @@ def _generate_with_cfg(
 
     Args:
         noised_latent: Initial noised latent [B, T+1, D]
-        text_embeddings: Conditional text embeddings [B, D_text]
-        null_embeddings: Null/unconditional embeddings [B, D_text]
+        text_seq: Conditional per-token text embeddings [B, T_txt, E]
+        text_mask: Conditional bool mask [B, T_txt]
+        null_seq: Null/unconditional per-token text embeddings [B, T_txt, E]
+        null_mask: Null/unconditional bool mask [B, T_txt]
         diffuser: FluxPipeline model
         guidance_scale: CFG strength (typically 5.0)
         device: Device to run on
@@ -280,6 +293,12 @@ def _generate_with_cfg(
 
     hw_vec = noised_latent[:, -1:, :].clone()
     lat = noised_latent[:, :-1, :].clone()
+
+    # M4-COMPAT-SHIM: flow processor still expects pooled [B, E] text. Pool
+    # both conditional and unconditional once (constant across loop). M4 will
+    # remove the shim and pass (text_seq, text_mask) directly.
+    text_embeddings = _masked_mean_pool(text_seq, text_mask)
+    null_embeddings = _masked_mean_pool(null_seq, null_mask)
 
     for t in scheduler.timesteps:  # type: ignore[attr-defined]
         t_batch = torch.full((lat.size(0),), t.item(), device=device, dtype=torch.float32)
@@ -361,7 +380,7 @@ def save_sample_images(
 
     input_ids = encodings["input_ids"].to(device)
     attention_mask = (input_ids != tokenizer.pad_token_id).long().to(device)
-    full_text_embeddings = text_encoder(input_ids, attention_mask=attention_mask)
+    full_text_seq, full_text_mask = text_encoder(input_ids, attention_mask=attention_mask)
 
     for size_spec in sample_sizes:
         # Parse size specification
@@ -373,8 +392,9 @@ def save_sample_images(
             size_str = f"{size_spec:04d}"
 
         for i in range(0, len(sample_texts), batch_size):
-            text_embeddings = full_text_embeddings[i : i + batch_size]
-            B = text_embeddings.size(0)
+            text_seq = full_text_seq[i : i + batch_size]
+            text_mask = full_text_mask[i : i + batch_size]
+            B = text_seq.size(0)
 
             # Start from pure Gaussian noise — matches the training distribution at t=999,
             # where x_t ≈ noise.  Using compressor(random_image) + add_noise at a random t
@@ -387,14 +407,20 @@ def save_sample_images(
                 context_dims=context_dims,
                 downscales=getattr(diffuser.compressor, "downscales", 4),
                 max_hw=getattr(diffuser.compressor, "max_hw", 1024),
-            ).to(dtype=text_embeddings.dtype)
+            ).to(dtype=text_seq.dtype)
 
             if use_cfg:
-                null_embeddings = torch.zeros_like(text_embeddings)
+                # TODO(M3.3): replace zeros null with encoded empty prompt via
+                # build_cfg_null_pair. Current shim mirrors the previous
+                # zeros_like(text_embeddings) behaviour at the per-token level.
+                null_seq = torch.zeros_like(text_seq)
+                null_mask = torch.ones_like(text_mask)
                 denoised_latent = _generate_with_cfg(
                     noised_latent=noised_latent,
-                    text_embeddings=text_embeddings,
-                    null_embeddings=null_embeddings,
+                    text_seq=text_seq,
+                    text_mask=text_mask,
+                    null_seq=null_seq,
+                    null_mask=null_mask,
                     diffuser=diffuser,
                     guidance_scale=guidance_scale,
                     device=device,
@@ -403,7 +429,8 @@ def save_sample_images(
             else:
                 denoised_latent = generate_latent_images(
                     batch_z=noised_latent,
-                    text_embeddings=text_embeddings,
+                    text_seq=text_seq,
+                    text_mask=text_mask,
                     diffuser=diffuser,
                     steps=num_inference_steps,
                     prediction_type="v_prediction",

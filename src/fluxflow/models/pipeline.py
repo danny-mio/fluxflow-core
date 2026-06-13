@@ -20,6 +20,25 @@ CHECKPOINT_VERSION = "1.0"
 SUPPORTED_CHECKPOINT_VERSIONS = ["1.0"]
 
 
+def _masked_mean_pool(text_seq: torch.Tensor, text_mask: torch.Tensor) -> torch.Tensor:
+    """
+    M4-compat shim: pool per-token text into a single vector.
+
+    Mean-pool ``text_seq`` over the sequence dim using ``text_mask`` to weight
+    only valid positions. Returns [B, E]. Removed once M4 updates the flow
+    processor's external signature to consume per-token text directly.
+
+    Args:
+        text_seq: [B, T_txt, E] float
+        text_mask: [B, T_txt] bool
+
+    Returns:
+        [B, E] float
+    """
+    mask_f = text_mask.to(text_seq.dtype).unsqueeze(-1)
+    return (text_seq * mask_f).sum(dim=1) / mask_f.sum(dim=1).clamp_min(1.0)
+
+
 class FluxPipeline(nn.Module):
     """
     Complete FluxFlow pipeline combining compressor, flow processor, and expander.
@@ -50,22 +69,35 @@ class FluxPipeline(nn.Module):
         if hasattr(self.expander, "ctx_tokens"):
             self.expander.ctx_tokens = K
 
-    def forward(self, img, text_embeddings=None, timesteps=None, use_flow=True):
+    def forward(
+        self,
+        img,
+        text_seq=None,
+        text_mask=None,
+        timesteps=None,
+        use_flow=True,
+    ):
         """
         Args:
-            img: Input image [B, C, H, W]
-            text_embeddings: Text conditioning [B, D] (required if use_flow=True)
-            timesteps: Diffusion timesteps [B] (required if use_flow=True)
-            use_flow: Enable flow processing (default: True)
+            img: Input image tensor [B, 3, H, W].
+            text_seq: Per-token text embeddings [B, T_txt, E] (required if use_flow).
+            text_mask: Bool mask [B, T_txt] (required if use_flow).
+            timesteps: Diffusion timesteps [B] (required if use_flow).
+            use_flow: Run flow processor on the packed latent.
 
         Returns:
-            Generated/reconstructed image [B, C, H, W]
+            Reconstructed image tensor [B, 3, H, W].
         """
         packed = self.compressor(img)
 
         if use_flow:
-            if text_embeddings is None or timesteps is None:
-                raise ValueError("Missing text_embeddings or timesteps when use_flow=True")
+            if text_seq is None or text_mask is None or timesteps is None:
+                raise ValueError("Missing text_seq, text_mask, or timesteps when use_flow=True")
+            # M4-COMPAT-SHIM: flow processor's external signature still expects a
+            # pooled [B, E] text embedding. Pool text_seq with text_mask. M4 will
+            # update flow_processor.forward to consume (text_seq, text_mask)
+            # directly and this shim will be removed.
+            text_embeddings = _masked_mean_pool(text_seq, text_mask)
             packed = self.flow_processor(packed, text_embeddings, timesteps)
 
         return self.expander(packed)
