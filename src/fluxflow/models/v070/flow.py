@@ -125,13 +125,15 @@ class ParallelAttention(nn.Module):
         self.out_proj = nn.Linear(d_model, d_model)
         self.apply(xavier_init)
 
-    def forward(self, x_q, x_kv, rotary_q, rotary_k):
+    def forward(self, x_q, x_kv, rotary_q, rotary_k, attn_mask=None):
         """
         Args:
             x_q: Query input [B, S_q, D]
             x_kv: Key/Value input [B, S_kv, D]
             rotary_q: Function to apply rotary encoding to queries
             rotary_k: Function to apply rotary encoding to keys
+            attn_mask: Optional bool tensor [B, S_kv]. True = valid (attended to),
+                       False = masked out. Backward-compatible: ``None`` means no mask.
 
         Returns:
             Attention output [B, S_q, D]
@@ -144,6 +146,9 @@ class ParallelAttention(nn.Module):
         q = rotary_q(q)
         k = rotary_k(k)
         attn = torch.einsum("bhqd,bhkd->bhqk", q, k) * (self.d_head**-0.5)
+        if attn_mask is not None:
+            # attn_mask: [B, S_kv] → broadcast to [B, 1, 1, S_kv]
+            attn = attn.masked_fill(~attn_mask[:, None, None, :], float("-inf"))
         attn = attn.softmax(dim=-1)
         out = torch.einsum("bhqk,bhkd->bhqd", attn, v)
         out = rearrange(out, "b h s d -> b s (h d)")
