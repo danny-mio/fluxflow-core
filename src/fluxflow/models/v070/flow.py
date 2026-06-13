@@ -133,7 +133,11 @@ class ParallelAttention(nn.Module):
             rotary_q: Function to apply rotary encoding to queries
             rotary_k: Function to apply rotary encoding to keys
             attn_mask: Optional bool tensor [B, S_kv]. True = valid (attended to),
-                       False = masked out. Backward-compatible: ``None`` means no mask.
+                       False = masked out. Must be ``dtype=torch.bool`` (call
+                       ``.bool()`` if you have an int mask from a tokenizer).
+                       At least one True per row is required; an all-False row
+                       produces NaN output. Backward-compatible: ``None`` means
+                       no mask.
 
         Returns:
             Attention output [B, S_q, D]
@@ -147,6 +151,12 @@ class ParallelAttention(nn.Module):
         k = rotary_k(k)
         attn = torch.einsum("bhqd,bhkd->bhqk", q, k) * (self.d_head**-0.5)
         if attn_mask is not None:
+            if attn_mask.dtype != torch.bool:
+                raise TypeError(
+                    f"attn_mask must be a bool tensor, got {attn_mask.dtype}. "
+                    "HuggingFace tokenizers return int64 by default — call "
+                    ".bool() before passing."
+                )
             # attn_mask: [B, S_kv] → broadcast to [B, 1, 1, S_kv]
             attn = attn.masked_fill(~attn_mask[:, None, None, :], float("-inf"))
         attn = attn.softmax(dim=-1)

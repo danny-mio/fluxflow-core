@@ -44,3 +44,16 @@ def test_parallel_attention_mask_all_true_equals_no_mask():
     out_masked = attn(q, kv, _id, _id, attn_mask=mask)
     out_unmasked = attn(q, kv, _id, _id, attn_mask=None)
     assert torch.allclose(out_masked, out_unmasked, atol=1e-6)
+
+
+def test_parallel_attention_mask_int_dtype_raises():
+    """Passing an int mask (e.g. from HuggingFace tokenizer) raises TypeError."""
+    import pytest
+
+    torch.manual_seed(3)
+    attn = ParallelAttention(d_model=16, n_head=4)
+    q = torch.randn(2, 5, 16)
+    kv = torch.randn(2, 7, 16)
+    int_mask = torch.ones(2, 7, dtype=torch.int64)
+    with pytest.raises(TypeError, match="bool tensor"):
+        attn(q, kv, _id, _id, attn_mask=int_mask)
