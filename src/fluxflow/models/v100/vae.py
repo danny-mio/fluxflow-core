@@ -653,6 +653,39 @@ class FluxExpander_v100(nn.Module):
         assert self.seam_smoother_ctx.bias is not None  # bias=True by default in nn.Conv2d
         nn.init.zeros_(self.seam_smoother_ctx.bias)
 
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ) -> None:
+        # Detect legacy v0.10.0-pre SPADE keys and raise a clear error pointing
+        # users at the salvage path.
+        legacy_markers = ["spade.mlp_beta.weight", "spade.mlp_beta.bias"]
+        for key in state_dict:
+            if any(marker in key for marker in legacy_markers):
+                from ...exceptions import IncompatibleCheckpointError
+
+                raise IncompatibleCheckpointError(
+                    f"Found legacy SPADE key '{key}' from v0.10.0-bezier-coupled "
+                    "predecessor. The redesigned multi-scale SPADE has different "
+                    "parameters. Run scripts/migrate_v0.10.0_to_redesign.py to "
+                    "produce a warm-start checkpoint."
+                )
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+
     def unpack(
         self, packed: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:

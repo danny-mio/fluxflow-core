@@ -107,6 +107,17 @@ class ModelArchitectureError(ModelError):
     """
 
 
+class IncompatibleCheckpointError(RuntimeError):
+    """
+    Raised when an old-architecture checkpoint is loaded into a new module.
+
+    Carries a guidance string pointing at the salvage script
+    (``scripts/migrate_v0.10.0_to_redesign.py``).
+    """
+
+    pass
+
+
 class ForwardPassError(ModelError):
     """Error during model forward pass.
 
