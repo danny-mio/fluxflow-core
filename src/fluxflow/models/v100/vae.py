@@ -377,9 +377,34 @@ class FluxCompressor_v100(nn.Module):
             ]
         )
 
+        # ---- z → ctx coupling: SPADE-style injector at the bottleneck ----
+        # γ_z = 1 + softplus(...); β_z = Conv1×1. Identity at init via zero-init
+        # γ_inj_scale / β_inj_scale so untrained ctx behaviour matches v0.10.0-pre
+        # for warm-start compatibility (M8 salvage script).
+        self.ctx_zinject_proj = nn.Sequential(
+            nn.Conv2d(d_model, d_model * 5, kernel_size=1),
+            BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
+        )
+        self.ctx_zinject_beta = nn.Conv2d(d_model, d_model, kernel_size=1)
+        self.ctx_zinject_gamma = nn.Conv2d(d_model, d_model, kernel_size=1)
+        self.ctx_zinject_beta_scale = nn.Parameter(torch.zeros(1))
+        self.ctx_zinject_gamma_scale = nn.Parameter(torch.zeros(1))
+        self.ctx_zinject_norm = nn.GroupNorm(
+            num_groups=min(32, d_model),
+            num_channels=d_model,
+            affine=False,
+        )
+
+        # Auto-fallback so head_dim stays ≥ 16 (silent quality killer at D=32).
+        # With ctx_attn_heads=8 and d_model=32, head_dim = 4 — noise-only.
+        # Reduce heads until head_dim ≥ 16 AND d_model is divisible by heads.
+        effective_ctx_heads = max(2, d_model // 16)
+        effective_ctx_heads = min(effective_ctx_heads, ctx_attn_heads)
+        while d_model % effective_ctx_heads != 0 and effective_ctx_heads > 1:
+            effective_ctx_heads -= 1
         self.ctx_token_attn = nn.ModuleList(
             [
-                _AttnBlock(d_model, ctx_attn_heads, attn_dropout, attn_ff_mult)
+                _AttnBlock(d_model, effective_ctx_heads, attn_dropout, attn_ff_mult)
                 for _ in range(ctx_attn_layers)
             ]
         )
@@ -481,7 +506,7 @@ class FluxCompressor_v100(nn.Module):
         # NB: tanh REMOVED. LayerNorm gives unit variance; squashing the tails
         # is what limited sharpness in v0.10.0-pre.
 
-        # ---- context branch (independent) ----
+        # ---- context branch: conditional on z, no tanh ----
         def ctx_encode_block(img: torch.Tensor) -> torch.Tensor:
             cx = self.add_coord_channels(img)
             for i in range(self.downscales):
@@ -495,6 +520,19 @@ class FluxCompressor_v100(nn.Module):
             cx = ctx_encode_block(img)
 
         cx = self.ctx_proj(cx)  # [B, D, H_lat, W_lat]
+
+        # z → ctx coupling: condition ctx on the sampled z.
+        z_proj = self.ctx_zinject_proj(z)  # [B, D, H, W]
+        beta_z = self.ctx_zinject_beta(z_proj) * self.ctx_zinject_beta_scale
+        gamma_z = (
+            1.0
+            + torch.nn.functional.softplus(
+                self.ctx_zinject_gamma_scale * self.ctx_zinject_gamma(z_proj)
+            )
+            - torch.nn.functional.softplus(torch.zeros((), device=z.device, dtype=z.dtype))
+        )
+        cx = gamma_z * self.ctx_zinject_norm(cx) + beta_z
+
         ctx_tokens = cx.flatten(2).permute(0, 2, 1)  # [B, T, D]
 
         def ctx_attn_block(seq: torch.Tensor) -> torch.Tensor:
@@ -507,7 +545,7 @@ class FluxCompressor_v100(nn.Module):
         else:
             attended_ctx = ctx_attn_block(ctx_tokens)
 
-        context_tokens = torch.tanh(self.ctx_final_norm(attended_ctx))  # [B, T, D], in [-1, 1]
+        context_tokens = self.ctx_final_norm(attended_ctx)  # NO tanh
 
         # ---- pack ----
         img_seq_with_context = torch.cat([z_tokens, context_tokens], dim=-1)  # [B, T, 2D]
