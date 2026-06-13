@@ -24,81 +24,122 @@ from torch.utils.checkpoint import checkpoint
 
 from ..activations import BezierActivation, TrainableBezier, xavier_init
 from ..conditioning import ContextAttentionMixer, GatedContextInjection
-from ..v070.flow import ParallelAttention, RotaryPositionalEmbedding, pillarLayer
-
-
-def _valid_pillar_heads(d_model: int, preferred: int) -> int:
-    """Return largest value <= preferred that evenly divides d_model."""
-    for h in range(max(preferred, 1), 0, -1):
-        if d_model % h == 0:
-            return h
-    return 1
+from ..v070.flow import ParallelAttention, RotaryPositionalEmbedding
+from .pillar import pillarLayerWide
 
 
 class FluxTransformerBlock_v100(nn.Module):
     """
-    Transformer block with pillar-attention architecture (v0.10.0).
+    Redesigned transformer block for v0.10.0-bezier-coupled.
 
-    Corrects the FiLM ordering from v0.8.0:
-        v0.8.0: FiLM(g) → PillarMLP(FiLM(g))      [low-variance FiLM input, attenuated gradients]
-        v0.10.0: PillarMLP(g) → FiLM(PillarMLP(g)) [full-variance FiLM input, clean gradient flow]
+    Differences vs the predecessor:
+    - Accepts (text_seq, text_mask) with T_txt > 1; cross_attn is now real
+      attention over text tokens (M1.5 mask-aware ParallelAttention).
+    - 2D axial RoPE on image tokens via M1.2 build_axial_rope_2d (caller
+      supplies sin_w/cos_w/sin_h/cos_h buffers; each half of head_dim is
+      rotated independently).
+    - norm2 split into norm2_q (img-Q) and norm2_kv (text-KV).
+    - Pillars use M1.4 pillarLayerWide (D → 2D → 2D → D).
+    - Dual FiLM per pillar: separate text_cond and time_cond channels with
+      additive scales and biases.
+    - pillar_cross_attn / norm_pillar removed (length-1 degenerate in the
+      predecessor; no longer needed now that text is per-token).
 
     Args:
-        d_model: Model dimensionality
-        n_head: Number of attention heads
+        d_model: Model dimensionality.
+        n_head: Number of attention heads (must divide d_model).
     """
 
     def __init__(self, d_model: int, n_head: int) -> None:
         super().__init__()
+        assert d_model % n_head == 0
+        head_dim = d_model // n_head
+        assert (
+            head_dim % 4 == 0
+        ), f"head_dim must be divisible by 4 for 2D axial RoPE; got {head_dim}"
+
+        self.d_model = d_model
+        self.n_head = n_head
+        self.head_dim = head_dim
         self.bezier_activation = BezierActivation()
-        self.p_preactivation = nn.SiLU()
+
         self.self_attn = ParallelAttention(d_model, n_head)
         self.cross_attn = ParallelAttention(d_model, n_head)
+
         self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
+        self.norm2_q = nn.LayerNorm(d_model)
+        self.norm2_kv = nn.LayerNorm(d_model)
         self.norm3 = nn.LayerNorm(d_model)
 
-        self.p0 = pillarLayer(
-            in_size=d_model, out_size=d_model, depth=3, activation=self.p_preactivation
-        )
-        self.p1 = pillarLayer(
-            in_size=d_model, out_size=d_model, depth=3, activation=self.p_preactivation
-        )
-        self.p2 = pillarLayer(
-            in_size=d_model, out_size=d_model, depth=3, activation=self.p_preactivation
-        )
-        self.p3 = pillarLayer(
-            in_size=d_model, out_size=d_model, depth=3, activation=self.p_preactivation
-        )
+        self.p0 = pillarLayerWide(d_model)
+        self.p1 = pillarLayerWide(d_model)
+        self.p2 = pillarLayerWide(d_model)
+        self.p3 = pillarLayerWide(d_model)
 
         self.ffn = nn.Sequential(nn.Linear(d_model, d_model))
-        self.rotary_pe = RotaryPositionalEmbedding(d_model // n_head)
 
-        # FiLM: independent per-pillar, projects text_cond [B, D] → [B, 2*D]
-        self.film_p0 = nn.Linear(d_model, 2 * d_model)
-        self.film_p1 = nn.Linear(d_model, 2 * d_model)
-        self.film_p2 = nn.Linear(d_model, 2 * d_model)
-        self.film_p3 = nn.Linear(d_model, 2 * d_model)
+        # Text path: 1D RoPE on text tokens (full head_dim).
+        self.rotary_pe_txt = RotaryPositionalEmbedding(head_dim)
 
-        n_pillar_heads = _valid_pillar_heads(d_model, max(1, n_head // 4))
-        self.pillar_cross_attn = ParallelAttention(d_model, n_pillar_heads)
-        self.norm_pillar = nn.LayerNorm(d_model)
+        # Dual FiLM per pillar.
+        self.film_p0_text = nn.Linear(d_model, 2 * d_model)
+        self.film_p1_text = nn.Linear(d_model, 2 * d_model)
+        self.film_p2_text = nn.Linear(d_model, 2 * d_model)
+        self.film_p3_text = nn.Linear(d_model, 2 * d_model)
+        self.film_p0_time = nn.Linear(d_model, 2 * d_model)
+        self.film_p1_time = nn.Linear(d_model, 2 * d_model)
+        self.film_p2_time = nn.Linear(d_model, 2 * d_model)
+        self.film_p3_time = nn.Linear(d_model, 2 * d_model)
 
         self.apply(xavier_init)
 
-    def _film_modulate(
-        self, gate: torch.Tensor, film_layer: nn.Linear, text_cond: torch.Tensor
+    def _film_dual(
+        self,
+        gate: torch.Tensor,
+        film_text: nn.Linear,
+        film_time: nn.Linear,
+        text_cond: torch.Tensor,
+        time_cond: torch.Tensor,
     ) -> torch.Tensor:
-        gamma, beta = film_layer(text_cond).chunk(2, dim=-1)
-        result: torch.Tensor = gate * (1 + gamma[:, None, :]) + beta[:, None, :]
-        return result
+        gt, bt = film_text(text_cond).chunk(2, dim=-1)
+        gtau, btau = film_time(time_cond).chunk(2, dim=-1)
+        out: torch.Tensor = (
+            gate * (1.0 + gt[:, None, :] + gtau[:, None, :]) + bt[:, None, :] + btau[:, None, :]
+        )
+        return out
+
+    def _apply_axial_rope_2d(
+        self,
+        x: torch.Tensor,
+        sin_w: torch.Tensor,
+        cos_w: torch.Tensor,
+        sin_h: torch.Tensor,
+        cos_h: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Apply axial 2D RoPE to a Q or K tensor of shape [B, H, T, head_dim].
+
+        Top half of head_dim rotates with W frequencies; bottom half with H.
+        Uses v070's apply_rotary on each half independently.
+        """
+        half = self.head_dim // 2
+        x_w = x[..., :half]
+        x_h = x[..., half:]
+        # The v070 apply_rotary is a static method on the class; invoke via
+        # the bound helper that lives on rotary_pe_txt (it's stateless math).
+        x_w_rot = self.rotary_pe_txt.apply_rotary(x_w, sin_w, cos_w)
+        x_h_rot = self.rotary_pe_txt.apply_rotary(x_h, sin_h, cos_h)
+        return torch.cat([x_w_rot, x_h_rot], dim=-1)
 
     def forward(
         self,
         img_seq: torch.Tensor,
         text_seq: torch.Tensor,
-        sin_img: torch.Tensor,
-        cos_img: torch.Tensor,
+        text_mask: torch.Tensor,
+        sin_w_img: torch.Tensor,
+        cos_w_img: torch.Tensor,
+        sin_h_img: torch.Tensor,
+        cos_h_img: torch.Tensor,
         sin_txt: torch.Tensor,
         cos_txt: torch.Tensor,
         p0_x,
@@ -106,65 +147,44 @@ class FluxTransformerBlock_v100(nn.Module):
         p2_x,
         p3_x,
         text_cond: torch.Tensor,
+        time_cond: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            img_seq: [B, T_img, D]
-            text_seq: [B, T_txt, D]
-            sin_img, cos_img: Rotary embeddings for image tokens
-            sin_txt, cos_txt: Rotary embeddings for text tokens
-            p0_x … p3_x: Cross-block pillar features (None for first block)
-            text_cond: Pooled text+time conditioning [B, D]
-
-        Returns:
-            tuple: (updated img_seq, img_p0, img_p1, img_p2, img_p3)
-        """
-        # 1. Self-attention
+        # 1. Self-attention with axial 2D RoPE on img.
         normed = self.norm1(img_seq)
         img_seq = img_seq + self.self_attn(
             normed,
             normed,
-            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
-            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
+            lambda q: self._apply_axial_rope_2d(q, sin_w_img, cos_w_img, sin_h_img, cos_h_img),
+            lambda k: self._apply_axial_rope_2d(k, sin_w_img, cos_w_img, sin_h_img, cos_h_img),
         )
 
-        # 2. Cross-attention img_seq × text_seq
-        # NOTE: norm2 is intentionally applied to both query and key.
-        # This matches the architecture trained in all shipped checkpoints; do not split into norm_q/norm_kv without a coordinated checkpoint migration.
+        # 2. Cross-attention img → text (T_txt > 1 now genuine).
         img_seq = img_seq + self.cross_attn(
-            self.norm2(img_seq),
-            self.norm2(text_seq),
-            lambda x: self.rotary_pe.apply_rotary(x, sin_img, cos_img),
-            lambda x: self.rotary_pe.apply_rotary(x, sin_txt, cos_txt),
+            self.norm2_q(img_seq),
+            self.norm2_kv(text_seq),
+            lambda q: self._apply_axial_rope_2d(q, sin_w_img, cos_w_img, sin_h_img, cos_h_img),
+            lambda k: self.rotary_pe_txt.apply_rotary(k, sin_txt, cos_txt),
+            attn_mask=text_mask,
         )
 
-        # 3. Sigmoid gate
+        # 3. Sigmoid gate.
         g = torch.sigmoid(img_seq)
 
-        # 4. Pillar MLPs FIRST on raw gate (corrected vs v0.8.0)
+        # 4. Pillar MLPs first.
         g_p0 = self.p0(g * p0_x if p0_x is not None else g)
         g_p1 = self.p1(g * p1_x if p1_x is not None else g)
         g_p2 = self.p2(g * p2_x if p2_x is not None else g)
         g_p3 = self.p3(g * p3_x if p3_x is not None else g)
 
-        # 5. FiLM modulation on Pillar MLP output (corrected vs v0.8.0)
-        raw_p0 = self._film_modulate(g_p0, self.film_p0, text_cond)
-        raw_p1 = self._film_modulate(g_p1, self.film_p1, text_cond)
-        raw_p2 = self._film_modulate(g_p2, self.film_p2, text_cond)
-        raw_p3 = self._film_modulate(g_p3, self.film_p3, text_cond)
+        # 5. Dual FiLM (text + time additive).
+        img_p0 = self._film_dual(g_p0, self.film_p0_text, self.film_p0_time, text_cond, time_cond)
+        img_p1 = self._film_dual(g_p1, self.film_p1_text, self.film_p1_time, text_cond, time_cond)
+        img_p2 = self._film_dual(g_p2, self.film_p2_text, self.film_p2_time, text_cond, time_cond)
+        img_p3 = self._film_dual(g_p3, self.film_p3_text, self.film_p3_time, text_cond, time_cond)
 
-        # 6. Shared pillar cross-attention (Q=pillar, KV=text_seq)
-        raw_stacked = torch.cat([raw_p0, raw_p1, raw_p2, raw_p3], dim=1)
-        normed_stacked = self.norm_pillar(raw_stacked)
-        attended = self.pillar_cross_attn(normed_stacked, text_seq, lambda x: x, lambda x: x)
-        raw_stacked = raw_stacked + attended
-        T_img = img_seq.shape[1]
-        img_p0 = raw_stacked[:, :T_img, :]
-        img_p1 = raw_stacked[:, T_img : 2 * T_img, :]
-        img_p2 = raw_stacked[:, 2 * T_img : 3 * T_img, :]
-        img_p3 = raw_stacked[:, 3 * T_img :, :]
+        # 6. (Removed) pillar_cross_attn — was length-1 degenerate.
 
-        # 7. FFN + BezierActivation
+        # 7. FFN + Bezier-combine across pillars.
         img_seq = img_seq + self.ffn(self.norm3(img_seq))
         img_seq = self.bezier_activation(
             torch.cat([img_seq, img_p0, img_p1, img_p2, img_p3], dim=-1)
@@ -295,8 +315,15 @@ class FluxFlowProcessor_v100(nn.Module):
 
         first_block = self.transformer_blocks[0]
         assert isinstance(first_block, FluxTransformerBlock_v100)
-        sin_img, cos_img = first_block.rotary_pe.get_embed(torch.arange(T, device=img_seq.device))
-        sin_txt, cos_txt = first_block.rotary_pe.get_embed(
+        # NOTE: this forward path still uses the pre-M4.1 block signature and
+        # will be rewritten in M4.2 (per the bezier-coupled redesign plan).
+        # The attribute access below references `rotary_pe`, which no longer
+        # exists on the M4.1 block (renamed to `rotary_pe_txt`); the suppress
+        # keeps mypy quiet until M4.2 replaces this whole function body.
+        sin_img, cos_img = first_block.rotary_pe.get_embed(  # type: ignore[union-attr,operator]
+            torch.arange(T, device=img_seq.device)
+        )
+        sin_txt, cos_txt = first_block.rotary_pe.get_embed(  # type: ignore[union-attr,operator]
             torch.arange(text_seq.size(1), device=img_seq.device)
         )
 

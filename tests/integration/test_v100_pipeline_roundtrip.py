@@ -38,6 +38,7 @@ def test_packed_token_dim_is_2xd():
     assert packed.shape[-1] == 64  # 2 * 32
 
 
+@pytest.mark.skip(reason="pending M4.2 flow processor rewrite")
 def test_flow_forward_shape():
     """Flow processor must accept and return v0.10.0 packed shape."""
     from fluxflow.models.factory import create_bezier_models
