@@ -9,13 +9,30 @@ def build_axial_rope_2d(
     head_dim: int,
     device: torch.device,
     dtype: torch.dtype,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Build axial 2D RoPE sin/cos buffers for an H x W token grid.
 
-    The top half of ``head_dim`` rotates with W-position frequencies, the
-    bottom half rotates with H-position frequencies. Each half uses standard
-    1D RoPE math (interleaved sin/cos as in the v070
-    ``RotaryPositionalEmbedding``).
+    Returns four buffers — ``sin_w``/``cos_w`` for W-axis rotation and
+    ``sin_h``/``cos_h`` for H-axis rotation. M4 callers slice the ``head_dim``
+    in half and apply each pair independently via ``apply_rotary``::
+
+        half = head_dim // 2
+        q_w = apply_rotary(q[..., :half], sin_w, cos_w)
+        q_h = apply_rotary(q[..., half:], sin_h, cos_h)
+        q_rotated = torch.cat([q_w, q_h], dim=-1)
+
+    This is the standard axial 2D RoPE formulation used in Flux/SD3/Pixtral:
+    the W-axis and H-axis rotations are mathematically independent because
+    each operates on its own ``head_dim // 2`` slice of the head dimension.
+
+    Note:
+        ``head_dim >= 8`` is recommended; with ``head_dim = 4``, each half has
+        only one frequency and the embedding loses spatial discriminability
+        quickly.
+
+        Callers are responsible for caching the returned buffers across
+        forward passes if reuse is desired — this helper allocates fresh
+        tensors on every call.
 
     Args:
         H: Latent height in tokens.
@@ -26,8 +43,8 @@ def build_axial_rope_2d(
         dtype: Target dtype.
 
     Returns:
-        Tuple ``(sin, cos)``, each of shape ``[H*W, head_dim]``, to feed into
-        the existing ``RotaryPositionalEmbedding.apply_rotary`` helper.
+        Tuple ``(sin_w, cos_w, sin_h, cos_h)``, each of shape
+        ``[H*W, head_dim // 2]``.
     """
     assert head_dim % 4 == 0, f"head_dim must be divisible by 4 for axial 2D RoPE; got {head_dim}"
     half = head_dim // 2
@@ -41,16 +58,13 @@ def build_axial_rope_2d(
         cos = sinusoid.cos().repeat_interleave(2, dim=-1)  # [L, C]
         return sin, cos
 
-    sin_w, cos_w = _rope_1d(W, half)  # along columns
-    sin_h, cos_h = _rope_1d(H, half)  # along rows
+    sin_w_1d, cos_w_1d = _rope_1d(W, half)  # [W, half] — varies along columns
+    sin_h_1d, cos_h_1d = _rope_1d(H, half)  # [H, half] — varies along rows
 
-    # Broadcast to H x W grid, then concatenate halves along head_dim.
-    sin_w_full = sin_w[None, :, :].expand(H, W, half)  # [H, W, half]
-    cos_w_full = cos_w[None, :, :].expand(H, W, half)
-    sin_h_full = sin_h[:, None, :].expand(H, W, half)
-    cos_h_full = cos_h[:, None, :].expand(H, W, half)
+    # Broadcast each 1D buffer over the orthogonal axis to form the H x W grid.
+    sin_w = sin_w_1d[None, :, :].expand(H, W, half).reshape(H * W, half)
+    cos_w = cos_w_1d[None, :, :].expand(H, W, half).reshape(H * W, half)
+    sin_h = sin_h_1d[:, None, :].expand(H, W, half).reshape(H * W, half)
+    cos_h = cos_h_1d[:, None, :].expand(H, W, half).reshape(H * W, half)
 
-    sin = torch.cat([sin_w_full, sin_h_full], dim=-1).reshape(H * W, head_dim)
-    cos = torch.cat([cos_w_full, cos_h_full], dim=-1).reshape(H * W, head_dim)
-
-    return sin, cos
+    return sin_w, cos_w, sin_h, cos_h
