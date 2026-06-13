@@ -42,33 +42,38 @@ class TestTextEncoderCompatibility:
             ), f"Parameter {name} should be frozen but requires_grad=True"
 
     def test_encoder_output_shape(self, text_encoder, sample_tokens):
-        """Verify encoder produces expected output shape."""
+        """Verify encoder produces per-token output [B, T, embed_dim] + bool mask [B, T]."""
         batch_size, seq_len = sample_tokens.shape
         embed_dim = 1024  # Configured embed_dim
 
         with torch.no_grad():
-            embeddings = text_encoder(sample_tokens)
+            text_seq, text_mask = text_encoder(sample_tokens)
 
-        # BertTextEncoder pools sequence to [B, embed_dim]
-        assert embeddings.shape == (
+        assert text_seq.shape == (
             batch_size,
+            seq_len,
             embed_dim,
-        ), f"Expected [{batch_size}, {embed_dim}], got {embeddings.shape}"
+        ), f"Expected [{batch_size}, {seq_len}, {embed_dim}], got {text_seq.shape}"
+        assert text_mask.shape == (batch_size, seq_len)
+        assert text_mask.dtype == torch.bool
 
     def test_encoder_deterministic_when_frozen(self, text_encoder, sample_tokens):
         """Verify frozen encoder produces identical outputs across calls."""
         with torch.no_grad():
-            output1 = text_encoder(sample_tokens)
-            output2 = text_encoder(sample_tokens)
+            text_seq1, text_mask1 = text_encoder(sample_tokens)
+            text_seq2, text_mask2 = text_encoder(sample_tokens)
 
-        torch.testing.assert_close(output1, output2, msg="Frozen encoder should be deterministic")
+        torch.testing.assert_close(
+            text_seq1, text_seq2, msg="Frozen encoder text_seq should be deterministic"
+        )
+        assert torch.equal(text_mask1, text_mask2)
 
     def test_encoder_no_gradient_flow(self, text_encoder, sample_tokens):
         """Verify gradients don't flow through frozen encoder."""
         # Frozen encoder output should not require grad
-        embeddings = text_encoder(sample_tokens)
+        text_seq, _ = text_encoder(sample_tokens)
 
-        assert not embeddings.requires_grad, "Frozen encoder output should not require grad"
+        assert not text_seq.requires_grad, "Frozen encoder output should not require grad"
 
         # Verify no parameters require grad
         for name, param in text_encoder.named_parameters():
@@ -95,21 +100,17 @@ class TestTextEncoderCompatibility:
         """
         Test that text encoder output is compatible with FluxFlowProcessor.
 
-        Note: BertTextEncoder outputs [B, embed_dim] (pooled), not [B, seq, dim].
-        FluxFlowProcessor internally projects this to sequence format.
+        BertTextEncoder now outputs per-token (text_seq [B, T, embed_dim],
+        text_mask [B, T] bool). The Flow consumes the sequence directly.
         """
-        batch_size = 2
+        batch_size, seq_len = sample_tokens.shape
         embed_dim = 1024  # From text encoder
-        # d_model = 512  # Flow internal dimension (can differ)
 
-        # Get text embeddings [B, embed_dim]
         with torch.no_grad():
-            text_embeddings = text_encoder(sample_tokens)
+            text_seq, text_mask = text_encoder(sample_tokens)
 
-        assert text_embeddings.shape == (batch_size, embed_dim)
-
-        # Test passes if encoder produces expected shape
-        # Actual Flow integration would happen in full model forward pass
+        assert text_seq.shape == (batch_size, seq_len, embed_dim)
+        assert text_mask.shape == (batch_size, seq_len)
 
     def test_embedding_dim_matches_config(self, text_encoder):
         """
@@ -119,12 +120,12 @@ class TestTextEncoderCompatibility:
         """
         expected_embed_dim = 1024
 
-        # Get actual output size
+        # Get actual output size from per-token sequence
         sample_input = torch.randint(0, 30522, (1, 10))
         with torch.no_grad():
-            output = text_encoder(sample_input)
+            text_seq, _ = text_encoder(sample_input)
 
-        actual_embed_dim = output.shape[-1]
+        actual_embed_dim = text_seq.shape[-1]
         assert (
             actual_embed_dim == expected_embed_dim
         ), f"Embedding dim {actual_embed_dim} != expected {expected_embed_dim}"
@@ -192,26 +193,23 @@ class TestCrossModelCompatibility:
         """Test text encoder → Bezier Flow pipeline."""
         tokens = torch.randint(0, 30522, (2, 15))
 
-        # Get text embeddings [B, embed_dim]
+        # Get per-token text embeddings [B, T, embed_dim] + mask [B, T]
         with torch.no_grad():
-            text_emb = shared_text_encoder(tokens)
+            text_seq, text_mask = shared_text_encoder(tokens)
 
-        assert text_emb.shape == (2, 1024), "Text encoder should output [B, embed_dim]"
-
-        # Test passes - validates text encoder produces expected output
-        # Actual flow integration tested in full model
+        assert text_seq.shape == (2, 15, 1024), "Text encoder should output [B, T, embed_dim]"
+        assert text_mask.shape == (2, 15)
 
     def test_text_encoder_with_baseline_flow(self, shared_text_encoder):
         """Test text encoder → Baseline Flow pipeline."""
         tokens = torch.randint(0, 30522, (2, 15))
 
-        # Get text embeddings (same encoder as Bezier test) [B, embed_dim]
+        # Get per-token text embeddings (same encoder as Bezier test).
         with torch.no_grad():
-            text_emb = shared_text_encoder(tokens)
+            text_seq, text_mask = shared_text_encoder(tokens)
 
-        assert text_emb.shape == (2, 1024), "Same encoder output for baseline"
-
-        # Test passes - same frozen encoder works for both model types
+        assert text_seq.shape == (2, 15, 1024), "Same encoder output for baseline"
+        assert text_mask.shape == (2, 15)
 
     def test_identical_embeddings_both_models(self, shared_text_encoder):
         """
@@ -223,11 +221,12 @@ class TestCrossModelCompatibility:
         tokens = torch.randint(0, 30522, (2, 15))
 
         with torch.no_grad():
-            emb1 = shared_text_encoder(tokens)
-            emb2 = shared_text_encoder(tokens)
+            text_seq1, text_mask1 = shared_text_encoder(tokens)
+            text_seq2, text_mask2 = shared_text_encoder(tokens)
 
         # Should be identical (deterministic frozen encoder)
-        torch.testing.assert_close(emb1, emb2)
+        torch.testing.assert_close(text_seq1, text_seq2)
+        assert torch.equal(text_mask1, text_mask2)
 
         # Both Bezier and Baseline flows get SAME embeddings
         # Any quality difference is due to VAE/Flow architecture, not text encoding

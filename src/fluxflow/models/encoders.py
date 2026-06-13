@@ -143,21 +143,23 @@ class BertTextEncoder(nn.Module):
             attention_mask: Attention mask [B, seq_len]
 
         Returns:
-            Text embeddings [B, embed_dim]
+            text_seq: Per-token embeddings [B, seq_len, embed_dim]
+            text_mask: Bool mask [B, seq_len], True for valid tokens.
         """
-        # Extract language model outputs
         outputs = self.language_model(input_ids=input_ids, attention_mask=attention_mask)
-
-        # Use the last hidden state
-        last_hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_size]
-
-        # Aggregate embeddings by taking mean across sequence
-        sentence_embedding = last_hidden_state.mean(dim=1)  # [B, hidden_size]
-
-        # Apply output layer with Bezier activation
-        out = self.ouput_layer(sentence_embedding)  # [B, embed_dim]
-
-        return out
+        last_hidden_state = outputs.last_hidden_state  # [B, T_txt, 768]
+        # Per-token projection: nn.Linear and BezierActivation both broadcast
+        # cleanly over the leading sequence dim.
+        text_seq = self.ouput_layer(last_hidden_state)  # [B, T_txt, embed_dim]
+        if attention_mask is not None:
+            text_mask = attention_mask.bool()
+        else:
+            text_mask = torch.ones(
+                text_seq.shape[:2],
+                dtype=torch.bool,
+                device=text_seq.device,
+            )
+        return text_seq, text_mask
 
     def save_checkpoint(self, path, save_language_model=False):
         """

@@ -159,16 +159,18 @@ class TestTextEncoderCreation:
         assert bezier_params == baseline_params
 
     def test_text_encoder_output_shape(self):
-        """Test text encoder output shape."""
+        """Text encoder now outputs per-token (text_seq [B, T, E], text_mask [B, T])."""
         factory = ModelFactory()
         encoder = factory.create_text_encoder(embed_dim=1024, frozen=True)
 
         tokens = torch.randint(0, 30522, (2, 15))
 
         with torch.no_grad():
-            output = encoder(tokens)
+            text_seq, text_mask = encoder(tokens)
 
-        assert output.shape == (2, 1024)  # [B, embed_dim]
+        assert text_seq.shape == (2, 15, 1024)  # [B, T, embed_dim]
+        assert text_mask.shape == (2, 15)
+        assert text_mask.dtype == torch.bool
 
 
 class TestVAEDecoderCreation:

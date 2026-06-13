@@ -26,7 +26,7 @@ class TestBertTextEncoder:
         assert encoder.ouput_layer is not None
 
     def test_forward_output_shape(self):
-        """Forward pass should output [B, embed_dim]."""
+        """Forward pass should output per-token (text_seq [B, T, E], text_mask [B, T])."""
         encoder = BertTextEncoder(embed_dim=1024, pretrain_model=None)
         batch_size = 2
         seq_len = 16
@@ -34,22 +34,26 @@ class TestBertTextEncoder:
         input_ids = torch.randint(0, 30522, (batch_size, seq_len))
         attention_mask = torch.ones(batch_size, seq_len)
 
-        output = encoder(input_ids, attention_mask)
+        text_seq, text_mask = encoder(input_ids, attention_mask)
 
-        # Output should be [B, embed_dim]
-        assert output.shape == (batch_size, 1024)
+        # Output should be [B, T, embed_dim] + [B, T] bool mask
+        assert text_seq.shape == (batch_size, seq_len, 1024)
+        assert text_mask.shape == (batch_size, seq_len)
+        assert text_mask.dtype == torch.bool
 
     def test_forward_without_attention_mask(self):
-        """Should work without explicit attention mask."""
+        """Should work without explicit attention mask; mask defaults to all-True."""
         encoder = BertTextEncoder(embed_dim=512, pretrain_model=None)
         batch_size = 2
         seq_len = 20
 
         input_ids = torch.randint(0, 30522, (batch_size, seq_len))
 
-        output = encoder(input_ids)
+        text_seq, text_mask = encoder(input_ids)
 
-        assert output.shape == (batch_size, 512)
+        assert text_seq.shape == (batch_size, seq_len, 512)
+        assert text_mask.shape == (batch_size, seq_len)
+        assert text_mask.all()
 
     def test_batch_size_independence(self):
         """Should work with different batch sizes."""
@@ -58,8 +62,9 @@ class TestBertTextEncoder:
 
         for batch_size in [1, 2, 4, 8]:
             input_ids = torch.randint(0, 30522, (batch_size, seq_len))
-            output = encoder(input_ids)
-            assert output.shape[0] == batch_size
+            text_seq, text_mask = encoder(input_ids)
+            assert text_seq.shape[0] == batch_size
+            assert text_mask.shape[0] == batch_size
 
     def test_different_sequence_lengths(self):
         """Should handle different sequence lengths."""
@@ -68,8 +73,9 @@ class TestBertTextEncoder:
 
         for seq_len in [8, 16, 32, 64]:
             input_ids = torch.randint(0, 30522, (batch_size, seq_len))
-            output = encoder(input_ids)
-            assert output.shape == (batch_size, 512)
+            text_seq, text_mask = encoder(input_ids)
+            assert text_seq.shape == (batch_size, seq_len, 512)
+            assert text_mask.shape == (batch_size, seq_len)
 
     def test_gradient_flow(self):
         """Gradients should flow through encoder."""
@@ -83,16 +89,16 @@ class TestBertTextEncoder:
             if param.requires_grad:
                 break
 
-        output = encoder(input_ids, attention_mask)
-        loss = output.sum()
+        text_seq, _ = encoder(input_ids, attention_mask)
+        loss = text_seq.sum()
         loss.backward()
 
         # Check that at least some parameters have gradients
         has_grad = any(p.grad is not None for p in encoder.parameters() if p.requires_grad)
         assert has_grad
 
-    def test_mean_pooling_aggregation(self):
-        """Encoder should use mean pooling over sequence."""
+    def test_pertoken_output_is_deterministic(self):
+        """Encoder in eval mode produces identical per-token outputs for the same input."""
         encoder = BertTextEncoder(embed_dim=512, pretrain_model=None)
         encoder.eval()  # Disable dropout for deterministic behavior
 
@@ -100,12 +106,12 @@ class TestBertTextEncoder:
         input_ids = torch.randint(0, 30522, (1, 20))
         input_ids_doubled = input_ids.repeat(2, 1)
 
-        output1 = encoder(input_ids)
-        output2 = encoder(input_ids_doubled)
+        text_seq1, _ = encoder(input_ids)
+        text_seq2, _ = encoder(input_ids_doubled)
 
-        # Outputs should be identical for same input
-        assert torch.allclose(output1[0], output2[0], atol=1e-5)
-        assert torch.allclose(output1[0], output2[1], atol=1e-5)
+        # Per-token outputs should be identical for same input across the batch dim
+        assert torch.allclose(text_seq1[0], text_seq2[0], atol=1e-5)
+        assert torch.allclose(text_seq1[0], text_seq2[1], atol=1e-5)
 
     def test_bezier_activation_applied(self):
         """Should use Bezier activation in output layer."""
@@ -127,12 +133,14 @@ class TestBertTextEncoder:
         encoder = BertTextEncoder(embed_dim=512, pretrain_model=None)
         encoder.eval()
 
-        input_ids = torch.randint(0, 30522, (2, 16))
+        seq_len = 16
+        input_ids = torch.randint(0, 30522, (2, seq_len))
 
         with torch.no_grad():
-            output = encoder(input_ids)
+            text_seq, text_mask = encoder(input_ids)
 
-        assert output.shape == (2, 512)
+        assert text_seq.shape == (2, seq_len, 512)
+        assert text_mask.shape == (2, seq_len)
 
     def test_parameter_groups_keys(self):
         """parameter_groups() returns dict with exactly two named groups."""
@@ -422,20 +430,20 @@ class TestEncoderIntegration:
         text_encoder = BertTextEncoder(embed_dim=embed_dim, pretrain_model=None)
         image_encoder = ImageEncoder(img_channels=3, text_embedding_dim=embed_dim)
 
-        # Text input
+        # Text input — per-token output [B, T, E]
         input_ids = torch.randint(0, 30522, (2, 32))
-        text_embeds = text_encoder(input_ids)
+        text_seq, _ = text_encoder(input_ids)
 
         # Image input
         images = torch.randn(2, 3, 512, 512)
         image_embeds = image_encoder(images)
 
-        # Should have same embedding dimension
-        assert text_embeds.shape[1] == image_embeds.shape[1]
-        assert text_embeds.shape[1] == embed_dim
+        # Should have same embedding dimension on last axis
+        assert text_seq.shape[-1] == image_embeds.shape[1]
+        assert text_seq.shape[-1] == embed_dim
 
     def test_contrastive_learning_setup(self):
-        """Encoders should be suitable for contrastive learning."""
+        """Encoders should be suitable for contrastive learning (with explicit pooling)."""
         embed_dim = 512
 
         text_encoder = BertTextEncoder(embed_dim=embed_dim, pretrain_model=None)
@@ -445,7 +453,10 @@ class TestEncoderIntegration:
         input_ids = torch.randint(0, 30522, (batch_size, 20))
         images = torch.randn(batch_size, 3, 512, 512)
 
-        text_embeds = text_encoder(input_ids)
+        # Encoder now returns per-token; pool here for contrastive use.
+        text_seq, text_mask = text_encoder(input_ids)
+        mask_f = text_mask.float().unsqueeze(-1)
+        text_embeds = (text_seq * mask_f).sum(dim=1) / mask_f.sum(dim=1).clamp_min(1.0)
         image_embeds = image_encoder(images)
 
         # Compute similarity matrix (simplified contrastive loss)
@@ -472,12 +483,13 @@ class TestEncoderIntegration:
         images = torch.randn(2, 3, 512, 512)
 
         with torch.no_grad():
-            text_out1 = text_encoder(input_ids)
-            text_out2 = text_encoder(input_ids)
+            text_seq1, text_mask1 = text_encoder(input_ids)
+            text_seq2, text_mask2 = text_encoder(input_ids)
             image_out1 = image_encoder(images)
             image_out2 = image_encoder(images)
 
-        assert torch.allclose(text_out1, text_out2, atol=1e-5)
+        assert torch.allclose(text_seq1, text_seq2, atol=1e-5)
+        assert torch.equal(text_mask1, text_mask2)
         assert torch.allclose(image_out1, image_out2, atol=1e-5)
 
     def test_gradient_flow_through_both_encoders(self):
@@ -490,7 +502,10 @@ class TestEncoderIntegration:
         input_ids = torch.randint(0, 30522, (2, 16))
         images = torch.randn(2, 3, 256, 256, requires_grad=True)
 
-        text_embeds = text_encoder(input_ids)
+        text_seq, text_mask = text_encoder(input_ids)
+        # Mean-pool per-token embeddings to match image-embed shape [B, E].
+        mask_f = text_mask.float().unsqueeze(-1)
+        text_embeds = (text_seq * mask_f).sum(dim=1) / mask_f.sum(dim=1).clamp_min(1.0)
         image_embeds = image_encoder(images)
 
         # Compute simple loss (dot product)
@@ -515,10 +530,11 @@ class TestEncoderIntegration:
         input_ids = torch.randint(0, 30522, (2, 16), device="cpu")
         images = torch.randn(2, 3, 256, 256, device="cpu")
 
-        text_out = text_encoder(input_ids)
+        text_seq, text_mask = text_encoder(input_ids)
         image_out = image_encoder(images)
 
-        assert text_out.device.type == "cpu"
+        assert text_seq.device.type == "cpu"
+        assert text_mask.device.type == "cpu"
         assert image_out.device.type == "cpu"
 
     def test_different_batch_sizes_both_encoders(self):
@@ -527,13 +543,15 @@ class TestEncoderIntegration:
         image_encoder = ImageEncoder(img_channels=3, text_embedding_dim=512)
 
         for batch_size in [1, 2, 4]:
-            input_ids = torch.randint(0, 30522, (batch_size, 20))
+            seq_len = 20
+            input_ids = torch.randint(0, 30522, (batch_size, seq_len))
             images = torch.randn(batch_size, 3, 256, 256)
 
-            text_out = text_encoder(input_ids)
+            text_seq, text_mask = text_encoder(input_ids)
             image_out = image_encoder(images)
 
-            assert text_out.shape == (batch_size, 512)
+            assert text_seq.shape == (batch_size, seq_len, 512)
+            assert text_mask.shape == (batch_size, seq_len)
             assert image_out.shape == (batch_size, 512)
 
     def test_embedding_statistics(self):
@@ -552,15 +570,15 @@ class TestEncoderIntegration:
         images = torch.randn(8, 3, 256, 256)
 
         with torch.no_grad():
-            text_embeds = text_encoder(input_ids)
+            text_seq, _ = text_encoder(input_ids)
             image_embeds = image_encoder(images)
 
         # Check for NaN/Inf (critical checks)
-        assert not torch.isnan(text_embeds).any()
-        assert not torch.isinf(text_embeds).any()
+        assert not torch.isnan(text_seq).any()
+        assert not torch.isinf(text_seq).any()
         assert not torch.isnan(image_embeds).any()
         assert not torch.isinf(image_embeds).any()
 
         # Check embeddings are not completely zero
-        assert text_embeds.abs().max() > 0
+        assert text_seq.abs().max() > 0
         assert image_embeds.abs().max() > 0
