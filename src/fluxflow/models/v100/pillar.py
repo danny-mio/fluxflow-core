@@ -21,7 +21,8 @@ def pillarLayerWide(in_size: int, hidden: int | None = None, depth: int = 3) -> 
     """
     if hidden is None:
         hidden = 2 * in_size
-    assert depth >= 2, "pillarLayerWide depth must be >= 2"
+    if depth < 2:
+        raise ValueError(f"pillarLayerWide depth must be >= 2, got {depth}")
 
     layers: list[nn.Module] = [nn.Sequential(nn.Linear(in_size, hidden), nn.SiLU())]
     for _ in range(depth - 2):
