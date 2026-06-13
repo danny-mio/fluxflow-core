@@ -4,6 +4,7 @@ Activation functions and initialization utilities for FluxFlow models.
 Contains:
 - BezierActivation: Custom Bezier curve-based activation (reduces dim by 5x)
 - TrainableBezier: Learnable Bezier activation with parameters
+- WideTrainableBezier: TrainableBezier with wide default range (for logvar use)
 - Flip, Rot90: Spatial transformation layers
 - xavier_init: Weight initialization function
 """
@@ -249,7 +250,7 @@ class WideTrainableBezier(TrainableBezier):
     TrainableBezier with wide default range for unbounded logvar use.
 
     Default control points [-8, -2, 2, 4] let logvar effectively shut off
-    noise on specific channels (logvar << 0 -> std ~= 0), critical for D=32
+    noise on specific channels (logvar ≪ 0 → std ≈ 0), critical for D=32
     where today's [-1, 1] range forces ~O(1) noise per channel.
 
     Args:

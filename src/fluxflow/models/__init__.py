@@ -10,6 +10,7 @@ from .activations import (
     Flip,
     Rot90,
     TrainableBezier,
+    WideTrainableBezier,
     xavier_init,
 )
 from .bezier_jit import get_jit_bezier_function
@@ -61,6 +62,7 @@ __all__ = [
     "BezierActivation",
     "BezierActivationModule",
     "TrainableBezier",
+    "WideTrainableBezier",
     "Flip",
     "Rot90",
     "xavier_init",

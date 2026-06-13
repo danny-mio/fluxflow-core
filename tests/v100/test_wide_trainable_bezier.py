@@ -12,8 +12,8 @@ def test_wide_trainable_bezier_default_range_init():
     out = layer(x)
     # Default p0=-8, p1=-2, p2=2, p3=4 → cubic Bezier on sigmoid(x) ∈ (0,1)
     # Output bounded by min/max of control points
-    assert out.min() >= -8.5
-    assert out.max() <= 4.5
+    assert out.min() >= -8.0
+    assert out.max() <= 4.0
 
 
 def test_wide_trainable_bezier_shape_preserved():
@@ -39,4 +39,6 @@ def test_wide_trainable_bezier_custom_init():
     """Custom p0..p3 override defaults."""
     layer = WideTrainableBezier(shape=(4,), channel_only=True, p0=-10.0, p1=-5.0, p2=5.0, p3=10.0)
     assert torch.allclose(layer.p0, torch.full((4,), -10.0))
+    assert torch.allclose(layer.p1, torch.full((4,), -5.0))
+    assert torch.allclose(layer.p2, torch.full((4,), 5.0))
     assert torch.allclose(layer.p3, torch.full((4,), 10.0))
