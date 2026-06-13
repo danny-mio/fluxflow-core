@@ -244,6 +244,24 @@ class TrainableBezier(nn.Module):
         return output
 
 
+class WideTrainableBezier(TrainableBezier):
+    """
+    TrainableBezier with wide default range for unbounded logvar use.
+
+    Default control points [-8, -2, 2, 4] let logvar effectively shut off
+    noise on specific channels (logvar << 0 -> std ~= 0), critical for D=32
+    where today's [-1, 1] range forces ~O(1) noise per channel.
+
+    Args:
+        shape: Tensor shape (matches TrainableBezier semantics).
+        p0, p1, p2, p3: Initial control points (defaults [-8, -2, 2, 4]).
+        channel_only: Per-channel mode (broadcasts spatially).
+    """
+
+    def __init__(self, shape, p0=-8.0, p1=-2.0, p2=2.0, p3=4.0, channel_only=False):
+        super().__init__(shape, p0=p0, p1=p1, p2=p2, p3=p3, channel_only=channel_only)
+
+
 class Flip(nn.Module):
     """Flip tensor along specified dimensions."""
 
