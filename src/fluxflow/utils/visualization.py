@@ -18,6 +18,47 @@ from fluxflow.models.pipeline import _masked_mean_pool
 _VAE_SAMPLE_CACHE: Dict[str, Tuple[torch.Tensor, str]] = {}
 
 
+def build_cfg_null_pair(
+    encoder,
+    max_length: int = 32,
+    tokenizer_name: str = "distilbert-base-uncased",
+):
+    """
+    Compute the (text_seq, text_mask) for the empty prompt used as the CFG null.
+
+    Replaces the historical ``torch.zeros_like(text_embeddings)`` null. With
+    per-token text the all-False mask would NaN-out the softmax in the flow's
+    cross-attention; an encoded empty prompt is a real, finite null context
+    that's identical at train (via cfg_dropout substitution) and inference time.
+
+    Args:
+        encoder: A ``BertTextEncoder`` instance (or duck-typed equivalent that
+            accepts (input_ids, attention_mask) and returns (seq, mask)).
+        max_length: Pad/truncate the empty prompt to this length. Must match
+            the model's expected T_txt at sampling time.
+        tokenizer_name: HuggingFace tokenizer identifier.
+
+    Returns:
+        (null_text_seq, null_text_mask): both with batch dim 1.
+    """
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(tokenizer_name)
+    enc_in = tok(
+        "",
+        return_tensors="pt",
+        padding="max_length",
+        truncation=True,
+        max_length=max_length,
+    )
+    with torch.no_grad():
+        null_seq, null_mask = encoder(
+            enc_in["input_ids"],
+            attention_mask=enc_in["attention_mask"],
+        )
+    return null_seq, null_mask
+
+
 def _normalize_model_timesteps(timesteps: torch.Tensor) -> torch.Tensor:
     """Normalize timestep inputs to the [0, 1] range expected by flow processors."""
     if timesteps.dtype.is_floating_point:
@@ -382,6 +423,16 @@ def save_sample_images(
     attention_mask = (input_ids != tokenizer.pad_token_id).long().to(device)
     full_text_seq, full_text_mask = text_encoder(input_ids, attention_mask=attention_mask)
 
+    # CFG null context: encoded empty prompt, computed once per invocation.
+    # Must match T_txt of conditional embeddings so the flow processor sees
+    # consistent shapes across the cond/uncond branches.
+    if use_cfg:
+        full_null_seq, full_null_mask = build_cfg_null_pair(
+            text_encoder, max_length=full_text_seq.size(1)
+        )
+        full_null_seq = full_null_seq.to(device=device, dtype=full_text_seq.dtype)
+        full_null_mask = full_null_mask.to(device=device)
+
     for size_spec in sample_sizes:
         # Parse size specification
         if isinstance(size_spec, (list, tuple)):
@@ -410,11 +461,10 @@ def save_sample_images(
             ).to(dtype=text_seq.dtype)
 
             if use_cfg:
-                # TODO(M3.3): replace zeros null with encoded empty prompt via
-                # build_cfg_null_pair. Current shim mirrors the previous
-                # zeros_like(text_embeddings) behaviour at the per-token level.
-                null_seq = torch.zeros_like(text_seq)
-                null_mask = torch.ones_like(text_mask)
+                # Encoded empty prompt as CFG null (see build_cfg_null_pair).
+                # Broadcast the single null row to the current batch size.
+                null_seq = full_null_seq.expand(B, -1, -1).contiguous()
+                null_mask = full_null_mask.expand(B, -1).contiguous()
                 denoised_latent = _generate_with_cfg(
                     noised_latent=noised_latent,
                     text_seq=text_seq,

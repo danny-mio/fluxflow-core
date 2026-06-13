@@ -11,6 +11,7 @@ from .io import (
 )
 from .logger import get_default_logger, get_logger, setup_logger
 from .visualization import (
+    build_cfg_null_pair,
     generate_latent_images,
     img_to_random_packet,
     safe_vae_sample,
@@ -31,6 +32,7 @@ __all__ = [
     "safe_vae_sample",
     "generate_latent_images",
     "save_sample_images",
+    "build_cfg_null_pair",
     # Logging
     "setup_logger",
     "get_logger",
