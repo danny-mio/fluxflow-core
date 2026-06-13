@@ -10,17 +10,21 @@ import torch
 class TestFluxFlowProcessorV100:
     """Tests for FluxFlowProcessor_v100."""
 
-    @pytest.mark.skip(reason="pending M4.2 flow processor rewrite")
     def test_forward_preserves_packed_shape(self):
         """Forward pass must return same shape as input packed tensor."""
         from fluxflow.models.v100.flow import FluxFlowProcessor_v100
 
         proc = FluxFlowProcessor_v100(d_model=128, vae_dim=32, embedding_size=64, n_layers=2)
-        packed = torch.randn(1, 17, 64)  # T=16, +1 HW, 2*32=64 dims
-        text = torch.randn(1, 64)
+        packed = torch.zeros(1, 17, 64)  # T=16, +1 HW, 2*32=64 dims
+        packed[:, :-1, :] = torch.randn(1, 16, 64)
+        # Set valid HW token so 4x4 == T=16 image grid.
+        packed[0, -1, 0] = 4 / 1024.0
+        packed[0, -1, 1] = 4 / 1024.0
+        text_seq = torch.randn(1, 5, 64)
+        text_mask = torch.ones(1, 5, dtype=torch.bool)
         t = torch.tensor([0.5])
         with torch.no_grad():
-            out = proc(packed, text, t)
+            out = proc(packed, text_seq, text_mask, t)
         assert out.shape == packed.shape
 
     def test_vae_to_dmodel_width_is_2x_vae_dim(self):
@@ -70,7 +74,6 @@ class TestFluxFlowProcessorV100:
             flow_module, "CONTEXT_DIMS"
         ), "v100/flow.py must not use module-level CONTEXT_DIMS"
 
-    @pytest.mark.skip(reason="pending M4.2 flow processor rewrite")
     def test_forward_batch_size_two(self):
         """Forward must work with batch_size > 1."""
         from fluxflow.models.v100.flow import FluxFlowProcessor_v100
@@ -78,14 +81,15 @@ class TestFluxFlowProcessorV100:
         proc = FluxFlowProcessor_v100(d_model=64, vae_dim=32, embedding_size=64, n_layers=1)
         T = 16
         packed = torch.randn(2, T + 1, 64)
-        # Set valid HW tokens
+        # Set valid HW tokens so 4x4 == T=16 image grid.
         packed[:, -1, :] = 0
-        packed[:, -1, 0] = 16 / 1024.0
-        packed[:, -1, 1] = 16 / 1024.0
-        text = torch.randn(2, 64)
+        packed[:, -1, 0] = 4 / 1024.0
+        packed[:, -1, 1] = 4 / 1024.0
+        text_seq = torch.randn(2, 6, 64)
+        text_mask = torch.ones(2, 6, dtype=torch.bool)
         t = torch.tensor([0.3, 0.7])
         with torch.no_grad():
-            out = proc(packed, text, t)
+            out = proc(packed, text_seq, text_mask, t)
         assert out.shape == (2, T + 1, 64)
 
 
@@ -261,7 +265,6 @@ class TestFluxFlowProcessorV100CtxAgg:
             gate_std > 1e-3
         ).all(), f"Gate should vary across features after norm_ctx; std={gate_std}"
 
-    @pytest.mark.skip(reason="pending M4.2 flow processor rewrite")
     def test_forward_shape_unchanged(self):
         """norm_ctx must not change the forward output shape contract."""
         from fluxflow.models.v100.flow import FluxFlowProcessor_v100
@@ -272,8 +275,9 @@ class TestFluxFlowProcessorV100CtxAgg:
         packed[0, -1, 0] = 4 / 1024.0  # H=4
         packed[0, -1, 1] = 4 / 1024.0  # W=4
         packed[:, :-1, :] = torch.randn(1, T, 64)
-        text = torch.randn(1, 64)
+        text_seq = torch.randn(1, 4, 64)
+        text_mask = torch.ones(1, 4, dtype=torch.bool)
         t = torch.tensor([0.5])
         with torch.no_grad():
-            out = proc(packed, text, t)
+            out = proc(packed, text_seq, text_mask, t)
         assert out.shape == packed.shape

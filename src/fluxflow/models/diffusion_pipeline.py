@@ -17,7 +17,7 @@ from diffusers.utils import BaseOutput
 from transformers import AutoTokenizer
 
 from .encoders import BertTextEncoder
-from .pipeline import _masked_mean_pool
+from .pipeline import _flow_processor_takes_pertoken_text, _masked_mean_pool
 from .v060.flow import FluxFlowProcessor
 from .v060.vae import FluxCompressor, FluxExpander
 
@@ -907,11 +907,12 @@ class FluxFlowPipeline(DiffusionPipeline):
         # 5. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
 
-        # M4-COMPAT-SHIM: flow processor's external signature still expects pooled
-        # [B, E]. Pool once here since text_seq/text_mask are constant across the
-        # denoising loop. M4 will remove this shim and pass (text_seq, text_mask)
-        # directly into flow_processor.
-        text_embeddings = _masked_mean_pool(text_seq, text_mask)
+        # v0.10.0+ flow processors consume (text_seq, text_mask) directly.
+        # Legacy processors still want a pooled [B, E] vector; precompute once
+        # since text inputs are constant across the denoising loop.
+        flow_takes_pertoken = _flow_processor_takes_pertoken_text(self.flow_processor)
+        if not flow_takes_pertoken:
+            text_embeddings = _masked_mean_pool(text_seq, text_mask)
 
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -931,7 +932,10 @@ class FluxFlowPipeline(DiffusionPipeline):
                 t_batch = torch.full(
                     (full_input.size(0),), t.item() / 999.0, device=device, dtype=torch.float32
                 ).clamp(0.0, 1.0)
-                model_output = self.flow_processor(full_input, text_embeddings, t_batch)
+                if flow_takes_pertoken:
+                    model_output = self.flow_processor(full_input, text_seq, text_mask, t_batch)
+                else:
+                    model_output = self.flow_processor(full_input, text_embeddings, t_batch)
                 model_output = model_output[:, :-1, :]  # Remove hw vector
 
                 # Classifier-free guidance

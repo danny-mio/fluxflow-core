@@ -22,11 +22,12 @@ SUPPORTED_CHECKPOINT_VERSIONS = ["1.0"]
 
 def _masked_mean_pool(text_seq: torch.Tensor, text_mask: torch.Tensor) -> torch.Tensor:
     """
-    M4-compat shim: pool per-token text into a single vector.
+    Pool per-token text into a single vector.
 
     Mean-pool ``text_seq`` over the sequence dim using ``text_mask`` to weight
-    only valid positions. Returns [B, E]. Removed once M4 updates the flow
-    processor's external signature to consume per-token text directly.
+    only valid positions. Returns [B, E]. Used by legacy flow processors
+    (v0.6.0/v0.7.0/v0.8.0) that still expect a pooled text embedding.
+    v0.10.0+ processors consume ``(text_seq, text_mask)`` natively.
 
     Args:
         text_seq: [B, T_txt, E] float
@@ -37,6 +38,23 @@ def _masked_mean_pool(text_seq: torch.Tensor, text_mask: torch.Tensor) -> torch.
     """
     mask_f = text_mask.to(text_seq.dtype).unsqueeze(-1)
     return (text_seq * mask_f).sum(dim=1) / mask_f.sum(dim=1).clamp_min(1.0)
+
+
+def _flow_processor_takes_pertoken_text(flow_processor: nn.Module) -> bool:
+    """
+    Return True if ``flow_processor.forward`` accepts ``(text_seq, text_mask)``.
+
+    v0.10.0+ processors take per-token text directly; legacy processors take a
+    pooled ``text_embeddings``. The pipeline uses this to dispatch correctly
+    without forcing callers to know which version they have.
+    """
+    import inspect
+
+    try:
+        sig = inspect.signature(flow_processor.forward)
+    except (TypeError, ValueError):
+        return False
+    return "text_seq" in sig.parameters and "text_mask" in sig.parameters
 
 
 class FluxPipeline(nn.Module):
@@ -93,12 +111,17 @@ class FluxPipeline(nn.Module):
         if use_flow:
             if text_seq is None or text_mask is None or timesteps is None:
                 raise ValueError("Missing text_seq, text_mask, or timesteps when use_flow=True")
-            # M4-COMPAT-SHIM: flow processor's external signature still expects a
-            # pooled [B, E] text embedding. Pool text_seq with text_mask. M4 will
-            # update flow_processor.forward to consume (text_seq, text_mask)
-            # directly and this shim will be removed.
-            text_embeddings = _masked_mean_pool(text_seq, text_mask)
-            packed = self.flow_processor(packed, text_embeddings, timesteps)
+            # v0.10.0 flow processors accept (text_seq, text_mask) directly.
+            # Legacy v0.6.0/v0.7.0/v0.8.0 processors still take a pooled
+            # text_embeddings; detect via the forward signature and pool only
+            # for legacy processors. This keeps the pipeline polymorphic
+            # across model generations while letting the v100 processor see
+            # full per-token text.
+            if _flow_processor_takes_pertoken_text(self.flow_processor):
+                packed = self.flow_processor(packed, text_seq, text_mask, timesteps)
+            else:
+                text_embeddings = _masked_mean_pool(text_seq, text_mask)
+                packed = self.flow_processor(packed, text_embeddings, timesteps)
 
         return self.expander(packed)
 

@@ -1,17 +1,22 @@
 """
-Flow-based diffusion model components for FluxFlow v0.10.0.
+Flow-based diffusion model components for FluxFlow v0.10.0-bezier-coupled.
 
 Note: vae_to_dmodel projects the full 2*vae_dim packed token without separating z from context
 dims. The context dims are not given special architectural treatment inside the transformer; they
 are denoised jointly with z through the standard v-prediction objective. This is an intentional
 design choice — see the architectural review in model-0.10.0.md §3.8 for the full rationale.
 
-Changes vs v0.8.0:
+Key changes vs v0.8.0 (M4 bezier-coupled redesign):
 - vae_to_dmodel: nn.Linear(2*vae_dim, d_model)  (was vae_dim + CONTEXT_DIMS = vae_dim + 5)
 - dmodel_to_vae: nn.Linear(d_model, 2*vae_dim)  (was d_model → vae_dim + CONTEXT_DIMS)
 - context_dims instance attribute: defaults to vae_dim; inspectable by downstream code.
 - No CONTEXT_DIMS import from v070.
-- All other internals (FiLM, pillar_cross_attn, rotary PE, etc.) are unchanged from v0.8.0.
+- FluxTransformerBlock_v100 now consumes per-token (text_seq, text_mask) with
+  2D axial RoPE, split norm2_q/norm2_kv, widened pillars, and dual FiLM.
+- FluxFlowProcessor_v100 forward signature is
+  ``forward(packed, text_seq, text_mask, timesteps)``: per-token text +
+  continuous sinusoidal time (replaces the legacy ``Embedding(1000)``) +
+  GRU-style gated ctx_agg residual (replaces the running sum accumulator).
 """
 
 from functools import partial
@@ -195,26 +200,27 @@ class FluxTransformerBlock_v100(nn.Module):
 
 class FluxFlowProcessor_v100(nn.Module):
     """
-    Flow prediction model for FluxFlow v0.10.0 (2*vae_dim packed tokens).
+    Redesigned flow processor for v0.10.0-bezier-coupled.
 
-    Extends the v0.8.0 pillar-attention design with corrected Pillar→FiLM ordering:
-    - vae_to_dmodel accepts 2*vae_dim inputs (not vae_dim + CONTEXT_DIMS).
-    - dmodel_to_vae produces 2*vae_dim outputs.
-    - context_dims attribute is explicitly stored and inspectable.
+    Key changes vs the predecessor:
+    - forward(packed, text_seq, text_mask, timesteps): per-token text + mask.
+    - Continuous sinusoidal time embedding, separate from text via a dedicated
+      time_mlp; text_cond and time_cond fed to dual FiLM in each block.
+    - 2D axial RoPE on image tokens (built per H, W).
+    - GRU-style gated ctx_agg residual (replaces running mean accumulator).
+    - pillar_cross_attn / norm_pillar removed (length-1 degenerate).
 
-    External forward signature is identical to v0.8.0:
-        forward(packed, text_embeddings, timesteps) -> packed
+    External shape contract: packed_in shape == packed_out shape.
 
     Args:
-        d_model: Model dimensionality (default: 512)
-        vae_dim: VAE latent dimension (default: 128)
-        embedding_size: Text embedding dimension (default: 1024)
-        n_head: Number of attention heads (default: 8)
-        n_layers: Number of transformer layers (default: 10)
-        max_hw: Maximum spatial dimension (default: 1024)
-        ctx_tokens: Number of context tokens for ContextAttentionMixer (default: 4)
-        context_dims: Context dimensionality (default: None = vae_dim).
-            Set explicitly only if context dims are decoupled from vae_dim in future versions.
+        d_model: Model dimensionality (default: 512).
+        vae_dim: VAE latent dimension (default: 128).
+        embedding_size: Text embedding dimension (default: 1024).
+        n_head: Number of attention heads (default: 8).
+        n_layers: Number of transformer layers (default: 10).
+        max_hw: Maximum spatial dimension for HW token decoding (default: 1024).
+        ctx_tokens: Number of context tokens for ContextAttentionMixer (default: 4).
+        context_dims: Context dim (default: None = vae_dim).
     """
 
     def __init__(
@@ -229,29 +235,41 @@ class FluxFlowProcessor_v100(nn.Module):
         context_dims: int | None = None,
     ) -> None:
         super().__init__()
+        assert d_model % n_head == 0
+        self.d_model = d_model
+        self.vae_dim = vae_dim
+        self.n_head = n_head
+        self.head_dim = d_model // n_head
         self.max_hw = max_hw
         self.ctx_tokens = ctx_tokens
-        # context_dims defaults to vae_dim; full packed token width = 2 * vae_dim
         self.context_dims = context_dims if context_dims is not None else vae_dim
 
-        packed_width = vae_dim + self.context_dims  # = 2*vae_dim when context_dims == vae_dim
+        packed_width = vae_dim + self.context_dims
 
         self.vae_to_dmodel = nn.Linear(packed_width, d_model)
         self.dmodel_to_vae = nn.Linear(d_model, packed_width)
 
         self.ctx_mixer = ContextAttentionMixer(d_model, n_head=max(1, d_model // 128), use_cls=True)
 
+        # Text projection — applied per-token (broadcasts over T_txt).
         self.text_proj = nn.Linear(embedding_size, d_model)
-        self.time_embed = nn.Sequential(
-            nn.Embedding(1000, d_model),
-            nn.LayerNorm(d_model),
-            TrainableBezier((d_model,)),
-            nn.Linear(d_model, embedding_size),
-        )
         self.text_cond_proj = nn.Linear(embedding_size, d_model)
+
+        # Continuous sinusoidal time → MLP → time_cond.
+        # Replaces the old Embedding(1000) + Bezier + Linear chain.
+        self.time_mlp = nn.Sequential(
+            nn.Linear(d_model, d_model * 5),
+            BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+            nn.Linear(d_model, d_model),
+        )
 
         self.context_injection = GatedContextInjection(d_model, d_model)
         self.norm_ctx = nn.LayerNorm(d_model)
+
+        # GRU-style gated ctx_agg residual.
+        self.ctx_gate_proj = nn.Linear(d_model, d_model)
+        self.ctx_delta_proj = nn.Linear(d_model, d_model)
+
         self.transformer_blocks = nn.ModuleList(
             [FluxTransformerBlock_v100(d_model, n_head) for _ in range(n_layers)]
         )
@@ -280,20 +298,25 @@ class FluxFlowProcessor_v100(nn.Module):
     def forward(
         self,
         packed: torch.Tensor,
-        text_embeddings: torch.Tensor,
+        text_seq: torch.Tensor,
+        text_mask: torch.Tensor,
         timesteps: torch.Tensor,
     ) -> torch.Tensor:
         """
         Predict flow velocity for packed latent tokens.
 
         Args:
-            packed: [B, T+1, 2*vae_dim] — packed z + context tokens + HW token
-            text_embeddings: [B, embedding_size]
-            timesteps: [B] floats in [0, 1]
+            packed: [B, T+1, 2*vae_dim] from compressor (z || ctx + HW token).
+            text_seq: [B, T_txt, embedding_size] per-token text embeddings.
+            text_mask: [B, T_txt] bool mask over text tokens.
+            timesteps: [B] continuous timesteps in [0, 1].
 
         Returns:
-            torch.Tensor: [B, T+1, 2*vae_dim] with preserved HW token
+            packed_out: [B, T+1, 2*vae_dim] flow-modulated tokens (HW token preserved).
         """
+        # Local imports to avoid potential import cycles with the positional module.
+        from .positional import build_axial_rope_2d, sinusoidal_embedding
+
         img_seq_v = packed[:, :-1, :].contiguous()
         hw_vec_full = packed[:, -1, :].contiguous()
 
@@ -305,27 +328,67 @@ class FluxFlowProcessor_v100(nn.Module):
 
         K = min(self.ctx_tokens, T)
         ctx_tokens = img_seq[:, :K, :]
-        ctx_agg, ctx_tokens = self.ctx_mixer(ctx_tokens)
+        ctx_agg, _ = self.ctx_mixer(ctx_tokens)
 
-        timestep_indices = (timesteps * 999).long().clamp(0, 999)
-        cond = text_embeddings + self.time_embed(timestep_indices)
+        # Per-token text + CLS-pooled text_cond.
+        text_seq_proj = self.text_proj(text_seq)
+        text_cond = self.text_cond_proj(text_seq[:, 0, :])
 
-        text_seq = self.text_proj(cond).unsqueeze(1)
-        text_cond = self.text_cond_proj(cond)
+        # Continuous sinusoidal time → time_cond.
+        time_emb = sinusoidal_embedding(timesteps, self.d_model)
+        time_cond = self.time_mlp(time_emb)
 
-        first_block = self.transformer_blocks[0]
-        assert isinstance(first_block, FluxTransformerBlock_v100)
-        # NOTE: this forward path still uses the pre-M4.1 block signature and
-        # will be rewritten in M4.2 (per the bezier-coupled redesign plan).
-        # The attribute access below references `rotary_pe`, which no longer
-        # exists on the M4.1 block (renamed to `rotary_pe_txt`); the suppress
-        # keeps mypy quiet until M4.2 replaces this whole function body.
-        sin_img, cos_img = first_block.rotary_pe.get_embed(  # type: ignore[union-attr,operator]
-            torch.arange(T, device=img_seq.device)
-        )
-        sin_txt, cos_txt = first_block.rotary_pe.get_embed(  # type: ignore[union-attr,operator]
-            torch.arange(text_seq.size(1), device=img_seq.device)
-        )
+        # 2D axial RoPE on image tokens — assumes same-H/W in batch.
+        same_hw = bool((H == H[0]).all().item() and (W == W[0]).all().item())
+        block0 = self.transformer_blocks[0]
+        assert isinstance(block0, FluxTransformerBlock_v100)
+        T_txt = text_seq_proj.size(1)
+
+        if same_hw:
+            # Mirror the spatial post-processing fallback: if H*W != T (e.g.
+            # the caller's hw_vec is inconsistent with the actual token count),
+            # clamp h*w to T by taking sqrt(T).
+            h_eff = int(H[0].item())
+            w_eff = int(W[0].item())
+            if h_eff * w_eff != T:
+                h_eff = int(T**0.5)
+                w_eff = T // h_eff
+            sin_w_img, cos_w_img, sin_h_img, cos_h_img = build_axial_rope_2d(
+                h_eff,
+                w_eff,
+                self.head_dim,
+                device=img_seq.device,
+                dtype=img_seq.dtype,
+            )
+            # If h_eff * w_eff < T (non-perfect-square T), pad the RoPE buffer
+            # by zero-sin/one-cos for the trailing positions so it covers T.
+            extra = T - h_eff * w_eff
+            if extra > 0:
+                half = self.head_dim // 2
+                pad_sin = torch.zeros(extra, half, device=img_seq.device, dtype=img_seq.dtype)
+                pad_cos = torch.ones(extra, half, device=img_seq.device, dtype=img_seq.dtype)
+                sin_w_img = torch.cat([sin_w_img, pad_sin], dim=0)
+                cos_w_img = torch.cat([cos_w_img, pad_cos], dim=0)
+                sin_h_img = torch.cat([sin_h_img, pad_sin], dim=0)
+                cos_h_img = torch.cat([cos_h_img, pad_cos], dim=0)
+            sin_txt, cos_txt = block0.rotary_pe_txt.get_embed(
+                torch.arange(T_txt, device=img_seq.device, dtype=img_seq.dtype)
+            )
+        else:
+            # Mixed-H/W fallback: punt to legacy 1D rotary on the flattened
+            # token index. Adjacent tokens won't have axial structure, but the
+            # forward will at least run. M4 same-H/W is the common case.
+            half = self.head_dim // 2
+            sin1d, cos1d = block0.rotary_pe_txt.get_embed(
+                torch.arange(T, device=img_seq.device, dtype=img_seq.dtype)
+            )
+            sin_w_img = sin1d[:, :half]
+            cos_w_img = cos1d[:, :half]
+            sin_h_img = sin1d[:, half:]
+            cos_h_img = cos1d[:, half:]
+            sin_txt, cos_txt = block0.rotary_pe_txt.get_embed(
+                torch.arange(T_txt, device=img_seq.device, dtype=img_seq.dtype)
+            )
 
         def transformer_blocks_fn(
             img_seq: torch.Tensor, ctx_agg: torch.Tensor
@@ -335,9 +398,12 @@ class FluxFlowProcessor_v100(nn.Module):
                 img_seq = self.context_injection(img_seq, self.norm_ctx(ctx_agg))
                 img_seq, p0, p1, p2, p3 = block(
                     img_seq,
-                    text_seq,
-                    sin_img,
-                    cos_img,
+                    text_seq_proj,
+                    text_mask,
+                    sin_w_img,
+                    cos_w_img,
+                    sin_h_img,
+                    cos_h_img,
                     sin_txt,
                     cos_txt,
                     p0,
@@ -345,8 +411,12 @@ class FluxFlowProcessor_v100(nn.Module):
                     p2,
                     p3,
                     text_cond,
+                    time_cond,
                 )
-                ctx_agg = ctx_agg + img_seq.mean(dim=1)
+                # GRU-style gated residual update of ctx_agg.
+                delta = img_seq.mean(dim=1)
+                gate = torch.sigmoid(self.ctx_gate_proj(ctx_agg))
+                ctx_agg = gate * ctx_agg + (1.0 - gate) * self.ctx_delta_proj(delta)
             return img_seq, ctx_agg
 
         if torch.is_grad_enabled() and (img_seq.requires_grad or ctx_agg.requires_grad):
@@ -358,29 +428,29 @@ class FluxFlowProcessor_v100(nn.Module):
 
         img_seq_v_all = self.dmodel_to_vae(img_seq)
 
-        if B > 1 and (H == H[0]).all() and (W == W[0]).all():
+        # Spatial post-processing — same-H/W fast path.
+        if same_hw:
             h, w = int(H[0].item()), int(W[0].item())
             t_valid = min(h * w, T)
             if t_valid < h * w:
                 h = int(t_valid**0.5)
                 w = t_valid // h
-
             feat = img_seq[:, :t_valid, :].reshape(B, t_valid, -1)
             feat = rearrange(feat, "b (h w) d -> b d h w", h=h, w=w)
-
             flow = self.flow_predictor(feat)
             new_context_feat = self.context_final(self.add_coord_channels(flow))
             pooled = F.adaptive_avg_pool2d(new_context_feat, (1, 1)).view(B, -1)
-
             ctx_update_v = self.dmodel_to_vae(pooled)
             k_i = min(self.ctx_tokens, t_valid)
             if k_i > 0:
                 ctx_update_expanded = ctx_update_v.unsqueeze(1).expand(-1, k_i, -1)
                 img_seq_v_all = torch.cat(
-                    [img_seq_v_all[:, :k_i, :] + ctx_update_expanded, img_seq_v_all[:, k_i:, :]],
+                    [
+                        img_seq_v_all[:, :k_i, :] + ctx_update_expanded,
+                        img_seq_v_all[:, k_i:, :],
+                    ],
                     dim=1,
                 )
-
             return torch.cat([img_seq_v_all, hw_vec_full.unsqueeze(1)], dim=1).contiguous()
         else:
             outputs = []
@@ -390,25 +460,23 @@ class FluxFlowProcessor_v100(nn.Module):
                 if t_valid < h * w:
                     h = int(t_valid**0.5)
                     w = t_valid // h
-
                 feat = img_seq[i, :t_valid].reshape(1, t_valid, -1)
                 feat = rearrange(feat, "b (h w) d -> b d h w", h=h, w=w)
-
                 flow = self.flow_predictor(feat)
                 new_context_feat = self.context_final(self.add_coord_channels(flow))
                 pooled = F.adaptive_avg_pool2d(new_context_feat, (1, 1)).view(1, -1)
-
                 ctx_update_v = self.dmodel_to_vae(pooled)
                 img_seq_v_i = img_seq_v_all[i : i + 1]
                 k_i = min(self.ctx_tokens, t_valid)
                 if k_i > 0:
                     ctx_update_expanded = ctx_update_v.unsqueeze(1).expand(-1, k_i, -1)
                     img_seq_v_i = torch.cat(
-                        [img_seq_v_i[:, :k_i, :] + ctx_update_expanded, img_seq_v_i[:, k_i:, :]],
+                        [
+                            img_seq_v_i[:, :k_i, :] + ctx_update_expanded,
+                            img_seq_v_i[:, k_i:, :],
+                        ],
                         dim=1,
                     )
-
                 packed_i = torch.cat([img_seq_v_i, hw_vec_full[i : i + 1].unsqueeze(1)], dim=1)
                 outputs.append(packed_i)
-
             return torch.cat(outputs, dim=0).contiguous()

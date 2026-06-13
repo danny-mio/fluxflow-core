@@ -38,7 +38,6 @@ def test_packed_token_dim_is_2xd():
     assert packed.shape[-1] == 64  # 2 * 32
 
 
-@pytest.mark.skip(reason="pending M4.2 flow processor rewrite")
 def test_flow_forward_shape():
     """Flow processor must accept and return v0.10.0 packed shape."""
     from fluxflow.models.factory import create_bezier_models
@@ -49,9 +48,11 @@ def test_flow_forward_shape():
     img = torch.randn(1, 3, 32, 32)
     with torch.no_grad():
         packed = comp(img)
-        text = torch.randn(1, 1024)
+        # v0.10.0 flow processor consumes per-token text + bool mask.
+        text_seq = torch.randn(1, 6, 1024)
+        text_mask = torch.ones(1, 6, dtype=torch.bool)
         t = torch.tensor([0.5])
-        out = flow(packed, text, t)
+        out = flow(packed, text_seq, text_mask, t)
     assert out.shape == packed.shape
 
 

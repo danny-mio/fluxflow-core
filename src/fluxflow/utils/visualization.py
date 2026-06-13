@@ -12,7 +12,7 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.utils import save_image
 
-from fluxflow.models.pipeline import _masked_mean_pool
+from fluxflow.models.pipeline import _flow_processor_takes_pertoken_text, _masked_mean_pool
 
 # Global cache for safe_vae_sample function
 _VAE_SAMPLE_CACHE: Dict[str, Tuple[torch.Tensor, str]] = {}
@@ -272,16 +272,21 @@ def generate_latent_images(
     hw_vec = batch_z[:, -1:, :].clone()
     lat = batch_z[:, :-1, :].clone()
 
-    # M4-COMPAT-SHIM: flow processor still expects pooled [B, E] text. Pool
-    # once outside the loop (text inputs are constant). M4 will remove the
-    # shim and pass (text_seq, text_mask) directly into flow_processor.
-    text_embeddings = _masked_mean_pool(text_seq, text_mask)
+    # v0.10.0+ flow processors consume (text_seq, text_mask) directly.
+    # Legacy processors want pooled [B, E]; precompute once since text is
+    # constant across the loop.
+    flow_takes_pertoken = _flow_processor_takes_pertoken_text(diffuser.flow_processor)
+    if not flow_takes_pertoken:
+        text_embeddings = _masked_mean_pool(text_seq, text_mask)
 
     for t in scheduler.timesteps:
         t_batch = torch.full((lat.size(0),), t.item(), device=device, dtype=torch.float32)
         t_batch = _normalize_model_timesteps(t_batch)
         full_input = torch.cat([lat, hw_vec], dim=1)
-        model_out = diffuser.flow_processor(full_input, text_embeddings, t_batch)
+        if flow_takes_pertoken:
+            model_out = diffuser.flow_processor(full_input, text_seq, text_mask, t_batch)
+        else:
+            model_out = diffuser.flow_processor(full_input, text_embeddings, t_batch)
         model_out_lat = model_out[:, :-1, :]
         lat = scheduler.step(
             model_output=model_out_lat, timestep=int(t.item()), sample=lat
@@ -335,11 +340,13 @@ def _generate_with_cfg(
     hw_vec = noised_latent[:, -1:, :].clone()
     lat = noised_latent[:, :-1, :].clone()
 
-    # M4-COMPAT-SHIM: flow processor still expects pooled [B, E] text. Pool
-    # both conditional and unconditional once (constant across loop). M4 will
-    # remove the shim and pass (text_seq, text_mask) directly.
-    text_embeddings = _masked_mean_pool(text_seq, text_mask)
-    null_embeddings = _masked_mean_pool(null_seq, null_mask)
+    # v0.10.0+ flow processors consume (text_seq, text_mask) directly.
+    # Legacy processors want a pooled [B, E]; precompute both branches once
+    # since text inputs are constant across the loop.
+    flow_takes_pertoken = _flow_processor_takes_pertoken_text(diffuser.flow_processor)
+    if not flow_takes_pertoken:
+        text_embeddings = _masked_mean_pool(text_seq, text_mask)
+        null_embeddings = _masked_mean_pool(null_seq, null_mask)
 
     for t in scheduler.timesteps:  # type: ignore[attr-defined]
         t_batch = torch.full((lat.size(0),), t.item(), device=device, dtype=torch.float32)
@@ -347,11 +354,17 @@ def _generate_with_cfg(
         full_input = torch.cat([lat, hw_vec], dim=1)
 
         # Conditional prediction
-        v_cond = diffuser.flow_processor(full_input, text_embeddings, t_batch)
+        if flow_takes_pertoken:
+            v_cond = diffuser.flow_processor(full_input, text_seq, text_mask, t_batch)
+        else:
+            v_cond = diffuser.flow_processor(full_input, text_embeddings, t_batch)
         v_cond_lat = v_cond[:, :-1, :]
 
         # Unconditional prediction
-        v_uncond = diffuser.flow_processor(full_input, null_embeddings, t_batch)
+        if flow_takes_pertoken:
+            v_uncond = diffuser.flow_processor(full_input, null_seq, null_mask, t_batch)
+        else:
+            v_uncond = diffuser.flow_processor(full_input, null_embeddings, t_batch)
         v_uncond_lat = v_uncond[:, :-1, :]
 
         # Apply CFG: v_guided = v_uncond + w * (v_cond - v_uncond)
