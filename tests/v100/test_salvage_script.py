@@ -52,3 +52,42 @@ def test_migrate_logvar_rescales_old_range_to_wide(fake_old_checkpoint, tmp_path
     assert torch.allclose(p0, torch.full_like(p0, -8.0), atol=1e-5)
     assert torch.allclose(p3, torch.full_like(p3, 4.0), atol=1e-5)
     assert any("logvar_activation" in k for k in report["rescaled"])
+
+
+def test_migrate_spade_partial_fill(tmp_path):
+    """Old mlp_beta becomes the warm-start for beta_mid in the new SPADE."""
+    src = tmp_path / "src.safetensors"
+    st.save_file(
+        {
+            "diffuser.expander.upscale.layers.0.spade.mlp_beta.weight": torch.randn(32, 128, 3, 3),
+            "diffuser.expander.upscale.layers.0.spade.mlp_beta.bias": torch.randn(32),
+            "diffuser.expander.upscale.layers.0.spade.beta_scale": torch.tensor([0.5]),
+            "diffuser.expander.upscale.layers.0.spade.mlp_shared.0.weight": torch.randn(
+                128, 32, 3, 3
+            ),
+        },
+        str(src),
+    )
+    dst = tmp_path / "dst.safetensors"
+    report = migrate_checkpoint(src, dst)
+    new = st.load_file(str(dst))
+    # mlp_beta -> beta_mid
+    assert "diffuser.expander.upscale.layers.0.spade.beta_mid.weight" in new
+    assert "diffuser.expander.upscale.layers.0.spade.beta_mid.bias" in new
+    # beta_scale preserved
+    assert "diffuser.expander.upscale.layers.0.spade.beta_scale" in new
+    # New heads zero-init (so identity behaviour preserved at warm-start)
+    assert "diffuser.expander.upscale.layers.0.spade.beta_low.weight" in new
+    assert new["diffuser.expander.upscale.layers.0.spade.beta_low.weight"].abs().sum() == 0
+    assert "diffuser.expander.upscale.layers.0.spade.beta_hi.weight" in new
+    assert "diffuser.expander.upscale.layers.0.spade.gamma_head.weight" in new
+    # gamma_scale zero-init
+    assert torch.allclose(
+        new["diffuser.expander.upscale.layers.0.spade.gamma_scale"], torch.zeros(1)
+    )
+    # mlp_shared from old form is dropped (new deeper MLP doesn't fit)
+    assert "diffuser.expander.upscale.layers.0.spade.mlp_shared.0.weight" not in new
+    assert any(
+        "diffuser.expander.upscale.layers.0.spade.mlp_shared" in k for k in report["dropped"]
+    )
+    assert any("spade" in k for k in report["partial_filled"])

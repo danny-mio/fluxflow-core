@@ -12,6 +12,7 @@ pillar_cross_attn, norm_pillar).
 """
 
 import argparse
+import re
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,70 @@ def _rescale_logvar(t: torch.Tensor) -> torch.Tensor:
     return (t - old_min) / (old_max - old_min) * (new_max - new_min) + new_min
 
 
+# ---------------------------------------------------------------------------
+# SPADE partial-fill (M8.3)
+# ---------------------------------------------------------------------------
+
+_SPADE_LAYER_RE = re.compile(r"diffuser\.expander\.upscale\.layers\.(\d+)\.spade\.")
+
+
+def _spade_partial_fill(key: str, value: torch.Tensor) -> dict[str, torch.Tensor]:
+    """
+    Map an old single-scale SPADE key to its redesign equivalents.
+
+    Returns a dict of {new_key: new_tensor}; an empty dict means this key
+    should be dropped (e.g. ``mlp_shared.weight`` is replaced wholesale by a
+    new deeper MLP).
+    """
+    if ".spade.mlp_beta.weight" in key or ".spade.mlp_beta.bias" in key:
+        new_key = key.replace(".mlp_beta.", ".beta_mid.")
+        return {new_key: value}
+    if ".spade.beta_scale" in key:
+        return {key: value}  # preserved as-is
+    if ".spade.mlp_shared." in key:
+        # Old 1-layer shared MLP. New shared MLP has different shape (two
+        # Conv3x3+Bezier pairs); the old weights don't fit so we drop them.
+        return {}
+    # Everything else inside .spade.* (unfamiliar) -> drop.
+    return {}
+
+
+def _maybe_zero_init_new_spade_heads(out: dict[str, torch.Tensor]) -> list[str]:
+    """For each layer index found in ``out``, add zero-init entries for the new
+    multi-scale heads and gamma so the redesign loads cleanly.
+
+    Returns the list of keys added.
+    """
+    added: list[str] = []
+    layer_indices: set[int] = set()
+    for k in list(out.keys()):
+        m = _SPADE_LAYER_RE.match(k)
+        if m:
+            layer_indices.add(int(m.group(1)))
+    for i in sorted(layer_indices):
+        base = f"diffuser.expander.upscale.layers.{i}.spade"
+        # We need concrete shapes — derive them from beta_mid which we just
+        # wrote (the salvage source provides it).
+        bm = out.get(f"{base}.beta_mid.weight")
+        if bm is None:
+            continue
+        C_out, hidden = bm.shape[0], bm.shape[1]
+        defaults = {
+            f"{base}.beta_low.weight": torch.zeros(C_out, hidden, 1, 1),
+            f"{base}.beta_low.bias": torch.zeros(C_out),
+            f"{base}.beta_hi.weight": torch.zeros(C_out, hidden, 3, 3),
+            f"{base}.beta_hi.bias": torch.zeros(C_out),
+            f"{base}.gamma_head.weight": torch.zeros(C_out, hidden, 3, 3),
+            f"{base}.gamma_head.bias": torch.zeros(C_out),
+            f"{base}.gamma_scale": torch.zeros(1),
+        }
+        for nk, nv in defaults.items():
+            if nk not in out:
+                out[nk] = nv
+                added.append(nk)
+    return added
+
+
 def _is_dropped(key: str) -> bool:
     return any(sub in key for sub in DROP_SUBSTRINGS)
 
@@ -120,8 +185,23 @@ def migrate_checkpoint(src: Path, dst: Path) -> dict[str, Any]:
             out[k] = _rescale_logvar(v)
             report["rescaled"].append(k)
             continue
+        if ".spade." in k:
+            mapped = _spade_partial_fill(k, v)
+            if mapped:
+                for nk, nv in mapped.items():
+                    out[nk] = nv
+                    report["partial_filled"].append(nk)
+            else:
+                report["dropped"].append(k)
+            continue
         # Remaining cases handled in later sub-tasks; for the skeleton just drop.
         report["dropped"].append(k)
+
+    # Zero-init the new SPADE heads (multi-scale beta + gamma) so the
+    # redesigned model loads cleanly with the partial-fill warm start.
+    spade_zero_added = _maybe_zero_init_new_spade_heads(out)
+    report["partial_filled"].extend(spade_zero_added)
+
     st.save_file(out, str(dst))
     return report
 
