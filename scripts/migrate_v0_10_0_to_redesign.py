@@ -202,6 +202,47 @@ def _maybe_pad_pillar(key: str, value: torch.Tensor) -> tuple[str, torch.Tensor]
     return key, _pad_pillar_tensor(layer, kind, value)
 
 
+# ---------------------------------------------------------------------------
+# FiLM and norm2 duplication (M8.5)
+# ---------------------------------------------------------------------------
+
+# Matches keys like
+#   diffuser.flow_processor.transformer_blocks.<N>.film_p<I>.weight|bias
+# Old form: single FiLM per pillar.
+_FILM_RE = re.compile(
+    r"^(diffuser\.flow_processor\.transformer_blocks\.\d+\.film_p[0-3])" r"\.(weight|bias)$"
+)
+
+# Matches the legacy shared norm2 LayerNorm: diffuser.flow_processor.transformer_blocks.<N>.norm2.weight|bias
+_NORM2_RE = re.compile(
+    r"^(diffuser\.flow_processor\.transformer_blocks\.\d+\.norm2)\.(weight|bias)$"
+)
+
+
+def _maybe_duplicate_film(key: str, value: torch.Tensor) -> dict[str, torch.Tensor] | None:
+    """Old single FiLM -> {<base>_text: copy, <base>_time: zeros}."""
+    m = _FILM_RE.match(key)
+    if not m:
+        return None
+    base, kind = m.group(1), m.group(2)
+    return {
+        f"{base}_text.{kind}": value,
+        f"{base}_time.{kind}": torch.zeros_like(value),
+    }
+
+
+def _maybe_duplicate_norm2(key: str, value: torch.Tensor) -> dict[str, torch.Tensor] | None:
+    """Old shared norm2 -> {norm2_q: copy, norm2_kv: copy}."""
+    m = _NORM2_RE.match(key)
+    if not m:
+        return None
+    base, kind = m.group(1), m.group(2)
+    return {
+        f"{base}_q.{kind}": value,
+        f"{base}_kv.{kind}": value.clone(),
+    }
+
+
 def _is_dropped(key: str) -> bool:
     return any(sub in key for sub in DROP_SUBSTRINGS)
 
@@ -259,6 +300,18 @@ def migrate_checkpoint(src: Path, dst: Path) -> dict[str, Any]:
             nk, nv = padded
             out[nk] = nv
             report["padded"].append(nk)
+            continue
+        film_dup = _maybe_duplicate_film(k, v)
+        if film_dup is not None:
+            for nk, nv in film_dup.items():
+                out[nk] = nv
+                report["duplicated"].append(nk)
+            continue
+        norm2_dup = _maybe_duplicate_norm2(k, v)
+        if norm2_dup is not None:
+            for nk, nv in norm2_dup.items():
+                out[nk] = nv
+                report["duplicated"].append(nk)
             continue
         # Remaining cases handled in later sub-tasks; for the skeleton just drop.
         report["dropped"].append(k)

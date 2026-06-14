@@ -153,3 +153,62 @@ def test_migrate_pillar_padding(tmp_path):
 
     assert any(".p0.0.0.weight" in k for k in report["padded"])
     assert any(".p0.2.0.weight" in k for k in report["padded"])
+
+
+def test_migrate_film_duplication(tmp_path):
+    """Old single FiLM per pillar warm-starts text head; time head zero-init."""
+    D = 16
+    src = tmp_path / "src.safetensors"
+    base = "diffuser.flow_processor.transformer_blocks.0"
+    fw = torch.randn(2 * D, D)
+    fb = torch.randn(2 * D)
+    st.save_file(
+        {
+            f"{base}.film_p0.weight": fw,
+            f"{base}.film_p0.bias": fb,
+        },
+        str(src),
+    )
+    dst = tmp_path / "dst.safetensors"
+    report = migrate_checkpoint(src, dst)
+    new = st.load_file(str(dst))
+
+    # text head: full copy
+    assert torch.allclose(new[f"{base}.film_p0_text.weight"], fw)
+    assert torch.allclose(new[f"{base}.film_p0_text.bias"], fb)
+    # time head: zero-init
+    assert torch.allclose(new[f"{base}.film_p0_time.weight"], torch.zeros_like(fw))
+    assert torch.allclose(new[f"{base}.film_p0_time.bias"], torch.zeros_like(fb))
+    # legacy single film_p0 key no longer present
+    assert f"{base}.film_p0.weight" not in new
+
+    assert any("film_p0_text" in k for k in report["duplicated"])
+    assert any("film_p0_time" in k for k in report["duplicated"])
+
+
+def test_migrate_norm2_duplication(tmp_path):
+    """Old norm2 LayerNorm warm-starts both norm2_q and norm2_kv."""
+    D = 16
+    src = tmp_path / "src.safetensors"
+    base = "diffuser.flow_processor.transformer_blocks.0"
+    nw = torch.randn(D)
+    nb = torch.randn(D)
+    st.save_file(
+        {
+            f"{base}.norm2.weight": nw,
+            f"{base}.norm2.bias": nb,
+        },
+        str(src),
+    )
+    dst = tmp_path / "dst.safetensors"
+    report = migrate_checkpoint(src, dst)
+    new = st.load_file(str(dst))
+
+    assert torch.allclose(new[f"{base}.norm2_q.weight"], nw)
+    assert torch.allclose(new[f"{base}.norm2_q.bias"], nb)
+    assert torch.allclose(new[f"{base}.norm2_kv.weight"], nw)
+    assert torch.allclose(new[f"{base}.norm2_kv.bias"], nb)
+    assert f"{base}.norm2.weight" not in new
+
+    assert any("norm2_q" in k for k in report["duplicated"])
+    assert any("norm2_kv" in k for k in report["duplicated"])
