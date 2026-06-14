@@ -1,10 +1,14 @@
 """Tests for the v0.10.0-pre -> v0.10.0-bezier-coupled salvage script."""
 
+import subprocess
+import sys
+from pathlib import Path
+
 import safetensors.torch as st
 import torch
 import pytest
 
-from scripts.migrate_v0_10_0_to_redesign import migrate_checkpoint
+from scripts.migrate_v0_10_0_to_redesign import _print_report, migrate_checkpoint
 
 
 @pytest.fixture
@@ -212,3 +216,39 @@ def test_migrate_norm2_duplication(tmp_path):
 
     assert any("norm2_q" in k for k in report["duplicated"])
     assert any("norm2_kv" in k for k in report["duplicated"])
+
+
+def test_print_report_lists_counts_and_samples(capsys):
+    """_print_report emits per-category counts and at least one sample key."""
+    report = {
+        "direct_copied": ["a.b.weight", "a.c.weight"],
+        "rescaled": ["logvar.p0"],
+        "partial_filled": [],
+        "padded": [],
+        "duplicated": ["film_text", "film_time"],
+        "dropped": ["time_embed.weight"],
+    }
+    _print_report(report)
+    out = capsys.readouterr().out
+    assert "migration report" in out
+    assert "direct_copied: 2" in out
+    assert "rescaled: 1" in out
+    assert "duplicated: 2" in out
+    assert "dropped: 1" in out
+    assert "logvar.p0" in out
+    assert "time_embed.weight" in out
+
+
+def test_cli_smoke_returns_zero(tmp_path, fake_old_checkpoint):
+    """Calling the script as a CLI succeeds end-to-end (exit code 0)."""
+    dst = tmp_path / "out.safetensors"
+    script = Path(__file__).resolve().parents[2] / "scripts" / "migrate_v0_10_0_to_redesign.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--src", str(fake_old_checkpoint), "--dst", str(dst)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert dst.exists()
+    assert "migration report" in result.stdout
