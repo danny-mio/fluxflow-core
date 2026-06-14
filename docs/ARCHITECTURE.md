@@ -173,7 +173,7 @@ graph TB
 **Color Legend** (parameter counts for default config: vae_dim=128, feat_dim=128):
 - **Blue**: VAE Encoder (FluxCompressor) - 12.6M params
 - **Orange**: VAE Decoder (FluxExpander) - 94.0M params
-- **Green**: Diffusion Transformer (FluxFlowProcessor) - 5.4M params
+- **Green**: Diffusion Transformer (FluxFlowProcessor) - 5.4M params† (v0.6–v0.8 default config; v0.10.0 `FluxFlowProcessor_v100` is substantially larger — see Model Sizes table below)
 - **Purple**: Text Encoding (BertTextEncoder) - 71.0M params
 - **Red**: GAN Discriminator (Training only) - 45.1M params
 - **Gray (dashed)**: Loss functions
@@ -395,12 +395,19 @@ Random latent z₁ ────→ FlowProcessor(z₁, text_seq, text_mask, t₁
 
 | Component | Parameters | Memory (fp32) |
 |-----------|-----------|--------------|
-| FluxCompressor | 12.6M | ~50 MB |
-| FluxFlowProcessor | 5.4M | ~22 MB |
-| FluxExpander | 94.0M | ~376 MB |
-| BertTextEncoder | 71.0M | ~284 MB |
-| **Total (Generative)** | **183.0M** | **~732 MB** |
-| PatchDiscriminator | 45.1M | ~180 MB (training only) |
+| FluxCompressor | 12.6M† | ~50 MB |
+| FluxFlowProcessor (v0.6–v0.8) | 5.4M† | ~22 MB |
+| FluxExpander | 94.0M† | ~376 MB |
+| BertTextEncoder | 71.0M† | ~284 MB |
+| **Total (Generative, v0.6–v0.8)** | **183.0M†** | **~732 MB** |
+| PatchDiscriminator | 45.1M† | ~180 MB (training only) |
+
+† Counts are the v0.6–v0.8 figures (default `vae_dim=128, feat_dim=128`). The
+v0.10.0 `FluxFlowProcessor_v100` redesign (10 layers at `d_model=512` with
+dual FiLM, widened pillars, per-token cross-attention) is substantially larger
+than 5.4M; the VAE encoder/decoder counts also shift due to the ctx branch
+and multi-scale SPADE. Updated empirical counts will land here after training
+completes.
 
 Note: FluxExpander is asymmetrically larger than FluxCompressor due to progressive upsampling with SPADE conditioning at each stage.
 
@@ -648,7 +655,7 @@ direct-copy, logvar rescale (`[-1, 1] → [-8, 4]`), SPADE partial-fill
 8. Return img_seq, img_p0, img_p1, img_p2, img_p3
 ```
 
-`text_cond` is the `[B, D]` tensor: `text_cond_proj(text_embeddings + time_embed(timesteps))`, extracted inside `FluxFlowProcessor_v080.forward()`. The external forward signature is **unchanged**.
+`text_cond` is the `[B, D]` tensor `self.text_cond_proj(cond)`, where `cond = text_embeddings + self.time_embed(timestep_indices)` is assembled inside `FluxFlowProcessor_v080.forward()`. The external forward signature is **unchanged**.
 
 **VAE is unchanged** — `v080/__init__.py` imports `FluxCompressor` and `FluxExpander` directly from `v070/vae.py`.
 
@@ -681,11 +688,22 @@ direct-copy, logvar rescale (`[-1, 1] → [-8, 4]`), SPADE partial-fill
 
 ### Loss Functions
 
-**VAE:**
+**VAE (pre-v0.10.0 form):**
 ```python
 L_vae = L1(rec, real) + 0.1*MSE(rec, real) + β*KL(μ, σ)
 L_gan_d = hinge(D(real), D(rec))
 L_gan_g = -D(rec)
+```
+
+**VAE (v0.10.0 form):** the clean Gaussian `z` redesign reweights the KL term
+via `kl_z_weight` (cosine warmup to its target) and adds an explicit
+shrinkage term on the ctx half of the packed latent, weighted by
+`ctx_shrinkage_weight`:
+```python
+L_vae_v100 = L1(rec, real) + 0.1*MSE(rec, real)
+           + kl_z_weight(step) * KL(μ_z, σ_z)
+           + ctx_shrinkage_weight * ||ctx||²
+L_gan_d, L_gan_g unchanged.
 ```
 
 **Flow:**
