@@ -143,9 +143,9 @@ pip install -e ".[dev]"
 ## Key Features
 
 - **Bezier Activations**: Learnable 3rd-degree (cubic) polynomial activation functions
-- **Compact VAE**: Variational autoencoder with 25M params (encoder) + 30M params (decoder)
-- **Flow-based Diffusion**: 150M param transformer with rotary embeddings
-- **Text Conditioning**: DistilBERT-based encoder (~71M params total: ~66M backbone + Bezier projection layers)
+- **Compact VAE**: Variational autoencoder with packed latent (`z‖ctx + HW token`), multi-scale SPADE decoder
+- **Flow-based Diffusion**: 10-layer `FluxFlowProcessor_v100` transformer with 2D axial RoPE, dual FiLM (text + time), per-token text cross-attention
+- **Text Conditioning**: DistilBERT-based encoder (~66M backbone + Bezier projection layers)
   - *Note: Current implementation uses pre-trained DistilBERT as a temporary solution. Future versions will feature a custom Bezier-based text encoder for full end-to-end training and multimodal support.*
 - **Adaptive Architecture**: Different activation strategies per component (Bezier for generative, LeakyReLU for discriminative)
 
@@ -214,7 +214,7 @@ for i, img in enumerate(result.images):
 | `0.6.0` | Default stable | Stable |
 | `0.3.0` | Legacy | Legacy |
 
-- Default model version: `0.6.0` (set by `FluxFlowConfig.model.model_version`)
+- Default model version: `0.6.0` (`FluxFlowConfig.model.model_version`, see `src/fluxflow/config.py`). v0.10.0 is **current** for new training but remains opt-in until the redesign finishes empirical validation — set `model_version: "0.10.0"` in your config to use it.
 - v0.10.0 introduces breaking changes to the flow processor and text path — see [docs/MIGRATION-v0.10.0-redesign.md](docs/MIGRATION-v0.10.0-redesign.md) and use `scripts/migrate_v0_10_0_to_redesign.py` to warm-start from older checkpoints
 - v0.8.0 checkpoints require `load_versioned_checkpoint()` — see [docs/MIGRATION.md](docs/MIGRATION.md)
 - For versioned checkpoints, use `load_versioned_checkpoint()` and set `model_version` when saving
@@ -363,15 +363,20 @@ FluxFlow uses different activations based on component purpose:
 
 ## Model Architecture Overview
 
-**Total Parameters**: ~183M (default config: vae_dim=128, feat_dim=128)
-
 | Component | Parameters | Activation Type | Purpose |
 |-----------|-----------|-----------------|---------|
-| FluxCompressor | 12.6M | BezierActivation | Image → latent encoding |
-| FluxExpander | 94.0M | BezierActivation | Latent → image decoding |
-| FluxFlowProcessor | 5.4M | BezierActivation | Diffusion transformer |
-| BertTextEncoder | 71.0M | BezierActivation (projection) | Text → embedding |
-| PatchDiscriminator | 45.1M | LeakyReLU | GAN training only |
+| FluxCompressor | 12.6M† | BezierActivation | Image → latent encoding |
+| FluxExpander | 94.0M† | BezierActivation | Latent → image decoding |
+| FluxFlowProcessor | (legacy v0.6–v0.8: 5.4M)† | BezierActivation | Diffusion transformer |
+| BertTextEncoder | 71.0M† | BezierActivation (projection) | Text → embedding |
+| PatchDiscriminator | 45.1M† | LeakyReLU | GAN training only |
+
+† Counts are the v0.6–v0.8 figures (default `vae_dim=128, feat_dim=128`). The
+v0.10.0 `FluxFlowProcessor_v100` redesign (10 layers at `d_model=512` with
+dual FiLM, widened pillars, per-token cross-attention) is substantially larger
+than 5.4M; the VAE encoder/decoder counts also shift due to the ctx branch
+and multi-scale SPADE. Updated empirical counts will land here after training
+completes.
 
 Note: FluxExpander is asymmetrically larger due to progressive upsampling with SPADE conditioning layers.
 

@@ -197,9 +197,12 @@ graph TB
 3. Channel expansion: 5 → `vae_dim`
 4. Reparameterization (μ, σ → z) using wide-range learnable logvar
    (`WideTrainableBezier`)
-5. Conditional ctx coupling: `ctx = f(img, z)` via SPADE-style injection at
-   the bottleneck (ctx-path conditioned on `z` before its 4 self-attention
-   layers)
+5. Conditional ctx coupling: `ctx = f(img, z)`. The ctx branch runs its full
+   conv stack (`ctx_encoder_first_step` + `ctx_encoder_z`, mirroring the z
+   branch's downsampling), then `ctx_proj` produces the bottleneck feature.
+   `z` is then injected SPADE-style (`gamma_z * norm(ctx) + beta_z`) between
+   `ctx_proj` and `ctx_token_attn`, and finally the 4 self-attention layers
+   run on the modulated ctx tokens.
 6. Flatten to tokens `[H_lat × W_lat, 2*vae_dim]` (z‖ctx)
 7. Hybrid positional encoding (fixed sinusoidal + content-based from latent;
    the deterministic `+ pe_content` leak is removed)
@@ -359,7 +362,9 @@ Image → Compressor → Latent z₀
                       ↓ (add noise)
                     Noisy zₜ
                       ↓
-            FlowProcessor(zₜ, text, t)
+Text → BertEncoder → (text_seq, text_mask)
+                      ↓
+            FlowProcessor(zₜ, text_seq, text_mask, t)
                       ↓
                   Predicted v
                       ↓
@@ -370,14 +375,14 @@ where v_target = αₜ*noise - σₜ*z₀
 ### Generation
 
 ```
-Text → BertEncoder → embeddings
+Text → BertEncoder → (text_seq, text_mask)
                         ↓
-Random latent z₁ ────→ FlowProcessor(z₁, text, t₁) → z₀.₉
+Random latent z₁ ────→ FlowProcessor(z₁, text_seq, text_mask, t₁) → z₀.₉
                         ↓
-                    FlowProcessor(z₀.₉, text, t₀.₉) → z₀.₈
+                    FlowProcessor(z₀.₉, text_seq, text_mask, t₀.₉) → z₀.₈
                         ...
                         ↓
-                    FlowProcessor(z₀.₁, text, t₀.₁) → z₀
+                    FlowProcessor(z₀.₁, text_seq, text_mask, t₀.₁) → z₀
                         ↓
                     Expander(z₀)
                         ↓
