@@ -7,13 +7,25 @@
 **Training In Progress**: FluxFlow models are currently in Week 1-4 of systematic validation.
 
 **Status**:
-- ✅ Architecture implemented and tested (including v0.8.0 pillar-attention)
+- ✅ Architecture implemented and tested (latest: v0.10.0 bezier-coupled redesign)
 - 🔄 VAE training in progress (Bezier + ReLU baselines)
 - ⏳ Flow training pending VAE completion
 - ⏳ Empirical benchmarks pending training completion
 - 📅 Expected completion: Late February 2026
 
 **All performance claims below are theoretical targets** - empirical validation underway.
+
+## What's New in v0.10.0 (Bezier-Coupled Redesign)
+
+v0.10.0 is a coordinated VAE + Flow + text-path redesign. Highlights:
+
+- **Per-token text end-to-end** — `BertTextEncoder` returns `(text_seq, text_mask)`; the flow cross-attention now attends over real tokens.
+- **Conditional ctx coupling** — the VAE compressor emits `ctx = f(img, z)`, which modulates the decoder via **multi-scale `SPADE_v100b`** (additive 1×1 / 3×3 / 3×3-dilated heads with bounded gamma).
+- **Clean Gaussian `z`** — wide-range learnable `logvar` (`WideTrainableBezier`), no `tanh` squash, no deterministic `+ pe_content` leak; KL pressure pulls toward `N(0, I)`.
+- **Modernized flow** — `FluxTransformerBlock_v100` with 2D axial RoPE on image tokens, dual independent FiLM (text + time), widened pillar MLPs (`D→2D→2D→D`), gated `ctx_agg`, and continuous sinusoidal time embedding.
+- **Salvage path** — `scripts/migrate_v0_10_0_to_redesign.py` warm-starts ~80% of params from v0.7.x / v0.8.x checkpoints (direct-copy, logvar rescale, SPADE partial-fill, pillar padding, FiLM/`norm2` duplication, legacy-key drops).
+
+Upgrading from v0.7.x or v0.8.x? See [`docs/MIGRATION-v0.10.0-redesign.md`](docs/MIGRATION-v0.10.0-redesign.md) for the full delta table, the salvage CLI, and the polymorphic dispatcher that keeps legacy v060/v070 callers working.
 
 ---
 
@@ -79,7 +91,7 @@ pip install fluxflow
 - **Note**: Does NOT include training tools (use `fluxflow-training` for that)
 - **Note**: Does NOT include UI (use `fluxflow-ui` or `fluxflow-comfyui` for that)
 
-**Package available on PyPI**: [fluxflow v0.8.0](https://pypi.org/project/fluxflow/)
+**Package available on PyPI**: [fluxflow v0.10.0](https://pypi.org/project/fluxflow/)
 
 ### Development Install
 
@@ -196,14 +208,17 @@ for i, img in enumerate(result.images):
 
 | Version | Description | Status |
 |---------|-------------|--------|
-| `0.8.0` | Pillar-attention (FiLM + cross-attn on pillars) | **Current** |
+| `0.10.0` | Bezier-coupled redesign (per-token text, multi-scale SPADE, clean Gaussian z, 2D axial RoPE) | **Current** |
+| `0.8.0` | Pillar-attention (FiLM + cross-attn on pillars) | Stable |
 | `0.7.0` | Context-enhanced flow transformer | Stable |
 | `0.6.0` | Default stable | Stable |
 | `0.3.0` | Legacy | Legacy |
 
 - Default model version: `0.6.0` (set by `FluxFlowConfig.model.model_version`)
+- v0.10.0 introduces breaking changes to the flow processor and text path — see [docs/MIGRATION-v0.10.0-redesign.md](docs/MIGRATION-v0.10.0-redesign.md) and use `scripts/migrate_v0_10_0_to_redesign.py` to warm-start from older checkpoints
 - v0.8.0 checkpoints require `load_versioned_checkpoint()` — see [docs/MIGRATION.md](docs/MIGRATION.md)
 - For versioned checkpoints, use `load_versioned_checkpoint()` and set `model_version` when saving
+- Legacy v060/v070 callers continue to work unchanged via the `_flow_processor_takes_pertoken_text` dispatcher in `fluxflow.models.pipeline`
 
 ### Classifier-Free Guidance (CFG)
 
