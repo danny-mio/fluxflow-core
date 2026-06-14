@@ -276,9 +276,18 @@ text_seq, text_mask = text_encoder(
     attention_mask=tokens["attention_mask"],
 )  # text_seq: [B, T_txt, embed_dim]; text_mask: [B, T_txt] bool
 
-# Manual forward pass (requires implementing sampling loop)
-# Pass (text_seq, text_mask) into FluxFlowProcessor_v100.forward(packed, text_seq, text_mask, timesteps)
-# See fluxflow-training for complete examples
+# Minimal v-prediction sampling skeleton (Euler step; substitute your scheduler):
+#   packed = torch.randn(B, T+1, 2 * vae_dim, device=device)  # noised latent
+#   for t in torch.linspace(1.0, 0.0, num_steps + 1)[:-1]:
+#       timesteps = t.expand(B).to(device)
+#       v = pipeline.flow_processor(packed, text_seq, text_mask, timesteps)
+#       packed = packed - v * (1.0 / num_steps)
+#   image = pipeline.expander(packed)
+#
+# For a full reference implementation (CFG, scheduler, packing/unpacking, VAE
+# decode), see fluxflow-training:
+#   - src/fluxflow_training/scripts/generate.py::generate
+#   - src/fluxflow_training/training/flow_trainer.py::FlowTrainer.train_step
 ```
 
 ## Package Contents
@@ -379,82 +388,11 @@ Note: FluxExpander is asymmetrically larger due to progressive upsampling with S
 
 ## Technical Details
 
-### Bezier Activation Types
+FluxFlow ships three Bezier activation strategies — Input-Based (`BezierActivation`, 5→1 channel reduction, 0 activation params), Trainable (`TrainableBezier` / `WideTrainableBezier`, 4×D learnable control points), and Pillar-Based (4 depth-3 MLPs generating context-dependent control points). They are placed strategically: Input-Based in the VAE conv stacks and the BERT projection, Trainable in the VAE latent bottleneck and RGB head, Pillar-Based inside the flow transformer MLPs. The discriminator uses LeakyReLU (memory) and SPADE uses ReLU (simple affine).
 
-#### 1. Input-Based BezierActivation
-**Channel expansion pattern** (5→1 dimension reduction):
-```python
-# Previous layer outputs 5× channels
-nn.Conv2d(in_ch, out_ch * 5, kernel_size=3, padding=1)
-# BezierActivation splits into [t, p0, p1, p2, p3] and reduces to out_ch
-BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu")
-```
-
-**Parameters:** 0 learnable (but previous layer needs 5× weights)
-**Use:** VAE encoder/decoder, convolutional layers
-
-#### 2. TrainableBezier
-**Fixed learnable control points** (dimension-preserving):
-```python
-# Standard dimension mapping
-nn.Linear(latent_dim, latent_dim)
-# Add 4×D learnable parameters
-TrainableBezier((latent_dim,), channel_only=True)
-```
-
-**Parameters:** 4×D learnable (e.g., 1024 params for D=256)
-**Use:** VAE latent bottleneck (mu/logvar), RGB output layer
-
-#### 3. Pillar-Based
-**Context-dependent control points** from deep MLPs:
-```python
-# 4 separate depth-3 MLP networks
-p0 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
-p1 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
-p2 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
-p3 = pillarLayer(d_model, d_model, depth=3, activation=nn.SiLU())
-# Generate control points from gated input
-g = torch.sigmoid(img_seq)
-# Concatenate and apply Bezier
-output = BezierActivation(torch.cat([img_seq, p0(g), p1(g), p2(g), p3(g)], dim=-1))
-```
-
-**Parameters:** 4×(depth=3)×D² (e.g., 198K params for D=128)
-**Use:** Flow transformer MLP layers
-
-**Pre-activation parameters** (for Input-Based and Pillar-Based):
-- `t_pre_activation`: Transform input t (sigmoid, silu, tanh, or None)
-- `p_preactivation`: Transform control points (sigmoid, silu, tanh, or None)
-
-### Current FluxFlow Configuration
-
-**VAE Encoder/Decoder:** Input-Based BezierActivation
-- Pattern: `ConvTranspose2d(C, 5C) → BezierActivation() → Conv2d(C, 5C) → BezierActivation()`
-- Rationale: 0 activation params, smooth gradients for image↔latent mapping
-
-**VAE Latent (mu/logvar):** TrainableBezier
-- Pattern: `Linear(D, D) → TrainableBezier(D)`
-- Rationale: Per-channel learned curves for latent distribution (1024 params for D=256)
-
-**VAE RGB Output:** TrainableBezier
-- Pattern: `Conv2d(C, 3, ...) → TrainableBezier(3)`
-- Rationale: Learned per-channel color correction (12 params)
-
-**Flow Transformer:** Pillar-Based BezierActivation
-- Control point generation: `4 × pillarLayer(d_model, d_model, depth=3)`
-- Gating: `sigmoid(img_seq)` bounds inputs to [0,1] before pillar processing
-- Final activation: `BezierActivation(concat([img_seq, p0, p1, p2, p3]))`
-- Rationale: Highly expressive context-dependent activations per token (~198K params per block for d_model=128)
-
-**Text Encoder:** Input-Based BezierActivation
-- GELU alternative for BERT-like architectures
-- Learns optimal text→latent space mapping
-
-**Discriminator:** LeakyReLU
-- Memory efficiency - called 2× per batch (generator+real)
-
-**SPADE Blocks:** ReLU
-- Simple affine transformations don't benefit from Bezier complexity
+For implementation details, formulas, control-point construction, and placement rationale, see:
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — "Key Design Decisions / Why Bezier Activations?" and "Strategic Activation Placement"
+- [`docs/BEZIER_ACTIVATIONS.md`](docs/BEZIER_ACTIVATIONS.md) — full math and per-type API
 
 ## Future Directions
 
