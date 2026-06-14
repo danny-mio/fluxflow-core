@@ -91,3 +91,65 @@ def test_migrate_spade_partial_fill(tmp_path):
         "diffuser.expander.upscale.layers.0.spade.mlp_shared" in k for k in report["dropped"]
     )
     assert any("spade" in k for k in report["partial_filled"])
+
+
+def test_migrate_pillar_padding(tmp_path):
+    """Old D->D pillar layers become D->2D->2D->D with upper-half embedding."""
+    D = 8
+    src = tmp_path / "src.safetensors"
+    base = "diffuser.flow_processor.transformer_blocks.0.p0"
+    # Old per-pillar layers were all D->D
+    w0 = torch.randn(D, D)
+    b0 = torch.randn(D)
+    w1 = torch.randn(D, D)
+    b1 = torch.randn(D)
+    w2 = torch.randn(D, D)
+    b2 = torch.randn(D)
+    st.save_file(
+        {
+            f"{base}.0.0.weight": w0,
+            f"{base}.0.0.bias": b0,
+            f"{base}.1.0.weight": w1,
+            f"{base}.1.0.bias": b1,
+            f"{base}.2.0.weight": w2,
+            f"{base}.2.0.bias": b2,
+        },
+        str(src),
+    )
+    dst = tmp_path / "dst.safetensors"
+    report = migrate_checkpoint(src, dst)
+    new = st.load_file(str(dst))
+
+    # Layer 0: (D, D) -> (2D, D); upper D rows = old weights, lower D rows = 0.
+    nw0 = new[f"{base}.0.0.weight"]
+    assert nw0.shape == (2 * D, D)
+    assert torch.allclose(nw0[:D], w0)
+    assert torch.allclose(nw0[D:], torch.zeros_like(nw0[D:]))
+    nb0 = new[f"{base}.0.0.bias"]
+    assert nb0.shape == (2 * D,)
+    assert torch.allclose(nb0[:D], b0)
+    assert torch.allclose(nb0[D:], torch.zeros(D))
+
+    # Layer 1: (D, D) -> (2D, 2D); upper-left D x D block = old weights, rest = 0.
+    nw1 = new[f"{base}.1.0.weight"]
+    assert nw1.shape == (2 * D, 2 * D)
+    assert torch.allclose(nw1[:D, :D], w1)
+    assert torch.allclose(nw1[D:, :], torch.zeros(D, 2 * D))
+    assert torch.allclose(nw1[:, D:], torch.cat([torch.zeros(D, D), torch.zeros(D, D)], dim=0))
+    nb1 = new[f"{base}.1.0.bias"]
+    assert nb1.shape == (2 * D,)
+    assert torch.allclose(nb1[:D], b1)
+    assert torch.allclose(nb1[D:], torch.zeros(D))
+
+    # Layer 2: (D, D) -> (D, 2D); left half = old weights, right half = 0.
+    nw2 = new[f"{base}.2.0.weight"]
+    assert nw2.shape == (D, 2 * D)
+    assert torch.allclose(nw2[:, :D], w2)
+    assert torch.allclose(nw2[:, D:], torch.zeros(D, D))
+    # Layer 2 bias stays D-wide.
+    nb2 = new[f"{base}.2.0.bias"]
+    assert nb2.shape == (D,)
+    assert torch.allclose(nb2, b2)
+
+    assert any(".p0.0.0.weight" in k for k in report["padded"])
+    assert any(".p0.2.0.weight" in k for k in report["padded"])

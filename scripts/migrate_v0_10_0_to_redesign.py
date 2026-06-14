@@ -19,7 +19,6 @@ from typing import Any
 import safetensors.torch as st
 import torch
 
-
 # Keys that survive shape-compatible direct copy.
 DIRECT_COPY_PREFIXES = (
     "diffuser.compressor.encoder_first_step.",
@@ -142,6 +141,67 @@ def _maybe_zero_init_new_spade_heads(out: dict[str, torch.Tensor]) -> list[str]:
     return added
 
 
+# ---------------------------------------------------------------------------
+# Pillar padding (M8.4)
+# ---------------------------------------------------------------------------
+
+# Matches keys like
+#   diffuser.flow_processor.transformer_blocks.<N>.p<I>.<L>.0.weight|bias
+# where I in {0..3} is the pillar index and L in {0,1,2} is the layer index
+# inside the pillar's nn.Sequential.
+_PILLAR_RE = re.compile(
+    r"^diffuser\.flow_processor\.transformer_blocks\.\d+\."
+    r"p[0-3]\.(?P<layer>[0-2])\.0\.(?P<kind>weight|bias)$"
+)
+
+
+def _pad_pillar_tensor(layer: int, kind: str, value: torch.Tensor) -> torch.Tensor:
+    """Embed an old (D, D) / (D,) pillar tensor into the redesign's widened shape.
+
+    Layer 0: weight (D, D) -> (2D, D), upper half = old, lower half = 0.
+             bias (D,)    -> (2D,),   first D = old, rest zero.
+    Layer 1: weight (D, D) -> (2D, 2D), upper-left D x D = old, rest zero.
+             bias (D,)    -> (2D,),   first D = old, rest zero.
+    Layer 2: weight (D, D) -> (D, 2D), left half = old, right half = 0.
+             bias (D,)    -> (D,)    unchanged.
+    """
+    if kind == "weight":
+        D = value.shape[0]
+        if value.dim() != 2:
+            return value
+        if layer == 0:
+            out = torch.zeros(2 * D, D, dtype=value.dtype)
+            out[:D] = value
+            return out
+        if layer == 1:
+            out = torch.zeros(2 * D, 2 * D, dtype=value.dtype)
+            out[:D, :D] = value
+            return out
+        if layer == 2:
+            out = torch.zeros(D, 2 * D, dtype=value.dtype)
+            out[:, :D] = value
+            return out
+    elif kind == "bias":
+        D = value.shape[0]
+        if layer in (0, 1):
+            out = torch.zeros(2 * D, dtype=value.dtype)
+            out[:D] = value
+            return out
+        if layer == 2:
+            return value
+    return value
+
+
+def _maybe_pad_pillar(key: str, value: torch.Tensor) -> tuple[str, torch.Tensor] | None:
+    """Return the padded (key, tensor) if ``key`` matches a pillar layer; else None."""
+    m = _PILLAR_RE.match(key)
+    if not m:
+        return None
+    layer = int(m.group("layer"))
+    kind = m.group("kind")
+    return key, _pad_pillar_tensor(layer, kind, value)
+
+
 def _is_dropped(key: str) -> bool:
     return any(sub in key for sub in DROP_SUBSTRINGS)
 
@@ -193,6 +253,12 @@ def migrate_checkpoint(src: Path, dst: Path) -> dict[str, Any]:
                     report["partial_filled"].append(nk)
             else:
                 report["dropped"].append(k)
+            continue
+        padded = _maybe_pad_pillar(k, v)
+        if padded is not None:
+            nk, nv = padded
+            out[nk] = nv
+            report["padded"].append(nk)
             continue
         # Remaining cases handled in later sub-tasks; for the skeleton just drop.
         report["dropped"].append(k)
