@@ -252,3 +252,153 @@ def test_cli_smoke_returns_zero(tmp_path, fake_old_checkpoint):
     assert result.returncode == 0, result.stderr
     assert dst.exists()
     assert "migration report" in result.stdout
+
+
+def _build_fake_legacy_state_dict() -> dict:
+    """Construct a small legacy-shaped state_dict that exercises each category.
+
+    Covers:
+      * direct-copy: `vae_to_dmodel.weight`
+      * rescale: `logvar_activation.p0/p3`
+      * partial-fill: SPADE `mlp_beta.{weight,bias}`
+      * padded: pillar `p0.{0,1,2}.0.{weight,bias}`
+      * duplicated: `film_p0.{weight,bias}` and `norm2.{weight,bias}`
+      * dropped: `time_embed.0.weight`, `pillar_cross_attn.q_proj.weight`
+    """
+    D = 32  # d_model — matches the test model below
+    VAE_DIM = 16
+    EMBEDDING_SIZE = 64
+    CTX_DIMS = 16
+    PACKED = VAE_DIM + CTX_DIMS
+    block = "diffuser.flow_processor.transformer_blocks.0"
+    state: dict[str, torch.Tensor] = {
+        # direct-copy
+        "diffuser.flow_processor.vae_to_dmodel.weight": torch.randn(D, PACKED),
+        "diffuser.flow_processor.vae_to_dmodel.bias": torch.randn(D),
+        "diffuser.flow_processor.text_proj.weight": torch.randn(D, EMBEDDING_SIZE),
+        "diffuser.flow_processor.text_proj.bias": torch.randn(D),
+        # rescale (logvar control points — shape (d_model,), not VAE_DIM)
+        "diffuser.compressor.logvar_activation.p0": torch.full((D,), -1.0),
+        "diffuser.compressor.logvar_activation.p1": torch.full((D,), -0.5),
+        "diffuser.compressor.logvar_activation.p2": torch.full((D,), 0.5),
+        "diffuser.compressor.logvar_activation.p3": torch.full((D,), 1.0),
+        # partial-fill (SPADE) — beta_mid shape is (D, hidden=128, 3, 3) in this expander.
+        "diffuser.expander.upscale.layers.0.spade.mlp_beta.weight": torch.randn(D, 128, 3, 3),
+        "diffuser.expander.upscale.layers.0.spade.mlp_beta.bias": torch.randn(D),
+        # padded (pillar layers)
+        f"{block}.p0.0.0.weight": torch.randn(D, D),
+        f"{block}.p0.0.0.bias": torch.randn(D),
+        f"{block}.p0.1.0.weight": torch.randn(D, D),
+        f"{block}.p0.1.0.bias": torch.randn(D),
+        f"{block}.p0.2.0.weight": torch.randn(D, D),
+        f"{block}.p0.2.0.bias": torch.randn(D),
+        # duplicated (FiLM, norm2)
+        f"{block}.film_p0.weight": torch.randn(2 * D, D),
+        f"{block}.film_p0.bias": torch.randn(2 * D),
+        f"{block}.norm2.weight": torch.randn(D),
+        f"{block}.norm2.bias": torch.randn(D),
+        # dropped
+        "diffuser.flow_processor.time_embed.0.weight": torch.randn(1000, D),
+        f"{block}.pillar_cross_attn.q_proj.weight": torch.randn(D, D),
+        f"{block}.norm_pillar.weight": torch.ones(D),
+    }
+    return state
+
+
+def _strip_prefix(state: dict, prefix: str) -> dict:
+    """Strip a top-level prefix from state_dict keys."""
+    out = {}
+    for k, v in state.items():
+        if k.startswith(prefix):
+            out[k[len(prefix) :]] = v
+    return out
+
+
+def test_roundtrip_legacy_state_loads_into_redesigned_model(tmp_path):
+    """Build a fake legacy state, migrate, then load into the redesigned submodules.
+
+    Loads each top-level diffuser submodule separately (compressor / expander /
+    flow_processor) with strict=False, since the redesign adds new-only weights
+    that will surface as ``missing_keys`` — those are expected.
+
+    Asserts:
+      * the migrated checkpoint loads without raising IncompatibleCheckpointError;
+      * no legacy keys leak into ``unexpected_keys``;
+      * direct-copied / rescaled / padded / duplicated tensors are present after load.
+    """
+    pytest.importorskip("fluxflow.models.v100.vae")
+    from fluxflow.models.v100.vae import FluxCompressor_v100, FluxExpander_v100
+    from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+    D = 32
+    VAE_DIM = 16
+    EMBEDDING_SIZE = 64
+
+    src = tmp_path / "legacy.safetensors"
+    dst = tmp_path / "warm.safetensors"
+    st.save_file(_build_fake_legacy_state_dict(), str(src))
+
+    report = migrate_checkpoint(src, dst)
+    new = st.load_file(str(dst))
+
+    # Sanity: report contains the expected categories.
+    assert report["direct_copied"], "expected direct-copy entries"
+    assert report["rescaled"], "expected rescaled entries"
+    assert report["partial_filled"], "expected partial-fill entries"
+    assert report["padded"], "expected padded entries"
+    assert report["duplicated"], "expected duplicated entries"
+    assert report["dropped"], "expected dropped entries"
+
+    # Build small redesigned submodules.
+    flow = FluxFlowProcessor_v100(
+        d_model=D,
+        vae_dim=VAE_DIM,
+        embedding_size=EMBEDDING_SIZE,
+        n_head=4,
+        n_layers=1,
+        max_hw=128,
+        ctx_tokens=4,
+        context_dims=VAE_DIM,
+    )
+    compressor = FluxCompressor_v100(
+        in_channels=3,
+        d_model=D,
+        downscales=2,
+        max_hw=128,
+        ctx_attn_layers=1,
+        ctx_attn_heads=4,
+    )
+    expander = FluxExpander_v100(d_model=D, upscales=2, max_hw=128, ctx_tokens=4)
+
+    # Load each submodule with its own prefix-stripped slice.
+    flow_state = _strip_prefix(new, "diffuser.flow_processor.")
+    compressor_state = _strip_prefix(new, "diffuser.compressor.")
+    expander_state = _strip_prefix(new, "diffuser.expander.")
+
+    res_flow = flow.load_state_dict(flow_state, strict=False)
+    res_compressor = compressor.load_state_dict(compressor_state, strict=False)
+    res_expander = expander.load_state_dict(expander_state, strict=False)
+
+    # No legacy markers should leak through as unexpected.
+    legacy_markers = ("time_embed", "pillar_cross_attn", "norm_pillar", "mlp_beta", "film_p0.")
+    for res in (res_flow, res_compressor, res_expander):
+        for marker in legacy_markers:
+            assert not any(
+                marker in k for k in res.unexpected_keys
+            ), f"legacy marker '{marker}' leaked into unexpected_keys: {res.unexpected_keys}"
+
+    # Confirm warm-start values landed where expected.
+    assert "vae_to_dmodel.weight" in flow_state
+    assert flow.vae_to_dmodel.weight.shape == flow_state["vae_to_dmodel.weight"].shape
+    # logvar rescale applied (-1.0 -> -8.0)
+    p0 = compressor_state["logvar_activation.p0"]
+    assert torch.allclose(p0, torch.full_like(p0, -8.0), atol=1e-5)
+    assert p0.shape == (D,)
+    # padded pillar
+    assert flow_state["transformer_blocks.0.p0.0.0.weight"].shape == (2 * D, D)
+    # duplicated norm2
+    assert "transformer_blocks.0.norm2_q.weight" in flow_state
+    assert "transformer_blocks.0.norm2_kv.weight" in flow_state
+    # duplicated FiLM
+    assert "transformer_blocks.0.film_p0_text.weight" in flow_state
+    assert "transformer_blocks.0.film_p0_time.weight" in flow_state
