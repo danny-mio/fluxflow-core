@@ -55,3 +55,13 @@ checkpoints/
 # Allow published model checkpoints in models/checkpoints/
 !models/checkpoints/
 !models/checkpoints/*.safetensors
+
+# AI-agent scratch and intermediate planning docs
+docs/plans/
+_cache/
+*_SUMMARY.md
+*_FIX.md
+AUDIT_RESPONSE.md
+CRITICAL_FIX.md
+TRAINING_PROGRESS_*.md
+MATH_REVIEW.md
