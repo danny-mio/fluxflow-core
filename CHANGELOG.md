@@ -8,6 +8,104 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 _No unreleased changes._
 
+## [0.10.0] - 2026-06-14
+
+The v0.10.0 release is a coordinated VAE + Flow + text-path redesign organized
+around five locked decisions: per-token text, conditional `ctx = f(img, z)`
+coupling, full Flow modernization (2D axial RoPE, sinusoidal time, dual FiLM,
+widened pillars, gated `ctx_agg`), multi-scale SPADE, and a clean Gaussian z.
+See [`docs/MIGRATION-v0.10.0-redesign.md`](docs/MIGRATION-v0.10.0-redesign.md)
+for the upgrade path and salvage instructions.
+
+### Added
+- **`WideTrainableBezier`** activation in `models/activations.py`: learnable
+  Bezier with wide-range default control points (`p0=-8, p1=-2, p2=2, p3=4`)
+  for variational logvar.
+- **`SPADE_v100b`** multi-scale conditioning block with three additive heads
+  (`beta_low` 1×1, `beta_mid` 3×3, `beta_hi` 3×3 dilated) and a bounded
+  multiplicative gamma (`1 + softplus(scale·raw) - softplus(0)`); identity at
+  init via zero-initialized `beta_scale` / `gamma_scale` parameters.
+- **2D axial RoPE** helper (`build_axial_rope_2d`) with per-axis (H, W)
+  buffers for the flow self-attention path.
+- **Sinusoidal time embedding** (continuous; replaces the legacy
+  `Embedding(1000)` bucketed path).
+- **Widened `pillarLayerWide`** (`D→2D→2D→D`, depth 3) for the flow pillar
+  MLPs.
+- **Conditional ctx coupling** in the VAE compressor: ctx now encodes
+  `f(img, z)` via SPADE-style injection of `z` into the ctx conv stack.
+- **`build_cfg_null_pair`** helper in the pipeline to produce
+  `(null_text_seq, null_text_mask)` from the encoded empty prompt for CFG.
+- **`IncompatibleCheckpointError`** raised when loading legacy SPADE keys
+  (single-scale `mlp_shared` / `mlp_beta` / `mlp_gamma`) into v0.10.0.
+- **`FluxTransformerBlock_v100`** and **`FluxFlowProcessor_v100`** flow
+  modules with per-token text cross-attention, axial 2D RoPE on image tokens,
+  dual independent FiLM (text + time), gated `ctx_agg` (GRU-style), and a
+  widened pillarLayer.
+- **Salvage script** `scripts/migrate_v0_10_0_to_redesign.py` covering seven
+  conversion categories: direct-copy of unchanged tensors, logvar rescale
+  from `[-1, 1]` to `[-8, 4]`, SPADE partial-fill (`mlp_beta → beta_mid`,
+  zero-init new heads), pillar padding (`D→D` → upper-left of widened
+  `D→2D→2D→D`), FiLM duplication (text + time), `norm2` duplication
+  (q / kv), and explicit drop of legacy keys (`time_embed`,
+  `pillar_cross_attn`, `norm_pillar`). Emits a one-page report. ~80% of
+  params from `flxflow_final.safetensors` carry through.
+- Mask-aware path on `ParallelAttention`: optional `attn_mask` keyword that
+  applies `-inf` to invalid positions before softmax (`None` reproduces prior
+  behavior).
+- `@pytest.mark.compat_break` marker for tests that assert v0.10.0 refuses
+  to silently load legacy v0.10.0-pre checkpoints.
+
+### Changed
+- **`BertTextEncoder.forward`** now returns `(text_seq, text_mask)` per
+  token instead of a pooled `[B, E]` vector. Mean-pooling removed.
+- **`FluxFlowProcessor_v100.forward`** signature is now
+  `forward(packed, text_seq, text_mask, timesteps)` (per-token text +
+  boolean mask).
+- **`FluxPipeline.forward`** plumbs `(text_seq, text_mask)` end-to-end.
+- **Legacy `SPADE`** module is now an alias for `SPADEWithLearnableScale`
+  and is considered deprecated for v0.10.0 paths.
+- **CFG null** is now the encoded empty prompt (precomputed
+  `(null_text_seq, null_text_mask)`) rather than `torch.zeros_like(...)`,
+  closing the train/test CFG gap.
+- **Visualization** (`utils/visualization.py`) updated to consume the
+  per-token text tuple.
+- **`fluxflow.models.pipeline._flow_processor_takes_pertoken_text`** added
+  as a polymorphic dispatcher: inspects the loaded flow processor and routes
+  v060/v070 checkpoints through the pooled-text path automatically.
+
+### Removed
+- `pillar_cross_attn` and the shared `norm_pillar` LayerNorm from the
+  transformer block (the cross-attention was length-1 degenerate over pooled
+  text).
+- `Embedding(1000, d_model)` time-bucket path (replaced by continuous
+  sinusoidal embedding).
+- `tanh` squash after LayerNorm on both `z` and `ctx` tokens (was clipping
+  the high-frequency tail of the latent distribution).
+- Deterministic `+ pe_content` leak around the VAE bottleneck (the
+  bottleneck is now genuinely variational so KL pressure pulls toward
+  N(0, I)).
+- The shared single `norm2` in cross-attention is replaced by separate
+  `norm2_q` and `norm2_kv`.
+
+### Migration
+
+Old v0.10.0-pre, v0.7.x and v0.8.x checkpoints are not weight-compatible
+with v0.10.0; the salvage script provides a warm-start covering the
+direct-copy paths and the partial-fill cases listed above. Full details
+and an API surface delta table live in
+[`docs/MIGRATION-v0.10.0-redesign.md`](docs/MIGRATION-v0.10.0-redesign.md).
+
+CLI one-liner:
+
+```bash
+python scripts/migrate_v0_10_0_to_redesign.py \
+    --src OLD.safetensors \
+    --dst WARM.safetensors
+```
+
+After running the script, fine-tune with the standard v0.10.0 pipeline
+config to recover quality.
+
 ## [0.8.1] - 2026-04-03
 
 ### Added
