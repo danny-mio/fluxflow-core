@@ -25,7 +25,7 @@ v0.10.0 is a coordinated VAE + Flow + text-path redesign. Highlights:
 - **Modernized flow** — `FluxTransformerBlock_v100` with 2D axial RoPE on image tokens, dual independent FiLM (text + time), widened pillar MLPs (`D→2D→2D→D`), gated `ctx_agg`, and continuous sinusoidal time embedding.
 - **Salvage path** — `scripts/migrate_v0_10_0_to_redesign.py` warm-starts ~80% of params from v0.7.x / v0.8.x checkpoints (direct-copy, logvar rescale, SPADE partial-fill, pillar padding, FiLM/`norm2` duplication, legacy-key drops).
 
-Upgrading from v0.7.x or v0.8.x? See [`docs/MIGRATION-v0.10.0-redesign.md`](docs/MIGRATION-v0.10.0-redesign.md) for the full delta table, the salvage CLI, and the polymorphic dispatcher that keeps legacy v060/v070 callers working.
+Upgrading from v0.7.x or v0.8.x: see [`docs/MIGRATION-v0.10.0-redesign.md`](docs/MIGRATION-v0.10.0-redesign.md) for the full delta table, the salvage CLI, and the polymorphic dispatcher that keeps legacy v060/v070 callers working.
 
 ---
 

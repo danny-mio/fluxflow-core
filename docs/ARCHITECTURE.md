@@ -711,18 +711,7 @@ where target_v = α_t * noise - σ_t * z₀
 
 ## Extensions
 
-### Possible Improvements
-
-1. **Multi-aspect ratios**: Dynamic latent sizes
-2. **Super-resolution**: Cascade larger sizes
-3. **Controlnet**: Spatial conditioning (edges, depth)
-4. **LoRA fine-tuning**: Efficient adaptation
-5. **Latent caching**: Pre-encode all images
-
-### Research Directions
-
-1. **Better attention**: Flash attention, memory-efficient
-2. **Faster sampling**: Distillation, consistency models
-3. **Better latents**: VQ-VAE, residual quantization
-4. **Multi-modal**: Image + text → image
-5. **Video generation**: Temporal consistency
+Active near-term work: empirical FID validation of the v0.10.0 redesign
+against the ReLU baseline, a custom Bezier-only text encoder to replace
+DistilBERT (see `BertTextEncoder` design note), and MPS/CUDA throughput
+tuning of the widened pillar MLPs.
