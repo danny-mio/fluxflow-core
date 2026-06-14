@@ -226,10 +226,7 @@ for i, img in enumerate(result.images):
 
 #### What is CFG?
 
-CFG improves generation quality by amplifying the influence of text conditioning. It works by:
-1. Running two forward passes: one with text, one without
-2. Interpolating between conditional and unconditional predictions
-3. Producing images that more strongly follow the text prompt
+CFG runs a conditional and unconditional forward pass and interpolates the outputs; `guidance_scale` sets the interpolation weight.
 
 #### Using CFG
 
@@ -461,24 +458,7 @@ output = BezierActivation(torch.cat([img_seq, p0(g), p1(g), p2(g), p3(g)], dim=-
 
 ## Future Directions
 
-### Custom Text Encoder
-The current implementation uses pre-trained DistilBERT as a practical starting point. Future development will create a **custom text encoder built entirely with Bezier activations**, enabling:
-- True end-to-end Bezier-based training
-- Better semantic alignment with the generative model
-- Reduced dependency on external pre-trained models
-- Foundation for multimodal extensions
-
-### Multimodal Extensions
-With a custom Bezier text encoder, FluxFlow can be extended to:
-- **Text + Image → Image**: Conditioning on reference images
-- **Video generation**: Temporal consistency via Bezier transformations
-- **3D synthesis**: Extending the architecture to volumetric data
-
-### Performance Optimizations
-- **JIT compilation**: Already implemented (10-20% speedup available)
-- **Mixed precision**: fp16/bf16 training and inference
-- **Quantization**: 8-bit/4-bit inference for edge devices
-- **Knowledge distillation**: Bezier→fixed activation distillation for mobile deployment
+Planned: replace the pre-trained DistilBERT path with a custom Bezier-only text encoder for true end-to-end Bezier training, and ship mixed-precision (fp16/bf16) inference once v0.10.0 training stabilises.
 
 ## Links
 

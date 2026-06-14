@@ -446,9 +446,6 @@ Note: Parameter scaling is approximately O(D²) for attention and linear layers.
 
 ### Why Bezier Activations?
 
-Bezier activations are the **core innovation** of FluxFlow, providing adaptive cubic polynomial transformations through three distinct approaches.
-
-**Mathematical Foundation**:
 ```
 Standard neuron: y = σ(Wx + b)        # σ is fixed (ReLU, GELU, etc.)
 Bezier neuron:   y = B(t; p₀,p₁,p₂,p₃) # B uses cubic polynomial
