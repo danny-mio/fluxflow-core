@@ -505,10 +505,80 @@ Unlike symmetric autoencoders:
 
 | Version | Module | Key Change | Status |
 |---------|--------|-----------|--------|
-| `0.8.0` | `v080/flow.py` | Pillar-attention: FiLM + cross-attn on pillars | **Current** |
+| `0.10.0` | `v100/` | Bezier-coupled redesign: per-token text, multi-scale SPADE, clean Gaussian z, 2D axial RoPE | **Current** |
+| `0.8.0` | `v080/flow.py` | Pillar-attention: FiLM + cross-attn on pillars | Stable |
 | `0.7.0` | `v070/flow.py` | Context-enhanced transformer blocks | Stable |
 | `0.6.0` | `v060/` | Default stable architecture | Stable |
 | `0.3.0` | `v030/` | Legacy architecture | Legacy |
+
+### v0.10.0: Bezier-Coupled Architecture
+
+**Key idea**: A coordinated redesign of VAE, Flow, and text path. The five
+locked decisions are:
+
+1. **Per-token text end-to-end** — `BertTextEncoder.forward` returns
+   `(text_seq, text_mask)`; the flow cross-attention attends over real
+   tokens instead of a length-1 broadcast.
+2. **Conditional ctx coupling (`ctx = f(img, z)`)** — the VAE compressor's
+   ctx path is conditioned on `z` via SPADE-style injection at the
+   bottleneck. ctx now encodes the residual `z` could not capture instead of
+   running as an independent parallel pipe.
+3. **Full Flow modernization** — 2D axial RoPE on image tokens, continuous
+   sinusoidal time on a separate channel, dual independent FiLM (text + time),
+   widened `pillarLayerWide` (`D→2D→2D→D`, depth 3), gated `ctx_agg` residual,
+   and removal of the length-1-degenerate `pillar_cross_attn`.
+4. **Multi-scale SPADE** (`SPADE_v100b`) with three additive heads
+   (`beta_low` 1×1, `beta_mid` 3×3, `beta_hi` 3×3 dilated) and a bounded
+   multiplicative gamma `1 + softplus(scale·raw) - softplus(0)`. Identity
+   at init via zero-initialized `beta_scale` / `gamma_scale` parameters.
+5. **Clean Gaussian z** — wide-range learnable logvar via
+   `WideTrainableBezier` (default `p0=-8, p1=-2, p2=2, p3=4`); the `tanh`
+   squash after LayerNorm on `z` and `ctx` is removed; the deterministic
+   `+ pe_content` leak around the bottleneck is removed so KL pressure
+   genuinely pulls toward `N(0, I)`.
+
+**New VAE.** The compressor's z-path samples plain `N(0, I)` latents; the
+ctx-path is SPADE-injected with `z` before its 4 self-attention layers. The
+expander replaces single-scale SPADE with the multi-scale `SPADE_v100b` block.
+`_ProgressiveUpscaler`, `seam_smoother`, `seam_smoother_ctx`, and the
+`to_rgb_conv` chain are unchanged. Packed token format
+`[B, T+1, 2D]` (z‖ctx + HW token) is preserved.
+
+**New Flow.** `FluxTransformerBlock_v100` block forward:
+
+```
+1. Self-attention on img with 2D axial RoPE
+2. Cross-attention img -> text with separate norm2_q / norm2_kv,
+   mask-aware via ParallelAttention(attn_mask=...)
+3. Gate g = sigmoid(img_seq)
+4. Pillar MLPs (widened D->2D->2D->D)
+5. Dual FiLM applied independently (text + time, additive scales/biases)
+6. (REMOVED) pillar_cross_attn — was length-1 degenerate over pooled text
+7. FFN + BezierActivation on [img_seq | img_p0 | img_p1 | img_p2 | img_p3]
+```
+
+`FluxFlowProcessor_v100.forward(packed, text_seq, text_mask, timesteps)`.
+Time is now `sinusoidal_embedding(timesteps, d_model)` (continuous; the
+legacy `Embedding(1000, d_model)` bucketed path is removed) and `text_cond`
+is the `[CLS]` token. `ctx_agg` is updated GRU-style:
+`ctx_agg ← gate · ctx_agg + (1 − gate) · ctx_delta_proj(img_seq.mean(1))`.
+
+**Backward-compat dispatcher.** Legacy `v060` / `v070` flow processors are
+still supported by `fluxflow.models.pipeline._flow_processor_takes_pertoken_text`,
+which inspects the loaded flow processor signature and routes pooled-text
+checkpoints through the old path automatically. No caller changes are
+required when loading older checkpoints.
+
+**Checkpoint compatibility.** Old v0.10.0-pre, v0.7.x and v0.8.x checkpoints
+are not weight-compatible with v0.10.0. Loading legacy single-scale SPADE
+keys raises `IncompatibleCheckpointError`. The salvage script
+`scripts/migrate_v0_10_0_to_redesign.py` warm-starts ~80% of params via
+direct-copy, logvar rescale (`[-1, 1] → [-8, 4]`), SPADE partial-fill
+(`mlp_beta → beta_mid`, zero-init new heads), pillar padding
+(`D→D` → upper-left of widened `D→2D→2D→D`), FiLM duplication (text + time),
+`norm2` duplication (q / kv), and explicit drop of legacy keys
+(`time_embed`, `pillar_cross_attn`, `norm_pillar`). See
+[`docs/MIGRATION-v0.10.0-redesign.md`](MIGRATION-v0.10.0-redesign.md).
 
 ### v0.8.0: Pillar-Attention Architecture
 
