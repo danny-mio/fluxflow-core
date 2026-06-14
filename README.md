@@ -271,12 +271,16 @@ pipeline = FluxPipeline.from_pretrained("path/to/checkpoint.safetensors")
 tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 text_encoder = BertTextEncoder(embed_dim=1024)  # Must match text_embedding_dim in training config (default: 1024)
 
-# Encode text
+# Encode text (v0.10.0+ API: returns per-token sequence + attention mask)
 text = "a beautiful sunset"
 tokens = tokenizer(text, return_tensors="pt", padding="max_length", max_length=512)
-text_embeddings = text_encoder(tokens["input_ids"])
+text_seq, text_mask = text_encoder(
+    tokens["input_ids"],
+    attention_mask=tokens["attention_mask"],
+)  # text_seq: [B, T_txt, embed_dim]; text_mask: [B, T_txt] bool
 
 # Manual forward pass (requires implementing sampling loop)
+# Pass (text_seq, text_mask) into FluxFlowProcessor_v100.forward(packed, text_seq, text_mask, timesteps)
 # See fluxflow-training for complete examples
 ```
 

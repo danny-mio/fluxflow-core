@@ -51,6 +51,15 @@ Image → FluxCompressor → latent → FluxFlowProcessor → denoised → FluxE
 
 ### Detailed Architecture Diagram
 
+> **Note:** The diagram below depicts the pre-v0.10.0 architecture (mean-pooled
+> text, single context vector, pooled text injection). v0.10.0 replaces the
+> mean-pool / `B x D_text` text path with per-token `(text_seq, text_mask)`,
+> swaps the pooled context vector for `ctx = f(img, z)` carried in the packed
+> latent, and adds dual FiLM (text + time), 2D axial RoPE, and multi-scale
+> SPADE in the decoder. See the "Components" sub-sections below for the
+> v0.10.0 contract; the v0.6.x–v0.8.x behaviour summarised in this diagram is
+> retained via the `_flow_processor_takes_pertoken_text` dispatcher.
+
 ```mermaid
 graph TB
     subgraph "Input Layer"
@@ -175,22 +184,32 @@ graph TB
 
 **Purpose**: Encode images to compact latent representations
 
-**Architecture:**
-- **Input**: RGB images [B, 3, H, W]
-- **Output**: Latent packet [B, T+1, D] where T=H*W/256, D=`vae_dim`
+**Architecture (v0.10.0):**
+- **Input**: RGB images `[B, 3, H, W]`
+- **Output**: Packed latent `[B, T+1, 2*vae_dim]` carrying `z‖ctx + HW token`,
+  where `T = (H//16) * (W//16)`. The z-half samples plain `N(0, I)`; the
+  ctx-half is `ctx = f(img, z)` (SPADE-injected with `z` before its
+  self-attention stack).
 
 **Stages:**
 1. Coordinate channels (add normalized x,y)
 2. Progressive downsampling (4 stages, 2x each = 16x total)
 3. Channel expansion: 5 → `vae_dim`
-4. Reparameterization (μ, σ → z)
-5. Flatten to tokens [H_lat × W_lat, D]
-6. Hybrid positional encoding (fixed sinusoidal + content-based from latent)
-7. Self-attention (4 layers, 8 heads)
-8. Append HW vector [1, D] with normalized dimensions
+4. Reparameterization (μ, σ → z) using wide-range learnable logvar
+   (`WideTrainableBezier`)
+5. Conditional ctx coupling: `ctx = f(img, z)` via SPADE-style injection at
+   the bottleneck (ctx-path conditioned on `z` before its 4 self-attention
+   layers)
+6. Flatten to tokens `[H_lat × W_lat, 2*vae_dim]` (z‖ctx)
+7. Hybrid positional encoding (fixed sinusoidal + content-based from latent;
+   the deterministic `+ pe_content` leak is removed)
+8. Self-attention (4 layers, 8 heads)
+9. Append HW token `[1, 2*vae_dim]` with normalized dimensions
 
 **Key Features:**
 - Bezier activations for nonlinearity
+- Clean Gaussian `z`: KL pressure pulls toward `N(0, I)`; no `tanh` squash
+  after LayerNorm on `z` / `ctx`
 - KL divergence with free-bits constraint
 - Gradient checkpointing for memory efficiency
 
@@ -198,60 +217,88 @@ graph TB
 
 **Purpose**: Denoise latent representations conditioned on text
 
-**Architecture:**
-- **Input**: Noised latent [B, T+1, D], text embeddings [B, D_text], timesteps [B]
-- **Output**: Predicted v (velocity) [B, T+1, D]
+**Architecture (v0.10.0, `FluxFlowProcessor_v100`):**
+- **Input**:
+  - `packed` — noised packed latent `[B, T+1, 2*vae_dim]` (z‖ctx + HW token)
+  - `text_seq` — per-token text embeddings `[B, T_txt, embedding_size]`
+  - `text_mask` — bool mask `[B, T_txt]` (True for valid tokens)
+  - `timesteps` — `[B]` continuous diffusion time
+- **Output**: Predicted v (velocity) `[B, T+1, 2*vae_dim]`
 
 **Stages:**
-1. Timestep embedding (sinusoidal + MLP)
-2. Text injection via cross-attention
-3. Transformer blocks (default: 10 layers)
-   - Rotary position embeddings (RoPE)
-   - Parallel attention (Q from latent, KV from latent+text)
-   - Bezier activation MLPs
-4. Output projection
+1. Continuous sinusoidal time embedding (`sinusoidal_embedding(timesteps, d_model)`)
+   piped through `time_mlp`; bucketed `Embedding(1000)` is removed.
+2. Per-token text path: `text_proj` produces `text_seq` keys/values for
+   cross-attention; `text_cond_proj` projects the first token (`text_cond`,
+   the `[CLS]` position under DistilBERT) for FiLM.
+3. Transformer blocks (default: 10 × `FluxTransformerBlock_v100`)
+   - 2D axial RoPE on image tokens (built per `H_lat, W_lat`)
+   - Self-attention on `img_seq`
+   - Per-token cross-attention `img -> text` with `text_mask` (separate
+     `norm2_q` / `norm2_kv`)
+   - Dual independent FiLM (text + time, additive scales/biases)
+   - Widened pillar MLPs (`D → 2D → 2D → D`, depth 3)
+   - Bezier activation MLPs on `[img_seq | p0 | p1 | p2 | p3]`
+4. GRU-style gated `ctx_agg ← gate · ctx_agg + (1 − gate) · ctx_delta_proj(img_seq.mean(1))`.
+5. Output projection back to `2*vae_dim`.
 
 **Key Features:**
 - v-prediction (predicts velocity between noise and signal)
 - Separate Q and KV projections for efficiency
-- Context-aware processing via gated injection
+- Per-token text cross-attention (length-1-degenerate `pillar_cross_attn` removed)
+- Continuous time on a dedicated channel; dual FiLM (text + time)
+- Backward-compat: pooled-text v060/v070 processors are routed via
+  `_flow_processor_takes_pertoken_text` in `fluxflow.models.pipeline`.
 
 ### 3. FluxExpander (VAE Decoder)
 
 **Purpose**: Decode latent tokens to RGB images
 
-**Architecture:**
-- **Input**: Latent packet [B, T+1, D]
-- **Output**: RGB images [B, 3, H, W]
+**Architecture (v0.10.0):**
+- **Input**: Packed latent `[B, T+1, 2*vae_dim]` carrying `z‖ctx + HW token`
+- **Output**: RGB images `[B, 3, H, W]`
 
 **Stages:**
-1. Unpack: Extract tokens and HW dimensions
-2. Context pooling (first K tokens → context vector)
-3. Reshape tokens to 2D [D, H_lat, W_lat]
-4. Progressive upsampling (4 stages, 2x each = 16x total)
-   - SPADE conditioning at each stage
+1. Unpack: split the packed token stream into the `z` half, the `ctx` half
+   (`ctx = f(img, z)` produced by the compressor), and the trailing HW token.
+2. Reshape both `z` and `ctx` tokens to 2D `[D, H_lat, W_lat]`; `ctx` is the
+   spatial conditioning signal — no first-K-token pooling.
+3. Progressive upsampling (4 stages, 2× each = 16× total)
+   - Multi-scale SPADE conditioning at each stage (`SPADE_v100b`) fed by `ctx`
    - Transposed convolutions for upsampling
-5. RGB projection (D → 3 channels)
-6. Clamp to [-1, 1]
+4. RGB projection (D → 3 channels)
+5. Clamp to [-1, 1]
 
 **Key Features:**
-- SPADE (Spatially-Adaptive Denormalization) for context control
+- Multi-scale SPADE (`beta_low` 1×1, `beta_mid` 3×3, `beta_hi` 3×3 dilated
+  with effective 7×7 receptive field via `dilation=3`); bounded multiplicative
+  gamma `1 + softplus(scale·raw) - softplus(0)`. Identity at init via
+  zero-initialised `beta_scale` / `gamma_scale`.
 - Bezier activations
 - Skip connections via residuals
 
 ### 4. BertTextEncoder
 
-**Purpose**: Encode text prompts to dense embeddings
+**Purpose**: Encode text prompts to per-token embeddings
 
-**Current Implementation:**
-- **Input**: Token IDs [B, seq_len]
-- **Output**: Text embeddings [B, D_text]
+**Current Implementation (v0.10.0):**
+- **Input**: `input_ids` `[B, T_txt]`, `attention_mask` `[B, T_txt]`
+- **Output**: `(text_seq, text_mask)` where
+  - `text_seq` — per-token embeddings `[B, T_txt, embed_dim]`
+  - `text_mask` — bool mask `[B, T_txt]` (True for valid tokens)
 
 **Stages:**
-1. DistilBERT backbone (6 layers, 768 hidden)
-2. Mean pooling over sequence
-3. Two-stage Bezier projection: Linear(768→2560) → LayerNorm(2560) → BezierActivation → Linear(512→D_text×5) → LayerNorm(D_text×5) → BezierActivation → D_text
-4. Xavier initialization
+1. DistilBERT backbone (6 layers, 768 hidden) — `last_hidden_state` `[B, T_txt, 768]`
+2. Two-stage Bezier projection producing per-token embeddings at `embed_dim`;
+   `nn.Linear` and `BezierActivation` broadcast cleanly over the leading
+   sequence dim, so the projection is applied independently to every token.
+3. Mask passthrough: `text_mask = attention_mask.bool()` (or all-True if no
+   mask is supplied).
+4. Xavier initialization.
+
+Mean pooling over the sequence was the v0.6–v0.8 path; v0.10.0 removes it
+entirely so the flow cross-attention can attend over real tokens via the
+`text_mask`.
 
 **Design Note:**
 The current implementation uses pre-trained DistilBERT as a practical starting point, allowing the project to focus on the core Bezier activation innovation in the VAE and flow components. This is a **temporary solution** - future development will replace this with a custom text encoder built from scratch using Bezier activations throughout, which will:
@@ -262,7 +309,7 @@ The current implementation uses pre-trained DistilBERT as a practical starting p
 
 **Key Features:**
 - Frozen DistilBERT backbone (optional fine-tuning)
-- Bezier activation in projection layers
+- Bezier activation in projection layers (per-token, broadcast over `T_txt`)
 - Placeholder for future custom encoder
 
 ### 5. PatchDiscriminator (GAN Training)
@@ -513,54 +560,37 @@ Unlike symmetric autoencoders:
 
 ### v0.10.0: Bezier-Coupled Architecture
 
-**Key idea**: A coordinated redesign of VAE, Flow, and text path. The five
-locked decisions are:
+The five locked decisions of the v0.10.0 redesign — per-token text, conditional
+`ctx = f(img, z)`, full Flow modernisation, multi-scale `SPADE_v100b`, and
+clean Gaussian `z` — are described in place in the **Components** sub-sections
+above (`FluxCompressor`, `FluxFlowProcessor`, `FluxExpander`, `BertTextEncoder`).
+This sub-section collects the cross-cutting details that don't fit cleanly into
+a single component.
 
-1. **Per-token text end-to-end** — `BertTextEncoder.forward` returns
-   `(text_seq, text_mask)`; the flow cross-attention attends over real
-   tokens instead of a length-1 broadcast.
-2. **Conditional ctx coupling (`ctx = f(img, z)`)** — the VAE compressor's
-   ctx path is conditioned on `z` via SPADE-style injection at the
-   bottleneck. ctx now encodes the residual `z` could not capture instead of
-   running as an independent parallel pipe.
-3. **Full Flow modernization** — 2D axial RoPE on image tokens, continuous
-   sinusoidal time on a separate channel, dual independent FiLM (text + time),
-   widened `pillarLayerWide` (`D→2D→2D→D`, depth 3), gated `ctx_agg` residual,
-   and removal of the length-1-degenerate `pillar_cross_attn`.
-4. **Multi-scale SPADE** (`SPADE_v100b`) with three additive heads
-   (`beta_low` 1×1, `beta_mid` 3×3, `beta_hi` 3×3 dilated) and a bounded
-   multiplicative gamma `1 + softplus(scale·raw) - softplus(0)`. Identity
-   at init via zero-initialized `beta_scale` / `gamma_scale` parameters.
-5. **Clean Gaussian z** — wide-range learnable logvar via
-   `WideTrainableBezier` (default `p0=-8, p1=-2, p2=2, p3=4`); the `tanh`
-   squash after LayerNorm on `z` and `ctx` is removed; the deterministic
-   `+ pe_content` leak around the bottleneck is removed so KL pressure
-   genuinely pulls toward `N(0, I)`.
+**Compressor (z + ctx).** The compressor's z-path samples plain `N(0, I)`
+latents via a wide-range learnable logvar (`WideTrainableBezier`, defaults
+`p0=-8, p1=-2, p2=2, p3=4`); the `tanh` squash after LayerNorm on `z` and
+`ctx` is removed, and the deterministic `+ pe_content` leak around the
+bottleneck is removed so KL pressure pulls toward `N(0, I)`. The ctx-path is
+SPADE-injected with `z` before its 4 self-attention layers, so `ctx = f(img, z)`
+encodes the residual `z` could not capture. Packed token format
+`[B, T+1, 2*vae_dim]` (z‖ctx + HW token) is preserved.
 
-**New VAE.** The compressor's z-path samples plain `N(0, I)` latents; the
-ctx-path is SPADE-injected with `z` before its 4 self-attention layers. The
-expander replaces single-scale SPADE with the multi-scale `SPADE_v100b` block.
-`_ProgressiveUpscaler`, `seam_smoother`, `seam_smoother_ctx`, and the
-`to_rgb_conv` chain are unchanged. Packed token format
-`[B, T+1, 2D]` (z‖ctx + HW token) is preserved.
-
-**New Flow.** `FluxTransformerBlock_v100` block forward:
+**Flow block reference (`FluxTransformerBlock_v100`).**
 
 ```
 1. Self-attention on img with 2D axial RoPE
 2. Cross-attention img -> text with separate norm2_q / norm2_kv,
-   mask-aware via ParallelAttention(attn_mask=...)
+   mask-aware via ParallelAttention(attn_mask=text_mask)
 3. Gate g = sigmoid(img_seq)
-4. Pillar MLPs (widened D->2D->2D->D)
+4. Pillar MLPs (widened D->2D->2D->D, depth 3)
 5. Dual FiLM applied independently (text + time, additive scales/biases)
 6. (REMOVED) pillar_cross_attn — was length-1 degenerate over pooled text
 7. FFN + BezierActivation on [img_seq | img_p0 | img_p1 | img_p2 | img_p3]
 ```
 
-`FluxFlowProcessor_v100.forward(packed, text_seq, text_mask, timesteps)`.
-Time is now `sinusoidal_embedding(timesteps, d_model)` (continuous; the
-legacy `Embedding(1000, d_model)` bucketed path is removed) and `text_cond`
-is the `[CLS]` token. `ctx_agg` is updated GRU-style:
+`text_cond` is the first token of `text_seq` (the `[CLS]` position when using
+DistilBERT). `ctx_agg` is updated GRU-style:
 `ctx_agg ← gate · ctx_agg + (1 − gate) · ctx_delta_proj(img_seq.mean(1))`.
 
 **Backward-compat dispatcher.** Legacy `v060` / `v070` flow processors are
