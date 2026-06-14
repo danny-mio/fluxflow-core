@@ -33,7 +33,7 @@ for the upgrade path and salvage instructions.
   MLPs.
 - **Conditional ctx coupling** in the VAE compressor: ctx now encodes
   `f(img, z)` via SPADE-style injection of `z` into the ctx conv stack.
-- **`build_cfg_null_pair`** helper in the pipeline to produce
+- **`build_cfg_null_pair`** helper in `utils/visualization.py` to produce
   `(null_text_seq, null_text_mask)` from the encoded empty prompt for CFG.
 - **`IncompatibleCheckpointError`** raised when loading legacy SPADE keys
   (single-scale `mlp_shared` / `mlp_beta` / `mlp_gamma`) into v0.10.0.
@@ -62,8 +62,9 @@ for the upgrade path and salvage instructions.
   `forward(packed, text_seq, text_mask, timesteps)` (per-token text +
   boolean mask).
 - **`FluxPipeline.forward`** plumbs `(text_seq, text_mask)` end-to-end.
-- **Legacy `SPADE`** module is now an alias for `SPADEWithLearnableScale`
-  and is considered deprecated for v0.10.0 paths.
+- **`SPADEWithLearnableScale`** is now a deprecated alias for `SPADE_v100b`
+  (kept for one release; the original beta-only `SPADE` in
+  `models/conditioning.py` is unchanged and remains the v060/v070 path).
 - **CFG null** is now the encoded empty prompt (precomputed
   `(null_text_seq, null_text_mask)`) rather than `torch.zeros_like(...)`,
   closing the train/test CFG gap.
@@ -84,8 +85,8 @@ for the upgrade path and salvage instructions.
 - Deterministic `+ pe_content` leak around the VAE bottleneck (the
   bottleneck is now genuinely variational so KL pressure pulls toward
   N(0, I)).
-- The shared single `norm2` in cross-attention is replaced by separate
-  `norm2_q` and `norm2_kv`.
+- The shared single `norm2` in the v0.10.0 cross-attention block is split
+  into separate `norm2_q` and `norm2_kv` LayerNorms.
 
 ### Migration
 
