@@ -57,6 +57,26 @@ DROP_SUBSTRINGS = (
 )
 
 
+# Logvar activation rescale: the four control points moved from [-1, 1] to
+# WideTrainableBezier's [-8, 4] range.
+LOGVAR_KEYS = (
+    "diffuser.compressor.logvar_activation.p0",
+    "diffuser.compressor.logvar_activation.p1",
+    "diffuser.compressor.logvar_activation.p2",
+    "diffuser.compressor.logvar_activation.p3",
+)
+
+_OLD_LOGVAR_RANGE = (-1.0, 1.0)
+_NEW_LOGVAR_RANGE = (-8.0, 4.0)
+
+
+def _rescale_logvar(t: torch.Tensor) -> torch.Tensor:
+    """Linearly map old [-1, 1] tensor values to new [-8, 4]."""
+    old_min, old_max = _OLD_LOGVAR_RANGE
+    new_min, new_max = _NEW_LOGVAR_RANGE
+    return (t - old_min) / (old_max - old_min) * (new_max - new_min) + new_min
+
+
 def _is_dropped(key: str) -> bool:
     return any(sub in key for sub in DROP_SUBSTRINGS)
 
@@ -95,6 +115,10 @@ def migrate_checkpoint(src: Path, dst: Path) -> dict[str, Any]:
         if _is_direct_copy(k):
             out[k] = v
             report["direct_copied"].append(k)
+            continue
+        if k in LOGVAR_KEYS:
+            out[k] = _rescale_logvar(v)
+            report["rescaled"].append(k)
             continue
         # Remaining cases handled in later sub-tasks; for the skeleton just drop.
         report["dropped"].append(k)

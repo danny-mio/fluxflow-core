@@ -40,3 +40,15 @@ def test_migrate_direct_copy_keys(fake_old_checkpoint, tmp_path):
     # Report mentions dropped keys
     assert any("time_embed" in k for k in report["dropped"])
     assert any("pillar_cross_attn" in k for k in report["dropped"])
+
+
+def test_migrate_logvar_rescales_old_range_to_wide(fake_old_checkpoint, tmp_path):
+    out_path = tmp_path / "warm.safetensors"
+    report = migrate_checkpoint(fake_old_checkpoint, out_path)
+    new = st.load_file(str(out_path))
+    p0 = new["diffuser.compressor.logvar_activation.p0"]
+    p3 = new["diffuser.compressor.logvar_activation.p3"]
+    # Old range was [-1, 1]; new range is [-8, 4]; -1 -> -8, 1 -> 4.
+    assert torch.allclose(p0, torch.full_like(p0, -8.0), atol=1e-5)
+    assert torch.allclose(p3, torch.full_like(p3, 4.0), atol=1e-5)
+    assert any("logvar_activation" in k for k in report["rescaled"])
