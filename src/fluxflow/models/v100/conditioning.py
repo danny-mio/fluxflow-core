@@ -2,8 +2,9 @@
 v0.10.0 conditioning modules.
 
 Contains SPADE_v100b — a multi-scale SPADE variant with three additive β heads
-(1×1 low-freq, 3×3 mid-freq, 7×7-dilated high-freq) and a bounded multiplicative
-γ branch.  Both scales start at 0 so the layer is exactly identity at init.
+(1×1 low-freq, 3×3 mid-freq, 3×3 dilated high-freq — effective 7×7 receptive
+field via dilation=3) and a bounded multiplicative γ branch.  Both scales
+start at 0 so the layer is exactly identity at init.
 
 ``SPADEWithLearnableScale`` is kept as a deprecated alias for one release to
 ease migration of any external code; the v100 callsites are updated in M2.4.
@@ -24,7 +25,8 @@ class SPADE_v100b(SPADE):
     Multi-scale SPADE with bounded multiplicative γ.
 
     The single beta head of v070's SPADE is replaced by three additive heads
-    operating at different receptive fields (1×1, 3×3, 7×7-dilated). A new
+    operating at different receptive fields (1×1, 3×3, and 3×3 dilated with
+    effective 7×7 receptive field via dilation=3). A new
     multiplicative γ branch produces γ = 1 + softplus(scale·raw) - softplus(0),
     which is strictly > 0, exactly 1 at init, and can only amplify never null
     features — preserving the beta-only design's MSE-blur safety.

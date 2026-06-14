@@ -3,7 +3,7 @@
 ## Why this is a breaking change
 
 v0.10.0 rebuilds the VAE decoder, the flow processor, and the text path
-together. The five locked decisions (see design plan §1):
+together. The five locked decisions:
 
 1. **Per-token text** — `BertTextEncoder.forward` returns
    `(text_seq, text_mask)`, not a pooled vector.
