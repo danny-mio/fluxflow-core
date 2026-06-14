@@ -56,8 +56,9 @@ pooled-text path automatically when an old processor is loaded.
 
 ## Pointers
 
-- Design plan: [`docs/plans/2026-06-13-v0.10.0-redesign-design.md`](plans/2026-06-13-v0.10.0-redesign-design.md)
-- Implementation plan: [`docs/plans/2026-06-13-v0.10.0-redesign-implementation.md`](plans/2026-06-13-v0.10.0-redesign-implementation.md)
+- Architecture deep-dive: [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) → § "v0.10.0: Bezier-Coupled Architecture"
+- Changelog entry: [`CHANGELOG.md`](../CHANGELOG.md) → `[0.10.0]`
+- Salvage script: [`scripts/migrate_v0_10_0_to_redesign.py`](../scripts/migrate_v0_10_0_to_redesign.py)
 - Per-repo CLAUDE.md sections:
   - `fluxflow-core/CLAUDE.md` → v0.10.0 redesign
   - `fluxflow-training/CLAUDE.md` → new config keys + CFG hook

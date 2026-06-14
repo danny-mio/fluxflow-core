@@ -19,9 +19,10 @@ The v0.10.0 redesign reworks both VAE and Flow around five locked decisions:
    `kl_z_weight` with cosine warmup, ctx receives a shrinkage loss
    (`ctx_shrinkage_weight`).
 
-Plans:
-- Design: `docs/plans/2026-06-13-v0.10.0-redesign-design.md`
-- Implementation: `docs/plans/2026-06-13-v0.10.0-redesign-implementation.md`
+Canonical references:
+- Migration guide: `docs/MIGRATION-v0.10.0-redesign.md`
+- Architecture overview: `docs/ARCHITECTURE.md` (§ "v0.10.0: Bezier-Coupled Architecture")
+- Changelog entry: `CHANGELOG.md` (§ "[0.10.0]")
 
 Salvage script for v0.7.x / v0.8.x → v0.10.0 warm-start:
 
