@@ -2,6 +2,20 @@
 
 This guide explains how to migrate legacy FluxFlow checkpoints to the new versioned format.
 
+## Version-Specific Migrations
+
+| From → To | Guide |
+|---|---|
+| Any pre-v0.10.0 (v0.7.x / v0.8.x / v0.10.0-pre) → v0.10.0 | [MIGRATION-v0.10.0-redesign.md](MIGRATION-v0.10.0-redesign.md) |
+| Unversioned legacy `.safetensors` / `.pt` → versioned format | This document (below) |
+
+The v0.10.0 release is a coordinated VAE + Flow + text-path redesign. Old
+checkpoints are not weight-compatible; the bundled
+`scripts/migrate_v0_10_0_to_redesign.py` script provides a warm-start path
+that covers ~80% of params. See the dedicated guide for the API delta table,
+the salvage CLI, and the polymorphic dispatcher that keeps legacy v060/v070
+callers working unchanged.
+
 ## Why Migrate?
 
 Migrating checkpoints to the versioned format provides:
