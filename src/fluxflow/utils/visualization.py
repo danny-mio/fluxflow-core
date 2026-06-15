@@ -51,11 +51,18 @@ def build_cfg_null_pair(
         truncation=True,
         max_length=max_length,
     )
+    # Move tokenizer outputs onto the encoder's device. The tokenizer always
+    # returns CPU tensors; without this, DistilBERT's embedding lookup hits a
+    # device mismatch that on MPS surfaces as "Placeholder storage has not
+    # been allocated on MPS device" at sample-generation time.
+    try:
+        device = next(encoder.parameters()).device
+    except StopIteration:
+        device = torch.device("cpu")
+    input_ids = enc_in["input_ids"].to(device)
+    attention_mask = enc_in["attention_mask"].to(device)
     with torch.no_grad():
-        null_seq, null_mask = encoder(
-            enc_in["input_ids"],
-            attention_mask=enc_in["attention_mask"],
-        )
+        null_seq, null_mask = encoder(input_ids, attention_mask=attention_mask)
     return null_seq, null_mask
 
 
