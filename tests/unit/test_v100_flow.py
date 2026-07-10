@@ -27,6 +27,67 @@ class TestFluxFlowProcessorV100:
             out = proc(packed, text_seq, text_mask, t)
         assert out.shape == packed.shape
 
+    def test_forward_rejects_text_batch_mismatch(self):
+        """Mismatched text/latent batch must raise, not silently broadcast.
+
+        A text batch larger than the latent batch used to broadcast through
+        cross-attention, doubling the image batch and folding the extra sample
+        into the channel dim of flow_predictor's conv input.
+        """
+        import pytest
+
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        proc = FluxFlowProcessor_v100(d_model=128, vae_dim=32, embedding_size=64, n_layers=1)
+        packed = torch.zeros(1, 17, 64)
+        packed[:, :-1, :] = torch.randn(1, 16, 64)
+        packed[0, -1, 0] = 4 / 1024.0
+        packed[0, -1, 1] = 4 / 1024.0
+        text_seq = torch.randn(2, 5, 64)  # batch 2 vs latents batch 1
+        text_mask = torch.ones(2, 5, dtype=torch.bool)
+        with pytest.raises(ValueError, match="Batch mismatch"):
+            with torch.no_grad():
+                proc(packed, text_seq, text_mask, torch.tensor([0.5]))
+
+    def test_forward_survives_inconsistent_hw_token_same_hw(self):
+        """HW token claiming more tokens than exist must not crash.
+
+        The fallback recomputes h = int(sqrt(t_valid)), w = t_valid // h,
+        which for non-perfect-square t_valid gives h*w != t_valid and used to
+        crash the einops rearrange (e.g. T=500 -> 22*22=484 != 500).
+        """
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        proc = FluxFlowProcessor_v100(d_model=128, vae_dim=32, embedding_size=64, n_layers=1)
+        T = 500  # non-perfect-square token count
+        packed = torch.zeros(1, T + 1, 64)
+        packed[:, :-1, :] = torch.randn(1, T, 64)
+        packed[0, -1, 0] = 25 / 1024.0  # hw claims 25*40=1000 > T
+        packed[0, -1, 1] = 40 / 1024.0
+        text_seq = torch.randn(1, 5, 64)
+        text_mask = torch.ones(1, 5, dtype=torch.bool)
+        with torch.no_grad():
+            out = proc(packed, text_seq, text_mask, torch.tensor([0.5]))
+        assert out.shape == packed.shape
+
+    def test_forward_survives_inconsistent_hw_token_mixed_hw(self):
+        """Same fallback must hold in the per-sample mixed-H/W branch."""
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        proc = FluxFlowProcessor_v100(d_model=128, vae_dim=32, embedding_size=64, n_layers=1)
+        T = 500
+        packed = torch.zeros(2, T + 1, 64)
+        packed[:, :-1, :] = torch.randn(2, T, 64)
+        packed[0, -1, 0] = 25 / 1024.0  # inconsistent: 25*40=1000 > T
+        packed[0, -1, 1] = 40 / 1024.0
+        packed[1, -1, 0] = 20 / 1024.0  # consistent: 20*25=500 == T
+        packed[1, -1, 1] = 25 / 1024.0
+        text_seq = torch.randn(2, 5, 64)
+        text_mask = torch.ones(2, 5, dtype=torch.bool)
+        with torch.no_grad():
+            out = proc(packed, text_seq, text_mask, torch.tensor([0.5, 0.5]))
+        assert out.shape == packed.shape
+
     def test_vae_to_dmodel_width_is_2x_vae_dim(self):
         """vae_to_dmodel.in_features must equal 2 * vae_dim."""
         from fluxflow.models.v100.flow import FluxFlowProcessor_v100

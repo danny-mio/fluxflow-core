@@ -317,6 +317,13 @@ class FluxFlowProcessor_v100(nn.Module):
         # Local imports to avoid potential import cycles with the positional module.
         from .positional import build_axial_rope_2d, sinusoidal_embedding
 
+        if text_seq.size(0) != packed.size(0):
+            raise ValueError(
+                f"Batch mismatch: packed latents have batch {packed.size(0)} but "
+                f"text_seq has batch {text_seq.size(0)}. Cross-attention would "
+                f"silently broadcast and corrupt downstream shapes."
+            )
+
         img_seq_v = packed[:, :-1, :].contiguous()
         hw_vec_full = packed[:, -1, :].contiguous()
 
@@ -435,6 +442,9 @@ class FluxFlowProcessor_v100(nn.Module):
             if t_valid < h * w:
                 h = int(t_valid**0.5)
                 w = t_valid // h
+                # h*w may undershoot t_valid for non-perfect squares; shrink
+                # t_valid to the grid so the rearrange below stays valid.
+                t_valid = h * w
             feat = img_seq[:, :t_valid, :].reshape(B, t_valid, -1)
             feat = rearrange(feat, "b (h w) d -> b d h w", h=h, w=w)
             flow = self.flow_predictor(feat)
@@ -460,6 +470,8 @@ class FluxFlowProcessor_v100(nn.Module):
                 if t_valid < h * w:
                     h = int(t_valid**0.5)
                     w = t_valid // h
+                    # Same non-perfect-square guard as the fast path above.
+                    t_valid = h * w
                 feat = img_seq[i, :t_valid].reshape(1, t_valid, -1)
                 feat = rearrange(feat, "b (h w) d -> b d h w", h=h, w=w)
                 flow = self.flow_predictor(feat)
