@@ -57,6 +57,34 @@ def _flow_processor_takes_pertoken_text(flow_processor: nn.Module) -> bool:
     return "text_seq" in sig.parameters and "text_mask" in sig.parameters
 
 
+def detect_architecture_version(keys: list) -> str:
+    """
+    Detect model architecture version from state-dict key names.
+
+    Checks version-exclusive markers, most-specific-first: v0.10.0 reuses
+    v0.7.0's ctx_mixer/context_injection/context_final submodule names, so
+    the v0.10.0-only markers (ctx_gate_proj/ctx_delta_proj/time_mlp -- none
+    of which appear in v0.3.0/v0.6.0/v0.7.0/v0.8.0) must be checked first or
+    v0.10.0 checkpoints are misclassified as v0.7.0.
+
+    Args:
+        keys: State-dict key names (any prefix, e.g. "diffuser.flow_processor....").
+
+    Returns:
+        One of "0.10.0", "0.7.0", "0.3.0".
+    """
+    has_v100_features = any(
+        "ctx_gate_proj" in key or "ctx_delta_proj" in key or "time_mlp" in key for key in keys
+    )
+    if has_v100_features:
+        return "0.10.0"
+
+    has_v070_features = any(
+        "ctx_mixer" in key or "context_injection" in key or "context_final" in key for key in keys
+    )
+    return "0.7.0" if has_v070_features else "0.3.0"
+
+
 class FluxPipeline(nn.Module):
     """
     Complete FluxFlow pipeline combining compressor, flow processor, and expander.
@@ -305,25 +333,27 @@ class FluxPipeline(nn.Module):
         ]
         config["flow_transformer_layers"] = len(transformer_blocks) if transformer_blocks else 10
 
-        # Detect number of attention heads from rotary PE buffer
+        # Detect number of attention heads from rotary PE buffer.
+        # v0.7.0/v0.8.0 blocks expose this as `rotary_pe`; v0.10.0 blocks
+        # (FluxTransformerBlock_v100) expose `rotary_pe_txt` instead.
         for key in keys:
             if "flow_processor.transformer_blocks.0.rotary_pe.inv_freq" in key:
                 inv_freq_size = state_dict[key].shape[0]
                 head_dim = inv_freq_size * 2  # inv_freq is dim // 2
                 config["flow_attn_heads"] = config["flow_dim"] // head_dim
                 break
-
-        # Detect v0.7.0 context features
-        has_context_features = any(
-            "ctx_mixer" in key or "context_injection" in key or "context_final" in key
-            for key in keys
-        )
-        if has_context_features:
-            config["model_version"] = "0.7.0"
-            config["has_context"] = True
         else:
-            config["model_version"] = "0.3.0"
-            config["has_context"] = False
+            for key in keys:
+                if "flow_processor.transformer_blocks.0.rotary_pe_txt.inv_freq" in key:
+                    inv_freq_size = state_dict[key].shape[0]
+                    head_dim = inv_freq_size * 2  # inv_freq is dim // 2
+                    config["flow_attn_heads"] = config["flow_dim"] // head_dim
+                    break
+
+        # Detect architecture version from state-dict key markers.
+        detected_version = detect_architecture_version(keys)
+        config["model_version"] = detected_version
+        config["has_context"] = detected_version in ("0.10.0", "0.7.0")
 
         # Set default max_hw
         config["max_hw"] = 1024

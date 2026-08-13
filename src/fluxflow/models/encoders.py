@@ -241,6 +241,70 @@ class BertTextEncoder(nn.Module):
 
         return encoder
 
+    def load_with_override(self, checkpoint_path, override_path=None):
+        """
+        Load text-encoder weights with a 3-tier precedence.
+
+        1. ``override_path`` (explicit, if given) -- highest precedence.
+        2. A sibling ``text_encoder.safetensors`` next to ``checkpoint_path``.
+        3. Bundled ``text_encoder.``-prefixed keys inside ``checkpoint_path`` itself.
+
+        Args:
+            checkpoint_path: Path to the main model checkpoint (file or directory).
+            override_path: Optional explicit path to text-encoder weights
+                (a ``.safetensors`` file), highest precedence.
+
+        Returns:
+            True if weights were loaded from any tier, False if none were found
+            (encoder is left at its current/randomly-initialized state).
+        """
+
+        def _load_file(file_path):
+            if not file_path or not os.path.exists(file_path):
+                return False
+            state = safetensors.torch.load_file(file_path)
+            state = {k.replace("text_encoder.", ""): v for k, v in state.items()}
+            self.load_state_dict(state, strict=False)
+            return True
+
+        # Tier 1: explicit override.
+        if override_path is not None and _load_file(override_path):
+            return True
+
+        # Tier 2: sibling file next to the main checkpoint.
+        if os.path.isdir(checkpoint_path):
+            sibling_path = os.path.join(checkpoint_path, "text_encoder.safetensors")
+        else:
+            sibling_path = os.path.join(
+                os.path.dirname(checkpoint_path), "text_encoder.safetensors"
+            )
+        if _load_file(sibling_path):
+            return True
+
+        # Tier 3: bundled text_encoder.* keys inside the main checkpoint file.
+        main_file = None
+        if os.path.isdir(checkpoint_path):
+            for candidate in ("model.safetensors", "flxflow_final.safetensors"):
+                candidate_path = os.path.join(checkpoint_path, candidate)
+                if os.path.exists(candidate_path):
+                    main_file = candidate_path
+                    break
+        elif str(checkpoint_path).endswith(".safetensors"):
+            main_file = checkpoint_path
+
+        if main_file and os.path.exists(main_file):
+            state = safetensors.torch.load_file(main_file)
+            te_state = {
+                k.replace("text_encoder.", ""): v
+                for k, v in state.items()
+                if k.startswith("text_encoder.")
+            }
+            if te_state:
+                self.load_state_dict(te_state, strict=False)
+                return True
+
+        return False
+
 
 class ImageEncoder(nn.Module):
     """

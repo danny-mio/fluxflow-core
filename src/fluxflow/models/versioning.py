@@ -706,24 +706,16 @@ class ModelLoaderLegacy(ModelVersionLoader):
         else:
             state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
 
+        # _detect_config already runs detect_architecture_version() and sets
+        # config["model_version"] to "0.10.0" / "0.7.0" / "0.3.0".
         config = FluxPipeline._detect_config(state_dict)
-
-        # Detect v0.7.0 features in checkpoint
-        keys = list(state_dict.keys())
-        has_v070_features = any(
-            "ctx_mixer" in key or "context_injection" in key or "context_final" in key
-            for key in keys
-        )
-        detected_version = "0.7.0" if has_v070_features else "0.3.0"
-
-        # Add version info to config for loader compatibility
-        config["model_version"] = detected_version
+        detected_version = config["model_version"]
 
         # Create metadata for future use
         if metadata is None:
             metadata = ModelMetadata(
                 model_version=detected_version,
-                library_version="0.7.0",
+                library_version="0.10.0",
                 architecture=config,
                 components={
                     "compressor": "FluxCompressor",
@@ -733,7 +725,11 @@ class ModelLoaderLegacy(ModelVersionLoader):
             )
 
         # Route to appropriate loader based on detected version
-        if detected_version == "0.7.0":
+        if detected_version == "0.10.0":
+            logger.info("Detected v0.10.0 architecture from checkpoint structure")
+            v010_loader = ModelLoaderV010()
+            return v010_loader.load_checkpoint(checkpoint_path, metadata, device, **kwargs)
+        elif detected_version == "0.7.0":
             logger.info("Detected v0.7.0 architecture from checkpoint structure")
             v07_loader = ModelLoaderV07()
             return v07_loader.load_checkpoint(checkpoint_path, metadata, device, **kwargs)

@@ -135,6 +135,24 @@ pip install -e ".[dev]"
 - Good performance for inference
 - Training supported but slower than CUDA
 
+#### AMD ROCm (Experimental)
+- **Status:** Experimental, unvalidated. Targets AMD gfx1151 (Strix Halo APU /
+  Minisforum MS-S1 Max class hardware) via ROCm-build PyTorch. Other
+  ROCm-supported GPUs may work but are untested.
+- **Install:** ROCm and a matching PyTorch build must be installed separately
+  (not managed by this package), e.g. via AMD's nightly wheel index:
+  ```bash
+  pip install -U --index-url https://rocm.nightlies.amd.com/whl-multi-arch/ \
+      "rocm[libraries,device-gfx1151]"
+  pip install -U --index-url https://rocm.nightlies.amd.com/whl-multi-arch/ \
+      "torch[device-gfx1151]" "torchvision[device-gfx1151]" torchaudio
+  ```
+- ROCm-build PyTorch reports as a CUDA device (`torch.cuda.is_available() ==
+  True`); FluxFlow auto-detects and uses it via the existing CUDA code path.
+  See [docs/ROCM.md](docs/ROCM.md) for details, known caveats, and
+  unified-memory kernel-parameter tuning notes.
+- **NPU (XDNA):** evaluated and deferred for this pass; not implemented.
+
 ### Dependency Notes
 
 - **numpy:** Version 2.x not yet supported (use numpy<2.0)

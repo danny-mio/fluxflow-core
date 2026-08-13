@@ -6,16 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-_No unreleased changes._
-
-## [0.10.0] - 2026-06-14
-
-The v0.10.0 release is a coordinated VAE + Flow + text-path redesign organized
-around five locked decisions: per-token text, conditional `ctx = f(img, z)`
-coupling, full Flow modernization (2D axial RoPE, sinusoidal time, dual FiLM,
-widened pillars, gated `ctx_agg`), multi-scale SPADE, and a clean Gaussian z.
-See [`docs/MIGRATION-v0.10.0-redesign.md`](docs/MIGRATION-v0.10.0-redesign.md)
-for the upgrade path and salvage instructions.
+Work in progress toward the v0.10.0 release: a coordinated VAE + Flow +
+text-path redesign organized around five locked decisions: per-token text,
+conditional `ctx = f(img, z)` coupling, full Flow modernization (2D axial
+RoPE, sinusoidal time, dual FiLM, widened pillars, gated `ctx_agg`),
+multi-scale SPADE, and a clean Gaussian z. See
+[`docs/MIGRATION-v0.10.0-redesign.md`](docs/MIGRATION-v0.10.0-redesign.md)
+for the upgrade path and salvage instructions. Not yet released.
 
 ### Added
 - **`WideTrainableBezier`** activation in `models/activations.py`: learnable
@@ -54,6 +51,14 @@ for the upgrade path and salvage instructions.
   behavior).
 - `@pytest.mark.compat_break` marker for tests that assert v0.10.0 refuses
   to silently load legacy v0.10.0-pre checkpoints.
+- `fluxflow.models.detect_architecture_version(keys)` — the consolidated,
+  version-aware architecture detector, replacing the duplicated
+  v0.7.0-only heuristic across `pipeline.py`/`versioning.py`.
+- `BertTextEncoder.load_with_override(checkpoint_path, override_path=None)` —
+  3-tier text-encoder loading precedence (explicit override path > sibling
+  `text_encoder.safetensors` > bundled `text_encoder.*` keys inside the main
+  checkpoint), used by `fluxflow-training`, `fluxflow-ui`, and
+  `fluxflow-comfyui`.
 
 ### Changed
 - **`BertTextEncoder.forward`** now returns `(text_seq, text_mask)` per
@@ -87,6 +92,19 @@ for the upgrade path and salvage instructions.
   N(0, I)).
 - The shared single `norm2` in the v0.10.0 cross-attention block is split
   into separate `norm2_q` and `norm2_kv` LayerNorms.
+
+### Fixed
+- **v0.10.0 checkpoints were misdetected as v0.7.0** when loaded without a
+  `model_metadata.json` sidecar (the common case, since training never wrote
+  one). `FluxFlowProcessor_v100` reuses `ctx_mixer`/`context_injection`/
+  `context_final` submodule names inherited from v0.7.0, and the old
+  heuristic had no v0.10.0 branch, so every v0.10.0 checkpoint reaching the
+  fallback path was force-loaded using v0.7.0 classes with `strict=False` —
+  silently dropping most of the trained weights. `detect_architecture_version()`
+  now checks v0.10.0-exclusive markers (`ctx_gate_proj`/`ctx_delta_proj`/
+  `time_mlp`) first, and `ModelLoaderLegacy` now routes detected v0.10.0
+  checkpoints to the already-existing (but previously unreachable)
+  `ModelLoaderV010`.
 
 ### Migration
 

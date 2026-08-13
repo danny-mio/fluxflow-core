@@ -462,5 +462,66 @@ class TestModelFactoryV080:
         assert out.shape == packed.shape
 
 
+class TestAttentionBackendVersionGating:
+    """Regression guard: attn_backend must be gated by model_version.
+
+    v0.3.0/v0.6.0 have independent ParallelAttention/FluxFlowProcessor
+    implementations that don't accept attn_backend -- passing it
+    unconditionally would raise TypeError and break model construction for
+    those versions. This directly guards that fix.
+    """
+
+    @pytest.mark.parametrize("model_version", ["0.3.0", "0.6.0"])
+    def test_unsupported_versions_ignore_attention_backend(self, model_version):
+        """create_bezier_models with attention_backend='sdpa' must not raise
+        for versions whose FluxFlowProcessor doesn't accept the kwarg."""
+        compressor, expander, flow_processor, text_encoder = create_bezier_models(
+            vae_dim=16,
+            flow_d_model=32,
+            flow_embedding_size=32,
+            model_version=model_version,
+            attention_backend="sdpa",
+        )
+        assert flow_processor is not None
+
+    @pytest.mark.parametrize("model_version", ["0.7.0", "0.10.0"])
+    def test_supported_versions_thread_attention_backend(self, model_version):
+        """v0.7.0/v0.10.0 (and v0.8.0) must actually receive attn_backend."""
+        compressor, expander, flow_processor, text_encoder = create_bezier_models(
+            vae_dim=16,
+            flow_d_model=32,
+            flow_embedding_size=32,
+            model_version=model_version,
+            attention_backend="sdpa",
+        )
+        assert flow_processor.transformer_blocks[0].self_attn.attn_backend == "sdpa"
+
+    def test_baseline_model_type_never_receives_attention_backend(self):
+        """Baseline models (BaselineFluxFlowProcessor, v060-family) must never
+        receive attn_backend regardless of requested backend."""
+        factory = ModelFactory(
+            model_type="baseline",
+            model_version="0.7.0",
+            vae_dim=16,
+            flow_d_model=32,
+            flow_embedding_size=32,
+            attention_backend="sdpa",
+        )
+        flow_processor = factory.create_flow_processor(n_head=4, ctx_tokens=4)
+        assert flow_processor is not None
+        assert not hasattr(flow_processor.transformer_blocks[0].self_attn, "attn_backend")
+
+    def test_default_attention_backend_is_einsum(self):
+        factory = ModelFactory(
+            model_type="bezier",
+            model_version="0.7.0",
+            vae_dim=16,
+            flow_d_model=32,
+            flow_embedding_size=32,
+        )
+        flow_processor = factory.create_flow_processor(n_head=4, ctx_tokens=4)
+        assert flow_processor.transformer_blocks[0].self_attn.attn_backend == "einsum"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -42,12 +42,12 @@ class FluxTransformerBlock_v080(nn.Module):
         n_head: Number of attention heads
     """
 
-    def __init__(self, d_model: int, n_head: int):
+    def __init__(self, d_model: int, n_head: int, attn_backend: str = "einsum"):
         super().__init__()
         self.bezier_activation = BezierActivation()
         self.p_preactivation = nn.SiLU()
-        self.self_attn = ParallelAttention(d_model, n_head)
-        self.cross_attn = ParallelAttention(d_model, n_head)
+        self.self_attn = ParallelAttention(d_model, n_head, attn_backend=attn_backend)
+        self.cross_attn = ParallelAttention(d_model, n_head, attn_backend=attn_backend)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.norm3 = nn.LayerNorm(d_model)
@@ -78,7 +78,9 @@ class FluxTransformerBlock_v080(nn.Module):
 
         # Shared pillar cross-attention (Q=pillar output, KV=text_seq)
         n_pillar_heads = _valid_pillar_heads(d_model, max(1, n_head // 4))
-        self.pillar_cross_attn = ParallelAttention(d_model, n_pillar_heads)
+        self.pillar_cross_attn = ParallelAttention(
+            d_model, n_pillar_heads, attn_backend=attn_backend
+        )
         self.norm_pillar = nn.LayerNorm(d_model)
 
         self.apply(xavier_init)
@@ -202,6 +204,7 @@ class FluxFlowProcessor_v080(nn.Module):
         n_layers=10,
         max_hw=1024,
         ctx_tokens=4,
+        attn_backend: str = "einsum",
     ):
         super().__init__()
         self.max_hw = max_hw
@@ -226,7 +229,10 @@ class FluxFlowProcessor_v080(nn.Module):
 
         self.context_injection = GatedContextInjection(d_model, d_model)
         self.transformer_blocks = nn.ModuleList(
-            [FluxTransformerBlock_v080(d_model, n_head) for _ in range(n_layers)]
+            [
+                FluxTransformerBlock_v080(d_model, n_head, attn_backend=attn_backend)
+                for _ in range(n_layers)
+            ]
         )
 
         self.flow_predictor = nn.Sequential(

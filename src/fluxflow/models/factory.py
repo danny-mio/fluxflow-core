@@ -23,6 +23,14 @@ from .v060.vae import BaselineFluxExpander, BaselineResidualUpsampleBlock
 # Import the registry to ensure it's available for version modules
 ModelClassRegistry = registry.ModelClassRegistry
 
+# Model versions whose FluxFlowProcessor accepts an `attn_backend` kwarg
+# (opt-in SDPA attention path). v0.3.0/v0.6.0 have their own independent
+# ParallelAttention/FluxTransformerBlock implementations that don't accept
+# it -- passing it there raises TypeError. The baseline model_type never
+# receives it regardless of version (BaselineFluxFlowProcessor is a
+# separate, unrelated class family).
+_SDPA_SUPPORTED_VERSIONS = {"0.7.0", "0.8.0", "0.10.0"}
+
 
 # Automatically discover and import all version modules
 # This enables truly self-registering versions - no code changes needed for new versions
@@ -111,6 +119,7 @@ class ModelFactory:
         # Version-specific config
         v060_downscales: int = 3,  # v0.6.0: Reduced from 4 (8x instead of 16x compression)
         v030_downscales: int = 4,  # v0.3.0: Original compression (16x)
+        attention_backend: str = "einsum",
     ):
         """
         Initialize model factory.
@@ -138,6 +147,7 @@ class ModelFactory:
         self.feature_maps_dim = feature_maps_dim
         self.flow_d_model = flow_d_model
         self.flow_embedding_size = flow_embedding_size
+        self.attention_backend = attention_backend
 
         # Baseline config
         self.baseline_activation = baseline_activation
@@ -348,6 +358,11 @@ class ModelFactory:
             # Use versioned FluxFlowProcessor for bezier models
             classes = self._get_versioned_classes()
             FluxFlowProcessor = classes["FluxFlowProcessor"]
+            extra_kwargs = (
+                {"attn_backend": self.attention_backend}
+                if self.model_version in _SDPA_SUPPORTED_VERSIONS
+                else {}
+            )
             return FluxFlowProcessor(  # type: ignore
                 d_model=self.flow_d_model,
                 vae_dim=self.vae_dim,
@@ -356,6 +371,7 @@ class ModelFactory:
                 n_layers=n_layers,
                 max_hw=max_hw,
                 ctx_tokens=ctx_tokens,
+                **extra_kwargs,
             )
         else:
             # Baseline: Create custom processor with baseline blocks
@@ -519,6 +535,7 @@ def create_bezier_models(
     flow_embedding_size: int = 1024,
     model_version: str = "0.7.0",
     downscales: Optional[int] = None,
+    attention_backend: str = "einsum",
 ) -> tuple:
     """
     Convenience function to create full Bezier model set.
@@ -576,6 +593,9 @@ def create_bezier_models(
         use_gradient_checkpointing=True,
     )
 
+    extra_kwargs = (
+        {"attn_backend": attention_backend} if model_version in _SDPA_SUPPORTED_VERSIONS else {}
+    )
     flow_processor = FlowProcessor(
         d_model=flow_d_model,
         vae_dim=vae_dim,
@@ -584,6 +604,7 @@ def create_bezier_models(
         n_layers=10,
         max_hw=1024,
         ctx_tokens=4,
+        **extra_kwargs,
     )
 
     text_encoder = BertTextEncoder(embed_dim=flow_embedding_size)
@@ -657,6 +678,7 @@ def create_models_from_config(model_config) -> tuple:
             flow_d_model=model_config.feature_maps_dim,
             flow_embedding_size=model_config.text_embedding_dim,
             model_version=model_config.model_version,
+            attention_backend=model_config.attention_backend,
         )
     elif model_config.model_type == "baseline":
         return create_baseline_models(

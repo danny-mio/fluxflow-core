@@ -207,6 +207,68 @@ class TestVersionedSaveAndLoad:
         assert "flow_dim" in metadata["architecture"]
 
 
+class TestDetectArchitectureVersion:
+    """Tests for detect_architecture_version() -- v0.10.0 misdetection regression guard."""
+
+    def test_v100_not_misdetected_as_v070(self):
+        """v0.10.0 checkpoints must not be classified as v0.7.0 (reused submodule names)."""
+        from fluxflow.models.pipeline import detect_architecture_version
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        flow = FluxFlowProcessor_v100(d_model=32, vae_dim=16, n_head=4, n_layers=1)
+        keys = [f"flow_processor.{k}" for k in flow.state_dict().keys()]
+        assert detect_architecture_version(keys) == "0.10.0"
+
+    def test_v070_still_v070(self):
+        from fluxflow.models.pipeline import detect_architecture_version
+        from fluxflow.models.v070.flow import FluxFlowProcessor
+
+        flow = FluxFlowProcessor(d_model=32, vae_dim=16, n_head=4, n_layers=1)
+        keys = [f"flow_processor.{k}" for k in flow.state_dict().keys()]
+        assert detect_architecture_version(keys) == "0.7.0"
+
+    def test_no_markers_defaults_v030(self):
+        from fluxflow.models.pipeline import detect_architecture_version
+
+        assert detect_architecture_version(["flow_processor.some_other_layer.weight"]) == "0.3.0"
+
+
+class TestLegacyLoaderRoutesV100:
+    """Regression guard: v0.10.0 checkpoints must load via v100 classes, not a v070 shell."""
+
+    def test_legacy_loader_routes_v100_to_v010_loader(self, tmp_path):
+        import safetensors.torch
+
+        from fluxflow.models.pipeline import FluxPipeline
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+        from fluxflow.models.v100.vae import FluxCompressor_v100, FluxExpander_v100
+
+        comp = FluxCompressor_v100(d_model=16, downscales=2)
+        flow = FluxFlowProcessor_v100(d_model=32, vae_dim=16, n_head=4, n_layers=1)
+        exp = FluxExpander_v100(d_model=16, upscales=2)
+        pipeline = FluxPipeline(comp, flow, exp)
+
+        state = {f"diffuser.{k}": v for k, v in pipeline.state_dict().items()}
+        ckpt_path = tmp_path / "flxflow_final.safetensors"
+        safetensors.torch.save_file(state, str(ckpt_path))
+
+        loaded = load_versioned_checkpoint(ckpt_path, device="cpu")
+
+        # Proves it was reconstructed as a v100 model, not a v070 shell with
+        # most weights silently skipped by strict=False.
+        assert hasattr(loaded.flow_processor, "ctx_gate_proj")
+        assert hasattr(loaded.flow_processor, "time_mlp")
+
+        # Sharper guard: every weight must load into a freshly-built model
+        # with the same shapes -- zero missing/unexpected keys.
+        fresh = FluxPipeline(
+            FluxCompressor_v100(d_model=16, downscales=2),
+            FluxFlowProcessor_v100(d_model=32, vae_dim=16, n_head=4, n_layers=1),
+            FluxExpander_v100(d_model=16, upscales=2),
+        )
+        fresh.load_state_dict(loaded.state_dict(), strict=True)
+
+
 # Fixtures
 
 

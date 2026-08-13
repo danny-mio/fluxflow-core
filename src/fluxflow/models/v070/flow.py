@@ -114,10 +114,19 @@ class ParallelAttention(nn.Module):
     Args:
         d_model: Model dimensionality
         n_head: Number of attention heads
+        attn_backend: "einsum" (default, original hand-rolled implementation)
+            or "sdpa" (torch.nn.functional.scaled_dot_product_attention).
+            "sdpa" is numerically close but not bit-identical to "einsum" --
+            opt-in, experimental, useful on backends with an optimized SDPA
+            kernel (e.g. ROCm). Does not change parameter shapes/names, so
+            existing checkpoints load under either backend.
     """
 
-    def __init__(self, d_model, n_head):
+    def __init__(self, d_model, n_head, attn_backend: str = "einsum"):
         super().__init__()
+        if attn_backend not in ("einsum", "sdpa"):
+            raise ValueError(f"attn_backend must be 'einsum' or 'sdpa', got {attn_backend!r}")
+        self.attn_backend = attn_backend
         self.d_head = d_model // n_head
         self.n_head = n_head
         self.q_proj = nn.Linear(d_model, d_model)
@@ -149,20 +158,41 @@ class ParallelAttention(nn.Module):
 
         q = rotary_q(q)
         k = rotary_k(k)
+
+        if attn_mask is not None and attn_mask.dtype != torch.bool:
+            raise TypeError(
+                f"attn_mask must be a bool tensor, got {attn_mask.dtype}. "
+                "HuggingFace tokenizers return int64 by default — call "
+                ".bool() before passing."
+            )
+
+        if self.attn_backend == "sdpa":
+            out = self._forward_sdpa(q, k, v, attn_mask)
+        else:
+            out = self._forward_einsum(q, k, v, attn_mask)
+
+        out = rearrange(out, "b h s d -> b s (h d)")
+        return self.out_proj(out)
+
+    def _forward_einsum(self, q, k, v, attn_mask):
+        """Original hand-rolled attention (default; bit-identical to prior behavior)."""
         attn = torch.einsum("bhqd,bhkd->bhqk", q, k) * (self.d_head**-0.5)
         if attn_mask is not None:
-            if attn_mask.dtype != torch.bool:
-                raise TypeError(
-                    f"attn_mask must be a bool tensor, got {attn_mask.dtype}. "
-                    "HuggingFace tokenizers return int64 by default — call "
-                    ".bool() before passing."
-                )
             # attn_mask: [B, S_kv] → broadcast to [B, 1, 1, S_kv]
             attn = attn.masked_fill(~attn_mask[:, None, None, :], float("-inf"))
         attn = attn.softmax(dim=-1)
-        out = torch.einsum("bhqk,bhkd->bhqd", attn, v)
-        out = rearrange(out, "b h s d -> b s (h d)")
-        return self.out_proj(out)
+        return torch.einsum("bhqk,bhkd->bhqd", attn, v)
+
+    def _forward_sdpa(self, q, k, v, attn_mask):
+        """torch.nn.functional.scaled_dot_product_attention path (opt-in, experimental).
+
+        Numerically close to _forward_einsum but not bit-identical (SDPA may
+        use a fused kernel with different reduction order). Verified
+        equivalent to within float tolerance in
+        tests/unit/test_parallel_attention_sdpa.py.
+        """
+        sdpa_mask = attn_mask[:, None, None, :] if attn_mask is not None else None
+        return F.scaled_dot_product_attention(q, k, v, attn_mask=sdpa_mask)
 
 
 class FluxTransformerBlock(nn.Module):
@@ -176,12 +206,12 @@ class FluxTransformerBlock(nn.Module):
         n_head: Number of attention heads
     """
 
-    def __init__(self, d_model: int, n_head: int):
+    def __init__(self, d_model: int, n_head: int, attn_backend: str = "einsum"):
         super().__init__()
         self.bezier_activation = BezierActivation()
         self.p_preactivation = nn.SiLU()
-        self.self_attn = ParallelAttention(d_model, n_head)
-        self.cross_attn = ParallelAttention(d_model, n_head)
+        self.self_attn = ParallelAttention(d_model, n_head, attn_backend=attn_backend)
+        self.cross_attn = ParallelAttention(d_model, n_head, attn_backend=attn_backend)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.norm3 = nn.LayerNorm(d_model)
@@ -287,6 +317,7 @@ class FluxFlowProcessor(nn.Module):
         n_layers=10,
         max_hw=1024,
         ctx_tokens=4,
+        attn_backend: str = "einsum",
     ):
         super().__init__()
         self.max_hw = max_hw
@@ -309,7 +340,10 @@ class FluxFlowProcessor(nn.Module):
 
         self.context_injection = GatedContextInjection(d_model, d_model)
         self.transformer_blocks = nn.ModuleList(
-            [FluxTransformerBlock(d_model, n_head) for _ in range(n_layers)]
+            [
+                FluxTransformerBlock(d_model, n_head, attn_backend=attn_backend)
+                for _ in range(n_layers)
+            ]
         )
 
         self.flow_predictor = nn.Sequential(

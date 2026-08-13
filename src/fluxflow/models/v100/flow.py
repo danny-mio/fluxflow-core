@@ -55,7 +55,7 @@ class FluxTransformerBlock_v100(nn.Module):
         n_head: Number of attention heads (must divide d_model).
     """
 
-    def __init__(self, d_model: int, n_head: int) -> None:
+    def __init__(self, d_model: int, n_head: int, attn_backend: str = "einsum") -> None:
         super().__init__()
         assert d_model % n_head == 0
         head_dim = d_model // n_head
@@ -68,8 +68,8 @@ class FluxTransformerBlock_v100(nn.Module):
         self.head_dim = head_dim
         self.bezier_activation = BezierActivation()
 
-        self.self_attn = ParallelAttention(d_model, n_head)
-        self.cross_attn = ParallelAttention(d_model, n_head)
+        self.self_attn = ParallelAttention(d_model, n_head, attn_backend=attn_backend)
+        self.cross_attn = ParallelAttention(d_model, n_head, attn_backend=attn_backend)
 
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2_q = nn.LayerNorm(d_model)
@@ -233,6 +233,7 @@ class FluxFlowProcessor_v100(nn.Module):
         max_hw: int = 1024,
         ctx_tokens: int = 4,
         context_dims: int | None = None,
+        attn_backend: str = "einsum",
     ) -> None:
         super().__init__()
         assert d_model % n_head == 0
@@ -271,7 +272,10 @@ class FluxFlowProcessor_v100(nn.Module):
         self.ctx_delta_proj = nn.Linear(d_model, d_model)
 
         self.transformer_blocks = nn.ModuleList(
-            [FluxTransformerBlock_v100(d_model, n_head) for _ in range(n_layers)]
+            [
+                FluxTransformerBlock_v100(d_model, n_head, attn_backend=attn_backend)
+                for _ in range(n_layers)
+            ]
         )
 
         self.flow_predictor = nn.Sequential(

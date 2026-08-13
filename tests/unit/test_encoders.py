@@ -1,5 +1,8 @@
 """Unit tests for encoder models (src/models/encoders.py)."""
 
+import os
+
+import safetensors.torch
 import torch
 import torch.nn as nn
 
@@ -582,3 +585,53 @@ class TestEncoderIntegration:
         # Check embeddings are not completely zero
         assert text_seq.abs().max() > 0
         assert image_embeds.abs().max() > 0
+
+
+class TestLoadWithOverride:
+    """Tests for BertTextEncoder.load_with_override()'s 3-tier precedence."""
+
+    def _te_state(self, encoder):
+        return {f"text_encoder.{k}": v for k, v in encoder.state_dict().items()}
+
+    def test_falls_back_to_bundled_keys_when_no_sibling_file(self, tmp_path):
+        """Tier 3: bundled text_encoder.* keys inside the main checkpoint file."""
+        source = BertTextEncoder(embed_dim=16, pretrain_model=None)
+        main_state = {"diffuser.dummy": torch.zeros(1), **self._te_state(source)}
+        main_path = tmp_path / "flxflow_final.safetensors"
+        safetensors.torch.save_file(main_state, str(main_path))
+
+        target = BertTextEncoder(embed_dim=16, pretrain_model=None)
+        assert target.load_with_override(str(main_path)) is True
+
+    def test_sibling_file_takes_precedence_over_bundled(self, tmp_path):
+        """Tier 2 (sibling file) must win over tier 3 (bundled) when both exist."""
+        source = BertTextEncoder(embed_dim=16, pretrain_model=None)
+        main_state = {"diffuser.dummy": torch.zeros(1), **self._te_state(source)}
+        main_path = tmp_path / "flxflow_final.safetensors"
+        safetensors.torch.save_file(main_state, str(main_path))
+
+        sibling_path = tmp_path / "text_encoder.safetensors"
+        safetensors.torch.save_file(self._te_state(source), str(sibling_path))
+
+        target = BertTextEncoder(embed_dim=16, pretrain_model=None)
+        assert target.load_with_override(str(main_path)) is True
+
+    def test_explicit_override_takes_precedence_over_everything(self, tmp_path):
+        """Tier 1 (explicit override_path) must win over tiers 2 and 3."""
+        source = BertTextEncoder(embed_dim=16, pretrain_model=None)
+        main_state = {"diffuser.dummy": torch.zeros(1), **self._te_state(source)}
+        main_path = tmp_path / "flxflow_final.safetensors"
+        safetensors.torch.save_file(main_state, str(main_path))
+
+        override_dir = tmp_path / "override"
+        override_dir.mkdir()
+        override_path = override_dir / "custom_text_encoder.safetensors"
+        safetensors.torch.save_file(self._te_state(source), str(override_path))
+
+        target = BertTextEncoder(embed_dim=16, pretrain_model=None)
+        assert target.load_with_override(str(main_path), override_path=str(override_path)) is True
+
+    def test_returns_false_when_nothing_found(self, tmp_path):
+        target = BertTextEncoder(embed_dim=16, pretrain_model=None)
+        missing = tmp_path / "does_not_exist.safetensors"
+        assert target.load_with_override(str(missing)) is False

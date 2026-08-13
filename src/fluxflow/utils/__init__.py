@@ -1,5 +1,6 @@
 """FluxFlow utility modules (I/O, visualization, logging)."""
 
+from .device import DeviceInfo, get_device, get_device_info, is_rocm, parse_device
 from .io import (
     copy_and_replace,
     format_duration,
@@ -37,4 +38,10 @@ __all__ = [
     "setup_logger",
     "get_logger",
     "get_default_logger",
+    # Device
+    "get_device",
+    "get_device_info",
+    "is_rocm",
+    "parse_device",
+    "DeviceInfo",
 ]

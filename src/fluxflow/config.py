@@ -40,6 +40,18 @@ class ModelConfig(BaseModel):
             raise ValueError(f"model_version must be one of {allowed_versions}, got '{v}'")
         return v
 
+    attention_backend: Literal["einsum", "sdpa"] = Field(
+        default="einsum",
+        description=(
+            "Attention compute backend for flow transformer blocks (v0.7.0/v0.8.0/v0.10.0 "
+            "only; ignored for v0.3.0/v0.6.0/baseline). 'einsum' is the original hand-rolled "
+            "implementation (default, bit-identical to prior behavior). 'sdpa' uses "
+            "torch.nn.functional.scaled_dot_product_attention -- numerically close but not "
+            "bit-identical; opt-in, experimental, useful on backends with an optimized SDPA "
+            "kernel (e.g. ROCm). Not yet perf-validated."
+        ),
+    )
+
     vae_dim: int = Field(
         default=128,
         ge=8,

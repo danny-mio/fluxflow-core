@@ -35,7 +35,7 @@ from .factory import (
     create_bezier_models,
     create_models_from_config,
 )
-from .pipeline import FluxPipeline
+from .pipeline import FluxPipeline, detect_architecture_version
 
 # Import from default version (v0.6.0) for backward compatibility
 from .v060.flow import (
@@ -102,6 +102,7 @@ __all__ = [
     "FluxPipeline",
     "FluxFlowPipeline",
     "FluxFlowPipelineOutput",
+    "detect_architecture_version",
     # Factory
     "ModelFactory",
     "create_baseline_models",
