@@ -13,6 +13,7 @@ from torchvision import transforms
 from torchvision.utils import save_image
 
 from fluxflow.models.pipeline import _flow_processor_takes_pertoken_text, _masked_mean_pool
+from fluxflow.text_length import DEFAULT_MAX_TEXT_LENGTH
 
 # Global cache for safe_vae_sample function
 _VAE_SAMPLE_CACHE: Dict[str, Tuple[torch.Tensor, str]] = {}
@@ -20,7 +21,7 @@ _VAE_SAMPLE_CACHE: Dict[str, Tuple[torch.Tensor, str]] = {}
 
 def build_cfg_null_pair(
     encoder,
-    max_length: int = 32,
+    max_length: int = DEFAULT_MAX_TEXT_LENGTH,
     tokenizer_name: str = "distilbert-base-uncased",
 ):
     """
@@ -433,7 +434,7 @@ def save_sample_images(
 
     encodings = tokenizer.batch_encode_plus(
         sample_texts,
-        max_length=512,
+        max_length=DEFAULT_MAX_TEXT_LENGTH,
         padding="max_length",
         truncation=True,
         return_tensors="pt",

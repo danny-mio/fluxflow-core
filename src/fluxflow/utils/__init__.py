@@ -1,5 +1,6 @@
 """FluxFlow utility modules (I/O, visualization, logging)."""
 
+from ..text_length import DEFAULT_MAX_TEXT_LENGTH
 from .device import DeviceInfo, get_device, get_device_info, is_rocm, parse_device
 from .io import (
     copy_and_replace,
@@ -20,6 +21,8 @@ from .visualization import (
 )
 
 __all__ = [
+    # Text length
+    "DEFAULT_MAX_TEXT_LENGTH",
     # I/O
     "copy_and_replace",
     "save_model",

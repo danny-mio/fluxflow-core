@@ -16,6 +16,7 @@ from diffusers.schedulers import KarrasDiffusionSchedulers
 from diffusers.utils import BaseOutput
 from transformers import AutoTokenizer
 
+from ..text_length import DEFAULT_MAX_TEXT_LENGTH
 from .encoders import BertTextEncoder
 from .pipeline import _flow_processor_takes_pertoken_text, _masked_mean_pool
 from .v060.flow import FluxFlowProcessor
@@ -750,7 +751,7 @@ class FluxFlowPipeline(DiffusionPipeline):
         text_inputs = self.tokenizer(
             prompt,
             padding="max_length",
-            max_length=512,
+            max_length=DEFAULT_MAX_TEXT_LENGTH,
             truncation=True,
             return_tensors="pt",
         )
@@ -776,7 +777,7 @@ class FluxFlowPipeline(DiffusionPipeline):
             uncond_inputs = self.tokenizer(
                 negative_prompt,
                 padding="max_length",
-                max_length=512,
+                max_length=DEFAULT_MAX_TEXT_LENGTH,
                 truncation=True,
                 return_tensors="pt",
             )

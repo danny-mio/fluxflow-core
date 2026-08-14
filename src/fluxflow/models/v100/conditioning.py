@@ -63,6 +63,14 @@ class SPADE_v100b(SPADE):
         # Learnable scalars — both start at 0 → identity at init.
         self.beta_scale = nn.Parameter(torch.zeros(1))
         self.gamma_scale = nn.Parameter(torch.zeros(1))
+        # Snapshot init values so ``scale_drift`` can report how far training has
+        # moved these scalars from identity — the first direct signal (independent
+        # of any disconnected diagnostic probe upstream) that gradient is reaching
+        # SPADE's conditioning scales.
+        self._gamma_scale_init: torch.Tensor
+        self._beta_scale_init: torch.Tensor
+        self.register_buffer("_gamma_scale_init", self.gamma_scale.detach().clone())
+        self.register_buffer("_beta_scale_init", self.beta_scale.detach().clone())
 
     def forward(self, x: torch.Tensor, context: torch.Tensor | None) -> torch.Tensor:
         """
@@ -89,6 +97,20 @@ class SPADE_v100b(SPADE):
         gamma = 1.0 + F.softplus(self.gamma_scale * gamma_raw) - F.softplus(zero)
 
         return cast(torch.Tensor, gamma * normalized + beta)
+
+    def scale_drift(self) -> tuple[float, float]:
+        """Mean absolute deviation of gamma_scale/beta_scale from their init values.
+
+        Both scalars start at exactly 0 (identity at init; see class docstring),
+        so any nonzero drift is direct evidence that gradient is reaching SPADE's
+        conditioning scales during training.
+
+        Returns:
+            ``(gamma_drift, beta_drift)`` as plain floats.
+        """
+        gamma_drift = (self.gamma_scale.detach() - self._gamma_scale_init).abs().mean().item()
+        beta_drift = (self.beta_scale.detach() - self._beta_scale_init).abs().mean().item()
+        return gamma_drift, beta_drift
 
 
 # Deprecated alias — kept for one release; will be removed after M9.

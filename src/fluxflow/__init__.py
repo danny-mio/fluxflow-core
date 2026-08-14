@@ -46,9 +46,14 @@ from .exceptions import (
     handle_exception,
 )
 
+# Shared text-token length default (training <-> generation, see text_length.py)
+from .text_length import DEFAULT_MAX_TEXT_LENGTH
+
 __all__ = [
     # Version
     "__version__",
+    # Text length
+    "DEFAULT_MAX_TEXT_LENGTH",
     # Exceptions
     "FluxFlowError",
     "DataError",

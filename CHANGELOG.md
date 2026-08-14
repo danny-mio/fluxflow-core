@@ -59,6 +59,18 @@ for the upgrade path and salvage instructions. Not yet released.
   `text_encoder.safetensors` > bundled `text_encoder.*` keys inside the main
   checkpoint), used by `fluxflow-training`, `fluxflow-ui`, and
   `fluxflow-comfyui`.
+- **`SPADE_v100b.scale_drift()`**: returns the mean absolute deviation of
+  `gamma_scale`/`beta_scale` from their (zero) init values, snapshotted as
+  buffers at construction. Gives a direct, ground-truth signal that gradient
+  is reaching SPADE's conditioning scales, independent of the "Ctx" console
+  metric, which a training-diagnostics audit found was disconnected from
+  SPADE's actual weights.
+- **`fluxflow.DEFAULT_MAX_TEXT_LENGTH`** (`text_length.py`, re-exported from
+  `fluxflow` and `fluxflow.utils`): single source of truth for the
+  text-encoder token budget, currently `32`. Consumed by
+  `diffusion_pipeline.py` and `utils/visualization.py`; `fluxflow-training`,
+  `fluxflow-ui`, and `fluxflow-comfyui` import it with a `32` fallback until
+  this version is installed everywhere.
 
 ### Changed
 - **`BertTextEncoder.forward`** now returns `(text_seq, text_mask)` per
@@ -105,6 +117,11 @@ for the upgrade path and salvage instructions. Not yet released.
   `time_mlp`) first, and `ModelLoaderLegacy` now routes detected v0.10.0
   checkpoints to the already-existing (but previously unreachable)
   `ModelLoaderV010`.
+- **Train/inference text-length mismatch**: training tokenized captions with
+  `max_length=32` while generation/inference hardcoded `max_length=512` at
+  four call sites across four repos, silently truncating (or padding to a
+  length never seen in training) with no logging either way. Both sides now
+  import the shared `DEFAULT_MAX_TEXT_LENGTH` constant.
 
 ### Migration
 

@@ -1,5 +1,6 @@
 """Tests for multi-scale SPADE with bounded γ."""
 
+import pytest
 import torch
 
 from fluxflow.models.v100.conditioning import SPADE_v100b
@@ -65,3 +66,34 @@ def test_spade_v100b_context_changes_output():
     out_a = layer(x, ctx_a)
     out_b = layer(x, ctx_b)
     assert not torch.allclose(out_a, out_b)
+
+
+def test_spade_v100b_scale_drift_zero_at_init():
+    """gamma_scale/beta_scale start at 0, so drift is exactly 0 before training."""
+    layer = SPADE_v100b(context_nc=16, num_features=32)
+    gamma_drift, beta_drift = layer.scale_drift()
+    assert gamma_drift == 0.0
+    assert beta_drift == 0.0
+
+
+def test_spade_v100b_scale_drift_tracks_parameter_change():
+    """Drift reflects |current - init| once the scalars move away from 0."""
+    layer = SPADE_v100b(context_nc=16, num_features=32)
+    layer.gamma_scale.data.fill_(0.3)
+    layer.beta_scale.data.fill_(-0.2)
+    gamma_drift, beta_drift = layer.scale_drift()
+    assert gamma_drift == pytest.approx(0.3)
+    assert beta_drift == pytest.approx(0.2)
+
+
+def test_spade_v100b_scale_drift_survives_state_dict_roundtrip():
+    """Init buffers travel with state_dict, so drift stays correct after checkpoint load."""
+    layer = SPADE_v100b(context_nc=16, num_features=32)
+    layer.gamma_scale.data.fill_(0.5)
+    state = layer.state_dict()
+
+    layer2 = SPADE_v100b(context_nc=16, num_features=32)
+    layer2.load_state_dict(state)
+
+    gamma_drift, _ = layer2.scale_drift()
+    assert gamma_drift == pytest.approx(0.5)
