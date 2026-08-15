@@ -1,5 +1,17 @@
 """MLX VAE decoder components for FluxFlow (v070 architecture).
 
+Status: this backend is FROZEN at v0.7.0/v0.8.0 parity. It has NOT been
+ported to the v0.10.0 redesign (`src/fluxflow/models/v100/vae.py`) and is
+missing, relative to the torch v100 decoder:
+  - Multi-scale `SPADE_v100b` conditioning (three additive heads
+    `beta_low`/`beta_mid`/`beta_hi` + bounded multiplicative `gamma_head`/
+    `gamma_scale`) — this module still uses single-head `SPADE`.
+  - The `seam_smoother`/`seam_smoother_ctx` zero-init residual convs that
+    remove token-boundary seams in the v100 decoder.
+Loading a genuine v0.10.0 checkpoint through this backend is out of scope
+for the v0.10.0 release; `FluxFlowPipelineMLX.from_checkpoint` guards
+against it (see `fluxflow/mlx/pipeline.py`).
+
 Note: the module-level CONTEXT_DIMS constant has been removed for v0.10.0 compatibility.
 Use FluxExpander(context_dims=...) to set the context dimensionality explicitly.
 For v0.7.0/v0.8.0 compatibility, default context_dims=5 is preserved.
@@ -212,7 +224,11 @@ class FluxExpander(nn.Module):
         super().__init__()
         self.max_hw = max_hw
         self.d_model = d_model
-        # None = copy d_model (v0.10.0 default); explicit value preserves v0.7.0 compat (=5)
+        # NOTE: context_dims=None defaulting to d_model is NOT a "v0.10.0
+        # default" — this backend has not been ported to SPADE_v100b/
+        # seam-smoother and is still v0.7.0/v0.8.0-era single-head SPADE
+        # (see module docstring). None simply mirrors d_model; pass an
+        # explicit context_dims=5 for v0.7.0/v0.8.0 checkpoint compat.
         self.context_dims = context_dims if context_dims is not None else d_model
 
         self.upscale = ProgressiveUpscaler(

@@ -36,3 +36,14 @@ the flow processor signature and routes to the old pooled-text path when needed.
 
 Per-repo milestone tags landed for this repo: `m1-foundations`, `m2-vae-redesign`,
 `m3-pertoken-text`, `m4-flow-redesign`, `m8-salvage-script`.
+
+## MLX backend status
+
+`src/fluxflow/mlx/` (Apple-Silicon inference path) is **frozen at v0.7.0/v0.8.0
+parity** — single-head `SPADE`, no `SPADE_v100b`, no seam-smoother. It has NOT
+been ported to the v0.10.0 redesign and is out of scope for this release. Zero
+references from `fluxflow-ui`/`fluxflow-comfyui` — not wired into any
+production surface. `FluxFlowPipelineMLX.from_checkpoint` guards against
+v0.10.0 checkpoints (raises `ModelArchitectureError` on `SPADE_v100b`/
+seam-smoother marker keys) but do not assume this backend is otherwise at
+parity with `models/v100/vae.py`.

@@ -146,6 +146,17 @@ for the upgrade path and salvage instructions. Not yet released.
   683 passed, 1 failed, 11 skipped — the failure is a pre-existing, unrelated
   issue (`tests/unit/test_v100_flow.py::TestFluxTransformerBlockV100::test_no_v080_import_in_v100_flow`
   hardcodes a macOS-only filesystem path) untouched by this change.
+- **MLX decoder (`FluxExpander` in `mlx/layers/vae.py`) staleness**: this
+  backend is frozen at v0.7.0/v0.8.0 parity — single-head `SPADE`, no
+  `SPADE_v100b` heads (`beta_low`/`beta_mid`/`beta_hi`/`gamma_head`/
+  `gamma_scale`) and no `seam_smoother`/`seam_smoother_ctx` — and is out of
+  scope for the v0.10.0 release; the misleading "v0.10.0 default" comment on
+  its `context_dims` default has been corrected. `FluxFlowPipelineMLX.from_checkpoint`
+  now scans loaded weight keys for those v0.10.0-only markers and raises
+  `ModelArchitectureError` before `load_weights`, rather than risk silently
+  misloading a v0.10.0 checkpoint — such a checkpoint is expected to fail
+  loudly at MLX load time regardless (believed, not empirically confirmed;
+  no MLX runtime available in this Linux review environment).
 
 ### Migration
 
