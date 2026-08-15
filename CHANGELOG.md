@@ -122,6 +122,30 @@ for the upgrade path and salvage instructions. Not yet released.
   four call sites across four repos, silently truncating (or padding to a
   length never seen in training) with no logging either way. Both sides now
   import the shared `DEFAULT_MAX_TEXT_LENGTH` constant.
+- **Random-init NaN/Inf crash in `FluxCompressor_v100`/`FluxExpander_v100`**,
+  found on an actual training run doing a genuine from-scratch cold start (no
+  checkpoint — the first time this project has ever exercised true random
+  init; every prior run warm-started). Unlike every other model class
+  (`conditioning.py`, `encoders.py`, every `flow.py`), these two never called
+  `self.apply(xavier_init)`, the codebase's established weight-init
+  convention, and instead relied on PyTorch's raw default `Conv2d` init —
+  never validated against this architecture's deep (8-12 layer) unnormalized
+  `Conv2d`→Bezier-activation stacks. A 60-seed sweep at production scale
+  (`vae_dim=32`, `img_size=1024`) under real fp16 autocast found 4/60 seeds
+  (~7%) producing NaN/Inf pre-fix, 0/60 post-fix — this is also why disabling
+  `use_fp16` was independently observed to avoid the crash: fp32's wider
+  range lets the same unstable activations run large-but-finite, where
+  fp16's ~65504 ceiling clips them to Inf. In `FluxExpander_v100`,
+  `self.apply(xavier_init)` must run *before* the seam-smoother's explicit
+  `nn.init.zeros_()` calls (the SPADE-adjacent identity-residual design
+  above) or it silently clobbers that intentional zero-init. New regression
+  tests: `tests/v100/test_vae_random_init_stability.py` (40 tests: fp32
+  fast-CPU + fp16 GPU production-scale, compressor-only and roundtrip,
+  multiple seeds; confirmed red/green via `git stash`/`git stash pop`,
+  8 failures pre-fix on seeds 6/15/27/42, all 40 pass post-fix). Full suite:
+  683 passed, 1 failed, 11 skipped — the failure is a pre-existing, unrelated
+  issue (`tests/unit/test_v100_flow.py::TestFluxTransformerBlockV100::test_no_v080_import_in_v100_flow`
+  hardcodes a macOS-only filesystem path) untouched by this change.
 
 ### Migration
 

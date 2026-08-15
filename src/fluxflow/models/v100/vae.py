@@ -20,7 +20,7 @@ import torch.nn as nn
 from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
-from ..activations import BezierActivation, TrainableBezier, WideTrainableBezier
+from ..activations import BezierActivation, TrainableBezier, WideTrainableBezier, xavier_init
 from .conditioning import SPADE_v100b
 
 
@@ -414,6 +414,17 @@ class FluxCompressor_v100(nn.Module):
         self.register_buffer("_pe_dummy", torch.zeros(1), persistent=False)
         self._pos_cache: dict = {}
 
+        # Established codebase convention (conditioning.py, encoders.py, every
+        # flow.py) -- PyTorch's raw default Conv2d init was never validated
+        # against this architecture's deep unnormalized Conv2d->BezierActivation
+        # stacks and produces NaN/Inf on real image input from a fresh (no
+        # checkpoint) random init, especially under fp16's narrow dynamic range.
+        # Only touches Conv2d/Conv3d/Linear/ConvTranspose2d; the zero-init
+        # ctx_zinject_beta_scale/ctx_zinject_gamma_scale nn.Parameters above are
+        # bare Parameters (not Modules), so .apply() never visits them --
+        # placement here is safe regardless of order.
+        self.apply(xavier_init)
+
     @staticmethod
     def add_coord_channels(x: torch.Tensor) -> torch.Tensor:
         """Add normalized coordinate channels to input."""
@@ -621,6 +632,14 @@ class FluxExpander_v100(nn.Module):
             p3=0.5,
             channel_only=True,
         )
+
+        # Established codebase convention (conditioning.py, encoders.py, every
+        # flow.py) -- see FluxCompressor_v100.__init__ for full rationale.
+        # MUST run before the seam-smoother zero-inits below: xavier_init
+        # would otherwise clobber their intentional zero weight/bias back to
+        # Xavier-uniform random values, breaking the "identity residual at
+        # init" design (backward-compat with existing checkpoints).
+        self.apply(xavier_init)
 
         # Seam-smoother: zero-init residual 3x3 conv with reflect padding.
         # Blends adjacent latent tokens to avoid 16-pixel grid artifacts at token
