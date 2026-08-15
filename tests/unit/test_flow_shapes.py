@@ -10,6 +10,7 @@ from fluxflow.models.flow import (
     RotaryPositionalEmbedding,
     pillarLayer,
 )
+from fluxflow.models.v070.flow import RotaryPositionalEmbedding as V070RotaryPositionalEmbedding
 
 
 class TestPillarLayer:
@@ -143,6 +144,66 @@ class TestRotaryPositionalEmbedding:
             sin, cos = rope.get_embed(pos_ids)
             assert sin.shape == (seq_len, 64)
             assert cos.shape == (seq_len, 64)
+
+
+class TestRotaryPositionalEmbeddingSplitHalfConvention:
+    """Fix A regression guards: v070's RoPE must use split-half sin/cos
+    layout matching `apply_rotary`'s `x.chunk(2, dim=-1)` rotation convention.
+
+    Imports directly from `fluxflow.models.v070.flow` (NOT the ambient
+    top-level `fluxflow.models`/`fluxflow.models.flow` alias used above,
+    which points at v060 and is intentionally left unfixed/buggy).
+    """
+
+    def test_rope_rotation_is_orthonormal(self):
+        """apply_rotary must preserve vector norm (RoPE's core guarantee)."""
+        torch.manual_seed(0)
+        dim = 64
+        rope = V070RotaryPositionalEmbedding(dim=dim)
+        pos_ids = torch.arange(37).float() * 3.0 + 1.0  # varied, nonzero positions
+        sin, cos = rope.get_embed(pos_ids)
+        x = torch.randn(2, 4, len(pos_ids), dim)
+
+        rotated = rope.apply_rotary(x, sin, cos)
+
+        assert torch.allclose(rotated.norm(dim=-1), x.norm(dim=-1), rtol=1e-4, atol=1e-4)
+
+    def test_rope_relative_position_invariance(self):
+        """<rotate(q, pos_a), rotate(k, pos_b)> must depend only on pos_a - pos_b."""
+        torch.manual_seed(42)
+        dim = 64
+        rope = V070RotaryPositionalEmbedding(dim=dim)
+        all_pos = torch.arange(200).float()
+        sin_all, cos_all = rope.get_embed(all_pos)
+
+        q = torch.randn(1, 1, 1, dim)
+        k = torch.randn(1, 1, 1, dim)
+
+        def rotated_dot(pos_a: int, pos_b: int) -> torch.Tensor:
+            sin_a, cos_a = sin_all[pos_a : pos_a + 1], cos_all[pos_a : pos_a + 1]
+            sin_b, cos_b = sin_all[pos_b : pos_b + 1], cos_all[pos_b : pos_b + 1]
+            q_rot = rope.apply_rotary(q, sin_a, cos_a)
+            k_rot = rope.apply_rotary(k, sin_b, cos_b)
+            return (q_rot * k_rot).sum()
+
+        # For each offset, compare dot products across two different
+        # absolute-position pairs sharing that offset.
+        offsets = [1, 5, 17, 40]
+        pairs_by_offset = {
+            1: [(10, 9), (150, 149)],
+            5: [(10, 5), (160, 155)],
+            17: [(20, 3), (180, 163)],
+            40: [(50, 10), (190, 150)],
+        }
+        for offset in offsets:
+            (a1, b1), (a2, b2) = pairs_by_offset[offset]
+            assert a1 - b1 == offset
+            assert a2 - b2 == offset
+            dot1 = rotated_dot(a1, b1)
+            dot2 = rotated_dot(a2, b2)
+            assert torch.allclose(dot1, dot2, rtol=1e-3, atol=1e-3), (
+                f"offset={offset}: dot({a1},{b1})={dot1.item()} != " f"dot({a2},{b2})={dot2.item()}"
+            )
 
 
 class TestParallelAttention:

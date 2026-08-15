@@ -82,8 +82,8 @@ class RotaryPositionalEmbedding(nn.Module):
             tuple: (sin, cos) embeddings
         """
         sinusoid = torch.einsum("i,j->ij", pos_ids, self.inv_freq)
-        sin = sinusoid.sin().repeat_interleave(2, dim=-1)
-        cos = sinusoid.cos().repeat_interleave(2, dim=-1)
+        sin = torch.cat([sinusoid.sin(), sinusoid.sin()], dim=-1)
+        cos = torch.cat([sinusoid.cos(), sinusoid.cos()], dim=-1)
         return sin, cos
 
     def apply_rotary(self, x, sin, cos):

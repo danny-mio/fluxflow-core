@@ -56,8 +56,8 @@ def build_axial_rope_2d(
         inv_freq = 1.0 / (10000 ** (torch.arange(0, C // 2, device=device, dtype=dtype) / (C // 2)))
         pos = torch.arange(L, device=device, dtype=dtype)
         sinusoid = torch.einsum("i,j->ij", pos, inv_freq)  # [L, C/2]
-        sin = sinusoid.sin().repeat_interleave(2, dim=-1)  # [L, C]
-        cos = sinusoid.cos().repeat_interleave(2, dim=-1)  # [L, C]
+        sin = torch.cat([sinusoid.sin(), sinusoid.sin()], dim=-1)  # [L, C]
+        cos = torch.cat([sinusoid.cos(), sinusoid.cos()], dim=-1)  # [L, C]
         return sin, cos
 
     sin_w_1d, cos_w_1d = _rope_1d(W, half)  # [W, half] — varies along columns

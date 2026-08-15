@@ -8,6 +8,7 @@ Contains:
 - ParallelAttention: Multi-head attention with separate Q and KV
 """
 
+import warnings
 from functools import partial
 
 import torch
@@ -65,6 +66,25 @@ class RotaryPositionalEmbedding(nn.Module):
 
     def __init__(self, dim):
         super().__init__()
+        # This class is aliased as the top-level `fluxflow.models.RotaryPositionalEmbedding`
+        # ("default for backward compatibility", see models/__init__.py:41-47). It builds
+        # sin/cos in an interleaved-pair layout (get_embed below) that is mismatched against
+        # apply_rotary's split-half rotation (x.chunk(2, dim=-1)), breaking RoPE's
+        # relative-position and norm-preservation guarantees. v070+ fixes this
+        # (see fluxflow.models.v070.flow.RotaryPositionalEmbedding); this v060 copy is not
+        # planned to be fixed, since real legacy checkpoints were trained under the buggy
+        # convention and fixing it would be a breaking change. Follow-up: file a ticket to
+        # decide v060/v030's fate (fix-and-break, version-gate, or deprecate).
+        warnings.warn(
+            "fluxflow.models.RotaryPositionalEmbedding (v060, the default 'for backward "
+            "compatibility' alias) builds sin/cos in an interleaved-pair layout that is "
+            "mismatched against apply_rotary's split-half rotation convention, breaking "
+            "RoPE's relative-position and norm-preservation guarantees. This is fixed in "
+            "v070+ (fluxflow.models.v070.flow.RotaryPositionalEmbedding) but intentionally "
+            "left unfixed here to avoid breaking real legacy v060 checkpoints.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.dim = dim
         inv_freq = 1.0 / (10000 ** (torch.arange(0, dim // 2).float() / (dim // 2)))
         self.register_buffer("inv_freq", inv_freq)
