@@ -106,11 +106,11 @@ def test_hw_mismatch_fallback_logs_warning(caplog):
         out = m(packed, text_seq, text_mask, timesteps)
     assert out.shape == packed.shape
     records = [r for r in caplog.records if r.name == _LOGGER_NAME]
-    assert len(records) == 1
-    msg = records[0].getMessage()
-    assert "identity RoPE rotation" in msg
+    rope_msgs = [r.getMessage() for r in records if "identity RoPE rotation" in r.getMessage()]
+    assert len(rope_msgs) == 1
+    msg = rope_msgs[0]
     assert "T=17" in msg
-    assert "1" in msg  # extra=1 padded token
+    assert "padding 1 trailing" in msg
 
 
 def test_same_hw_consistent_no_warning(caplog):

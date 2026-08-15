@@ -19,6 +19,7 @@ Key changes vs v0.8.0 (M4 bezier-coupled redesign):
   GRU-style gated ctx_agg residual (replaces the running sum accumulator).
 """
 
+import logging
 from functools import partial
 
 import torch
@@ -31,6 +32,36 @@ from ..activations import BezierActivation, TrainableBezier, xavier_init
 from ..conditioning import ContextAttentionMixer, GatedContextInjection
 from ..v070.flow import ParallelAttention, RotaryPositionalEmbedding
 from .pillar import pillarLayerWide
+
+logger = logging.getLogger(__name__)
+
+
+def _nearest_hw_factorization(h_hint: int, w_hint: int, T: int, radius: int = 2) -> tuple[int, int]:
+    """Find the (H', W') with H'*W'==T closest to (h_hint, w_hint).
+
+    Searches H' in [h_hint-radius, h_hint+radius], deriving W' = T // H'
+    whenever it divides evenly. Ties are broken by the aspect ratio H'/W'
+    closest to h_hint/w_hint. Falls back to an aspect-ratio-blind sqrt(T)
+    split if no exact factorization exists in the neighborhood.
+    """
+    target_ratio = h_hint / max(w_hint, 1)
+    best: tuple[int, int] | None = None
+    best_ratio_diff = float("inf")
+    for h_cand in range(max(1, h_hint - radius), h_hint + radius + 1):
+        if T % h_cand != 0:
+            continue
+        w_cand = T // h_cand
+        if w_cand <= 0:
+            continue
+        ratio_diff = abs((h_cand / w_cand) - target_ratio)
+        if ratio_diff < best_ratio_diff:
+            best_ratio_diff = ratio_diff
+            best = (h_cand, w_cand)
+    if best is not None:
+        return best
+    h_fallback = max(1, int(T**0.5))
+    w_fallback = T // h_fallback
+    return h_fallback, w_fallback
 
 
 class FluxTransformerBlock_v100(nn.Module):
@@ -311,12 +342,86 @@ class FluxFlowProcessor_v100(nn.Module):
         coords = torch.stack([xx, yy], dim=0).unsqueeze(0).expand(B, -1, -1, -1)
         return torch.cat([x, coords], dim=1)
 
+    @staticmethod
+    def _resolve_rope_hw(h_hint: int, w_hint: int, T: int, strict: bool) -> tuple[int, int]:
+        """Resolve the (h_eff, w_eff) RoPE grid for token count T, warning
+        (or raising, if strict) when hw_vec is inconsistent with T and no
+        exact factorization is found nearby — see _nearest_hw_factorization.
+        """
+        h_eff, w_eff = h_hint, w_hint
+        if h_eff * w_eff == T:
+            return h_eff, w_eff
+        h_eff, w_eff = _nearest_hw_factorization(h_hint, w_hint, T)
+        extra = T - h_eff * w_eff
+        if extra <= 0:
+            return h_eff, w_eff
+        if strict:
+            raise ValueError(
+                f"FluxFlowProcessor_v100: hw_vec (H={h_hint}, W={w_hint}) "
+                f"inconsistent with token count T={T}; nearest factorization "
+                f"gives h_eff={h_eff}, w_eff={w_eff}, which would require "
+                f"padding {extra} trailing token(s) with identity RoPE "
+                f"rotation. strict=True forbids this silent degradation — "
+                f"fix the caller's hw_vec/T consistency."
+            )
+        logger.warning(
+            "FluxFlowProcessor_v100: hw_vec (H=%d, W=%d) inconsistent with token "
+            "count T=%d; falling back to h_eff=%d, w_eff=%d and padding %d "
+            "trailing token(s) with identity RoPE rotation (indistinguishable "
+            "from position (0,0)). This silently degrades positional encoding "
+            "quality for the padded tokens — check the caller's hw_vec/T "
+            "consistency.",
+            h_hint,
+            w_hint,
+            T,
+            h_eff,
+            w_eff,
+            extra,
+        )
+        return h_eff, w_eff
+
+    @staticmethod
+    def _resolve_spatial_hw(h_hint: int, w_hint: int, T: int, strict: bool) -> tuple[int, int, int]:
+        """Resolve (h, w, t_valid) for spatial post-processing, warning (or
+        raising, if strict) when hw_vec is inconsistent with T and no exact
+        factorization is found nearby — see _nearest_hw_factorization.
+        """
+        h, w = _nearest_hw_factorization(h_hint, w_hint, T)
+        t_valid = h * w
+        if t_valid >= T:
+            return h, w, t_valid
+        dropped = T - t_valid
+        if strict:
+            raise ValueError(
+                f"FluxFlowProcessor_v100: hw_vec (H={h_hint}, W={w_hint}) "
+                f"inconsistent with token count T={T}; nearest factorization "
+                f"gives h={h}, w={w}, which would require truncating {dropped} "
+                f"trailing token(s) from spatial post-processing (dropped tokens "
+                f"would not receive their ctx_delta update). strict=True forbids "
+                f"this silent truncation — fix the caller's hw_vec/T consistency."
+            )
+        logger.warning(
+            "FluxFlowProcessor_v100: hw_vec (H=%d, W=%d) inconsistent with token "
+            "count T=%d; falling back to h=%d, w=%d and truncating %d trailing "
+            "token(s) from spatial post-processing. Dropped tokens are excluded "
+            "from flow_predictor/context_final entirely and will NOT receive "
+            "their ctx_delta update — check the caller's hw_vec/T consistency.",
+            h_hint,
+            w_hint,
+            T,
+            h,
+            w,
+            dropped,
+        )
+        return h, w, t_valid
+
     def forward(
         self,
         packed: torch.Tensor,
         text_seq: torch.Tensor,
         text_mask: torch.Tensor,
         timesteps: torch.Tensor,
+        strict: bool = False,
     ) -> torch.Tensor:
         """
         Predict flow velocity for packed latent tokens.
@@ -326,6 +431,13 @@ class FluxFlowProcessor_v100(nn.Module):
             text_seq: [B, T_txt, embedding_size] per-token text embeddings.
             text_mask: [B, T_txt] bool mask over text tokens.
             timesteps: [B] continuous timesteps in [0, 1].
+            strict: if True, hard-error via ``ValueError`` when the caller's
+                ``hw_vec`` doesn't cleanly factor the actual token count `T`
+                at any of the three RoPE/spatial-post-processing fallback
+                sites, instead of warning and silently degrading (padding
+                RoPE with identity rotation / truncating spatial tokens).
+                Intended for validation harnesses; default False preserves
+                the existing warn-and-recover behavior.
 
         Returns:
             packed_out: [B, T+1, 2*vae_dim] flow-modulated tokens (HW token preserved).
@@ -368,14 +480,11 @@ class FluxFlowProcessor_v100(nn.Module):
         T_txt = text_seq_proj.size(1)
 
         if same_hw:
-            # Mirror the spatial post-processing fallback: if H*W != T (e.g.
-            # the caller's hw_vec is inconsistent with the actual token count),
-            # clamp h*w to T by taking sqrt(T).
-            h_eff = int(H[0].item())
-            w_eff = int(W[0].item())
-            if h_eff * w_eff != T:
-                h_eff = int(T**0.5)
-                w_eff = T // h_eff
+            # If H*W != T (e.g. the caller's hw_vec is inconsistent with the
+            # actual token count, commonly from bf16 rounding of hw_vec),
+            # find the nearest exact factorization of T near the hint instead
+            # of blindly taking sqrt(T); see _resolve_rope_hw.
+            h_eff, w_eff = self._resolve_rope_hw(int(H[0].item()), int(W[0].item()), T, strict)
             sin_w_img, cos_w_img, sin_h_img, cos_h_img = build_axial_rope_2d(
                 h_eff,
                 w_eff,
@@ -383,8 +492,9 @@ class FluxFlowProcessor_v100(nn.Module):
                 device=img_seq.device,
                 dtype=img_seq.dtype,
             )
-            # If h_eff * w_eff < T (non-perfect-square T), pad the RoPE buffer
-            # by zero-sin/one-cos for the trailing positions so it covers T.
+            # If h_eff * w_eff < T (no exact factorization found nearby), pad
+            # the RoPE buffer by zero-sin/one-cos for the trailing positions
+            # so it covers T.
             extra = T - h_eff * w_eff
             if extra > 0:
                 half = self.head_dim // 2
@@ -453,14 +563,7 @@ class FluxFlowProcessor_v100(nn.Module):
 
         # Spatial post-processing — same-H/W fast path.
         if same_hw:
-            h, w = int(H[0].item()), int(W[0].item())
-            t_valid = min(h * w, T)
-            if t_valid < h * w:
-                h = int(t_valid**0.5)
-                w = t_valid // h
-                # h*w may undershoot t_valid for non-perfect squares; shrink
-                # t_valid to the grid so the rearrange below stays valid.
-                t_valid = h * w
+            h, w, t_valid = self._resolve_spatial_hw(int(H[0].item()), int(W[0].item()), T, strict)
             feat = img_seq[:, :t_valid, :].reshape(B, t_valid, -1)
             feat = rearrange(feat, "b (h w) d -> b d h w", h=h, w=w)
             flow = self.flow_predictor(feat)
@@ -481,13 +584,9 @@ class FluxFlowProcessor_v100(nn.Module):
         else:
             outputs = []
             for i in range(B):
-                h, w = int(H[i].item()), int(W[i].item())
-                t_valid = min(h * w, T)
-                if t_valid < h * w:
-                    h = int(t_valid**0.5)
-                    w = t_valid // h
-                    # Same non-perfect-square guard as the fast path above.
-                    t_valid = h * w
+                h, w, t_valid = self._resolve_spatial_hw(
+                    int(H[i].item()), int(W[i].item()), T, strict
+                )
                 feat = img_seq[i, :t_valid].reshape(1, t_valid, -1)
                 feat = rearrange(feat, "b (h w) d -> b d h w", h=h, w=w)
                 flow = self.flow_predictor(feat)
