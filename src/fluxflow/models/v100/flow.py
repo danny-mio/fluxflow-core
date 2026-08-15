@@ -96,6 +96,11 @@ class FluxTransformerBlock_v100(nn.Module):
         self.film_p2_time = nn.Linear(d_model, 2 * d_model)
         self.film_p3_time = nn.Linear(d_model, 2 * d_model)
 
+        # Shared per-block identity-at-init scales (text-vs-time axis, not
+        # per-pillar): zero-init so _film_dual starts as a true no-op.
+        self.film_text_scale = nn.Parameter(torch.zeros(1))
+        self.film_time_scale = nn.Parameter(torch.zeros(1))
+
         self.apply(xavier_init)
 
     def _film_dual(
@@ -109,7 +114,14 @@ class FluxTransformerBlock_v100(nn.Module):
         gt, bt = film_text(text_cond).chunk(2, dim=-1)
         gtau, btau = film_time(time_cond).chunk(2, dim=-1)
         out: torch.Tensor = (
-            gate * (1.0 + gt[:, None, :] + gtau[:, None, :]) + bt[:, None, :] + btau[:, None, :]
+            gate
+            * (
+                1.0
+                + self.film_text_scale * gt[:, None, :]
+                + self.film_time_scale * gtau[:, None, :]
+            )
+            + self.film_text_scale * bt[:, None, :]
+            + self.film_time_scale * btau[:, None, :]
         )
         return out
 

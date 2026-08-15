@@ -645,7 +645,11 @@ class ModelLoaderV010(ModelVersionLoader):
         )
 
         pipeline = FluxPipeline(compressor, flow_processor, expander)
-        pipeline.load_state_dict(diffuser_state, strict=False)
+        missing_keys, unexpected_keys = pipeline.load_state_dict(diffuser_state, strict=False)
+        if missing_keys:
+            logger.warning(f"Checkpoint missing keys (defaulted): {missing_keys}")
+        if unexpected_keys:
+            logger.info(f"Checkpoint has unexpected keys (ignored): {unexpected_keys}")
         pipeline.to(device)
         pipeline.eval()
 
