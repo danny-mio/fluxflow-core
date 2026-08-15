@@ -65,6 +65,7 @@ class _ResidualUpsampleBlock(nn.Module):
             BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
         )
         self.skip_upsample = nn.Upsample(scale_factor=2, mode="nearest")
+        self.conv1_scale = nn.Parameter(torch.zeros(1))
 
     def forward(self, x: torch.Tensor, context: torch.Tensor | None = None) -> torch.Tensor:
         """
@@ -80,7 +81,7 @@ class _ResidualUpsampleBlock(nn.Module):
             x = self.spade(x, context)
         x = self.conv1(x)
         identity_up = self.skip_upsample(identity)
-        return cast(torch.Tensor, x + 0.1 * identity_up)
+        return cast(torch.Tensor, identity_up + self.conv1_scale * x)
 
 
 class _ProgressiveUpscaler(nn.Module):
