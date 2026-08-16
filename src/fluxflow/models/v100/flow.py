@@ -144,15 +144,16 @@ class FluxTransformerBlock_v100(nn.Module):
     ) -> torch.Tensor:
         gt, bt = film_text(text_cond).chunk(2, dim=-1)
         gtau, btau = film_time(time_cond).chunk(2, dim=-1)
+        # film_text_scale/film_time_scale are unclamped (see __init__); tanh
+        # at the use-site bounds the effective scale to (-1, 1) so FiLM can
+        # never out-grow the gate it modulates, while tanh(0)==0 keeps
+        # identity-at-init exact.
+        text_scale = torch.tanh(self.film_text_scale)
+        time_scale = torch.tanh(self.film_time_scale)
         out: torch.Tensor = (
-            gate
-            * (
-                1.0
-                + self.film_text_scale * gt[:, None, :]
-                + self.film_time_scale * gtau[:, None, :]
-            )
-            + self.film_text_scale * bt[:, None, :]
-            + self.film_time_scale * btau[:, None, :]
+            gate * (1.0 + text_scale * gt[:, None, :] + time_scale * gtau[:, None, :])
+            + text_scale * bt[:, None, :]
+            + time_scale * btau[:, None, :]
         )
         return out
 

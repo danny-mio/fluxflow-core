@@ -81,7 +81,11 @@ class _ResidualUpsampleBlock(nn.Module):
             x = self.spade(x, context)
         x = self.conv1(x)
         identity_up = self.skip_upsample(identity)
-        return cast(torch.Tensor, identity_up + self.conv1_scale * x)
+        # conv1_scale is unclamped (see __init__); tanh at the use-site bounds
+        # the effective scale to (-1, 1) so this branch can never out-grow the
+        # identity path, while tanh(0)==0 keeps identity-at-init exact and
+        # d/dx tanh(x)|_0==1 keeps gradient flow at init unaffected.
+        return cast(torch.Tensor, identity_up + torch.tanh(self.conv1_scale) * x)
 
 
 class _ProgressiveUpscaler(nn.Module):
@@ -535,11 +539,15 @@ class FluxCompressor_v100(nn.Module):
 
         # z → ctx coupling: condition ctx on the sampled z.
         z_proj = self.ctx_zinject_proj(z)  # [B, D, H, W]
-        beta_z = self.ctx_zinject_beta(z_proj) * self.ctx_zinject_beta_scale
+        # ctx_zinject_beta_scale/ctx_zinject_gamma_scale are unclamped bare
+        # Parameters (see __init__); tanh at the use-site bounds the effective
+        # scale to (-1, 1) — identical rationale to SPADE_v100b.beta_scale/
+        # gamma_scale in conditioning.py.
+        beta_z = self.ctx_zinject_beta(z_proj) * torch.tanh(self.ctx_zinject_beta_scale)
         gamma_z = (
             1.0
             + torch.nn.functional.softplus(
-                self.ctx_zinject_gamma_scale * self.ctx_zinject_gamma(z_proj)
+                torch.tanh(self.ctx_zinject_gamma_scale) * self.ctx_zinject_gamma(z_proj)
             )
             - torch.nn.functional.softplus(torch.zeros((), device=z.device, dtype=z.dtype))
         )

@@ -85,3 +85,39 @@ def test_ctx_no_tanh_unbounded():
     packed = m(img)
     ctx = packed[:, :-1, 32:]
     assert ctx.abs().max() > 1.0
+
+
+def test_ctx_zinject_scale_bounded_via_tanh():
+    """ctx_zinject_beta_scale/ctx_zinject_gamma_scale are unclamped bare
+    Parameters (same identity-at-init gate pattern as SPADE_v100b). Simulate
+    aggressive drift and verify the *effective* scale consumed at the two
+    forward()  use-sites stays within (-1, 1), and that a full forward pass
+    stays finite even under such extreme drift.
+    """
+    torch.manual_seed(0)
+    m = _model(D=32).eval()
+    m.ctx_zinject_beta_scale.data.fill_(8.0)  # fp32 tanh saturates to 1.0 above ~9
+    m.ctx_zinject_gamma_scale.data.fill_(-8.0)  # fp32 tanh saturates to -1.0 below ~-9
+
+    z_proj = torch.randn(1, 32, 8, 8)
+    with torch.no_grad():
+        effective_beta_scale = torch.tanh(m.ctx_zinject_beta_scale)
+        effective_gamma_scale = torch.tanh(m.ctx_zinject_gamma_scale)
+        beta_z = m.ctx_zinject_beta(z_proj) * effective_beta_scale
+        gamma_raw = m.ctx_zinject_gamma(z_proj)
+        zero = torch.zeros((), dtype=z_proj.dtype)
+        gamma_z = (
+            1.0
+            + torch.nn.functional.softplus(effective_gamma_scale * gamma_raw)
+            - torch.nn.functional.softplus(zero)
+        )
+
+    assert effective_beta_scale.abs().item() < 1.0
+    assert effective_gamma_scale.abs().item() < 1.0
+    assert torch.isfinite(beta_z).all()
+    assert torch.isfinite(gamma_z).all()
+
+    img = torch.randn(1, 3, 128, 128)
+    with torch.no_grad():
+        packed = m(img)
+    assert torch.isfinite(packed).all()

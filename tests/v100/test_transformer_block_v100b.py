@@ -238,3 +238,34 @@ def test_film_dual_strict_false_load_from_pre_fix_checkpoint():
     out_a2, *_ = _call_forward(b, args, time_cond=time_cond_a)
     out_b2, *_ = _call_forward(b, args, time_cond=time_cond_b)
     assert not torch.equal(out_a2, out_b2)
+
+
+def test_film_dual_scale_bounded_via_tanh():
+    """film_text_scale/film_time_scale are unclamped; simulate aggressive
+    drift and verify the *effective* scales consumed at _film_dual's use-sites
+    stay within (-1, 1), matching the tanh-wrapped formula exactly.
+    """
+    d, nh = 64, 4
+    b = _block(d=d, nh=nh)
+    b.film_text_scale.data.fill_(8.0)  # fp32 tanh saturates to 1.0 above ~9
+    b.film_time_scale.data.fill_(-8.0)  # fp32 tanh saturates to -1.0 below ~-9
+
+    gate = torch.randn(2, 16, d)
+    text_cond = torch.randn(2, d)
+    time_cond = torch.randn(2, d)
+    with torch.no_grad():
+        out = b._film_dual(gate, b.film_p0_text, b.film_p0_time, text_cond, time_cond)
+        gt, bt = b.film_p0_text(text_cond).chunk(2, dim=-1)
+        gtau, btau = b.film_p0_time(time_cond).chunk(2, dim=-1)
+        text_scale = torch.tanh(b.film_text_scale)
+        time_scale = torch.tanh(b.film_time_scale)
+        expected = (
+            gate * (1.0 + text_scale * gt[:, None, :] + time_scale * gtau[:, None, :])
+            + text_scale * bt[:, None, :]
+            + time_scale * btau[:, None, :]
+        )
+
+    assert torch.isfinite(out).all()
+    assert text_scale.abs().item() < 1.0
+    assert time_scale.abs().item() < 1.0
+    torch.testing.assert_close(out, expected, atol=1e-5, rtol=1e-4)

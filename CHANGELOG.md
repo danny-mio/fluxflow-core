@@ -157,6 +157,37 @@ for the upgrade path and salvage instructions. Not yet released.
   misloading a v0.10.0 checkpoint — such a checkpoint is expected to fail
   loudly at MLX load time regardless (believed, not empirically confirmed;
   no MLX runtime available in this Linux review environment).
+- **Unbounded identity-at-init gates causing fp16 NaN/Inf during real
+  training**, found on a real fp16 run of `FluxExpander_v100` where
+  NaN/Inf appeared small at first and grew progressively worse over
+  ~31k batches. Root cause: the zero-init learnable scalar gates added
+  by the three previous fixes above (`conv1_scale`, `film_text_scale`/
+  `film_time_scale`, `beta_scale`/`gamma_scale`) are `nn.Parameter`s with
+  no upper bound, multiplying the output of a deep, unnormalized
+  `Conv2d → BezierActivation(t_pre_activation="tanh")` stack — and with
+  `t_pre_activation="tanh"`, the Bezier polynomial is not a bounded convex
+  combination (coefficients can reach ~8-12x instead of a convex-combination
+  sum of 1). As these gates drift away from 0 during training they amplify
+  an already-unstable branch without bound, eventually overflowing fp16's
+  ~65504 range — exact at batch 1 (gate≈0), worsening as the gate grows.
+  Fixed by wrapping each gate with `torch.tanh(...)` at its point of use in
+  `forward()` (the stored `Parameter` itself stays unbounded so optimizer
+  state/checkpoints are unaffected): `tanh(0)==0` preserves exact
+  identity-at-init, `d/dx tanh(x)|_0==1` preserves init gradient flow, and
+  the effective scale actually consumed is now hard-bounded to `(-1, 1)`.
+  Sites fixed: `_ResidualUpsampleBlock.conv1_scale` (`v100/vae.py`);
+  `FluxTransformerBlock_v100._film_dual`'s `film_text_scale`/
+  `film_time_scale` (`v100/flow.py`); `SPADE_v100b.beta_scale`/
+  `gamma_scale` (`v100/conditioning.py`); and the structurally identical
+  `FluxCompressor_v100.ctx_zinject_beta_scale`/`ctx_zinject_gamma_scale`
+  bare Parameters (`v100/vae.py`). `gamma_scale`'s `softplus` formula was
+  judged to still need the wrap despite already being `>0`-bounded, since
+  `softplus` is asymptotically linear and does not itself bound the
+  multiplier's growth. New regression tests assert the effective
+  (tanh-wrapped) scale stays within `(-1, 1)` — and forward stays
+  finite — even after manually setting the raw `Parameter` to an
+  aggressive value (`8.0`, the largest fp32 `tanh` input that doesn't
+  saturate to exactly `1.0`).
 
 ### Migration
 

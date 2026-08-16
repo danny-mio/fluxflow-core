@@ -86,6 +86,57 @@ def test_spade_v100b_scale_drift_tracks_parameter_change():
     assert beta_drift == pytest.approx(0.2)
 
 
+def test_spade_v100b_beta_scale_bounded_via_tanh():
+    """beta_scale is unclamped; simulate aggressive drift and verify the
+    *effective* scale consumed at forward()'s use-site stays within (-1, 1)
+    (gamma_scale left at its zero-init default so gamma==1, isolating beta).
+    """
+    torch.manual_seed(0)
+    layer = SPADE_v100b(context_nc=16, num_features=32)
+    layer.beta_scale.data.fill_(8.0)  # fp32 tanh saturates to 1.0 above ~9
+    x = torch.randn(2, 32, 8, 8)
+    ctx = torch.randn(2, 16, 8, 8)
+    with torch.no_grad():
+        out = layer(x, ctx)
+        normalized = layer.bn(x)
+        actv = layer.mlp_shared(ctx)
+        beta_raw = layer.beta_low(actv) + layer.beta_mid(actv) + layer.beta_hi(actv)
+
+    assert torch.isfinite(out).all()
+    effective_scale = torch.tanh(layer.beta_scale)
+    assert effective_scale.abs().item() < 1.0
+    torch.testing.assert_close(out, normalized + effective_scale * beta_raw, atol=1e-5, rtol=1e-4)
+
+
+def test_spade_v100b_gamma_scale_bounded_via_tanh():
+    """gamma_scale feeds softplus, which is asymptotically linear (not
+    self-bounding); an unclamped gamma_scale can still blow up gamma without
+    bound as it drifts. Verify the *effective* scale consumed at forward()'s
+    use-site stays within (-1, 1) even after aggressive drift.
+    """
+    torch.manual_seed(1)
+    layer = SPADE_v100b(context_nc=16, num_features=32)
+    layer.gamma_scale.data.fill_(-8.0)  # fp32 tanh saturates to -1.0 below ~-9
+    x = torch.randn(2, 32, 8, 8)
+    ctx = torch.randn(2, 16, 8, 8)
+    with torch.no_grad():
+        out = layer(x, ctx)
+        normalized = layer.bn(x)
+        actv = layer.mlp_shared(ctx)
+        gamma_raw = layer.gamma_head(actv)
+        zero = torch.zeros((), device=x.device, dtype=x.dtype)
+        effective_scale = torch.tanh(layer.gamma_scale)
+        expected_gamma = (
+            1.0
+            + torch.nn.functional.softplus(effective_scale * gamma_raw)
+            - torch.nn.functional.softplus(zero)
+        )
+
+    assert torch.isfinite(out).all()
+    assert effective_scale.abs().item() < 1.0
+    torch.testing.assert_close(out, expected_gamma * normalized, atol=1e-5, rtol=1e-4)
+
+
 def test_spade_v100b_scale_drift_survives_state_dict_roundtrip():
     """Init buffers travel with state_dict, so drift stays correct after checkpoint load."""
     layer = SPADE_v100b(context_nc=16, num_features=32)

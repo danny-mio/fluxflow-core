@@ -59,3 +59,29 @@ def test_state_dict_compat_missing_conv1_scale():
 
     assert torch.isfinite(out_after).all()
     torch.testing.assert_close(out_after, out_before, atol=0, rtol=0)
+
+
+def test_residual_upsample_block_conv1_scale_bounded_via_tanh():
+    """conv1_scale is unclamped; an aggressive optimizer step (or many steps
+    of drift) can push it far from 0. The *effective* scale consumed in
+    forward() must stay bounded to (-1, 1) via tanh so the branch can never
+    contribute more than the identity path, regardless of how large the raw
+    Parameter grows.
+    """
+    torch.manual_seed(0)
+    block = _ResidualUpsampleBlock(channels=8, use_spade=False)
+    block.eval()
+    block.conv1_scale.data.fill_(
+        8.0
+    )  # simulate aggressive drift (fp32 tanh saturates to 1.0 above ~9)
+
+    x = torch.randn(1, 8, 4, 4)
+    with torch.no_grad():
+        out = block(x, context=None)
+        identity_up = block.skip_upsample(x)
+        conv_out = block.conv1(x)
+
+    assert torch.isfinite(out).all()
+    effective_scale = torch.tanh(block.conv1_scale)
+    assert effective_scale.abs().item() < 1.0
+    torch.testing.assert_close(out, identity_up + effective_scale * conv_out, atol=1e-5, rtol=1e-4)

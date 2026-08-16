@@ -89,12 +89,19 @@ class SPADE_v100b(SPADE):
             context = F.interpolate(context, size=x.shape[2:], mode="bilinear", align_corners=False)
         actv = self.mlp_shared(context)
 
+        # beta_scale/gamma_scale are unclamped (see __init__); tanh at the
+        # use-site bounds the effective scale to (-1, 1), preserving
+        # identity-at-init (tanh(0)==0) and init gradient flow (tanh'(0)==1).
         beta = self.beta_low(actv) + self.beta_mid(actv) + self.beta_hi(actv)
-        beta = self.beta_scale * beta
+        beta = torch.tanh(self.beta_scale) * beta
 
         gamma_raw = self.gamma_head(actv)
         zero = torch.zeros((), device=x.device, dtype=x.dtype)
-        gamma = 1.0 + F.softplus(self.gamma_scale * gamma_raw) - F.softplus(zero)
+        # softplus is asymptotically linear (not self-bounding), so an
+        # unclamped gamma_scale could still amplify gamma_raw without bound
+        # as it drifts; bounding the scale itself via tanh caps that
+        # multiplier even though gamma_raw's own magnitude is unaffected.
+        gamma = 1.0 + F.softplus(torch.tanh(self.gamma_scale) * gamma_raw) - F.softplus(zero)
 
         return cast(torch.Tensor, gamma * normalized + beta)
 
