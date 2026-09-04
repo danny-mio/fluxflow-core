@@ -86,7 +86,7 @@ class FluxTransformerBlock_v100(nn.Module):
         n_head: Number of attention heads (must divide d_model).
     """
 
-    def __init__(self, d_model: int, n_head: int, attn_backend: str = "einsum") -> None:
+    def __init__(self, d_model: int, n_head: int, attn_backend: str = "sdpa") -> None:
         super().__init__()
         assert d_model % n_head == 0
         head_dim = d_model // n_head
@@ -277,7 +277,7 @@ class FluxFlowProcessor_v100(nn.Module):
         max_hw: int = 1024,
         ctx_tokens: int = 4,
         context_dims: int | None = None,
-        attn_backend: str = "einsum",
+        attn_backend: str = "sdpa",
     ) -> None:
         super().__init__()
         assert d_model % n_head == 0

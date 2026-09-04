@@ -43,16 +43,17 @@ print(get_device_info())  # DeviceInfo(backend="rocm"/"cuda"/"mps"/"cpu", ...)
 This distinction is internally based on `torch.version.hip` — set only on
 ROCm wheels.
 
-## Opt-in SDPA attention backend
+## Attention backend: SDPA (default) vs. einsum (fallback)
 
-FluxFlow's flow-transformer attention is a hand-rolled `einsum`
-implementation by default (`attn_backend="einsum"` / `attention_backend:
-einsum`). An alternate `"sdpa"` backend
-(`torch.nn.functional.scaled_dot_product_attention`) is available as an
-opt-in, experimental flag:
+FluxFlow's flow-transformer attention defaults to `"sdpa"`
+(`attn_backend="sdpa"` / `attention_backend: sdpa`,
+`torch.nn.functional.scaled_dot_product_attention`) — benchmarking found it
+the fastest backend on ROCm, CUDA, and MPS. The original hand-rolled
+`"einsum"` implementation remains available as a fallback for
+numerical-comparison or debugging purposes:
 
-- YAML: `model.attention_backend: sdpa`
-- CLI: `--attention_backend sdpa` (fluxflow-training)
+- YAML: `model.attention_backend: einsum`
+- CLI: `--attention_backend einsum` (fluxflow-training)
 
 **Coverage:** only `v0.7.0`, `v0.8.0`, and `v0.10.0` models support this flag
 today (`fluxflow.models.v070/v080/v100`). `v0.3.0`/`v0.6.0` and baseline
@@ -61,10 +62,9 @@ flag entirely.
 
 SDPA is numerically close to the `einsum` path but **not bit-identical** (a
 fused kernel may use a different reduction order) — this has been verified to
-within float tolerance on CPU (`tests/unit/test_parallel_attention_sdpa.py`),
-but has not been benchmarked or correctness-validated on ROCm hardware. Try
-it and compare against the `einsum` default; don't assume it's faster without
-measuring.
+within float tolerance on CPU (`tests/unit/test_parallel_attention_sdpa.py`).
+If you need bit-identical behavior with older checkpoints/traces for
+debugging, switch back to `einsum`.
 
 ## TunableOp (GEMM autotuning)
 

@@ -41,14 +41,14 @@ class ModelConfig(BaseModel):
         return v
 
     attention_backend: Literal["einsum", "sdpa"] = Field(
-        default="einsum",
+        default="sdpa",
         description=(
             "Attention compute backend for flow transformer blocks (v0.7.0/v0.8.0/v0.10.0 "
-            "only; ignored for v0.3.0/v0.6.0/baseline). 'einsum' is the original hand-rolled "
-            "implementation (default, bit-identical to prior behavior). 'sdpa' uses "
-            "torch.nn.functional.scaled_dot_product_attention -- numerically close but not "
-            "bit-identical; opt-in, experimental, useful on backends with an optimized SDPA "
-            "kernel (e.g. ROCm). Not yet perf-validated."
+            "only; ignored for v0.3.0/v0.6.0/baseline). 'sdpa' uses "
+            "torch.nn.functional.scaled_dot_product_attention (default, benchmarked as the "
+            "fastest backend on ROCm, CUDA, and MPS). 'einsum' is the original hand-rolled "
+            "implementation, kept as a fallback for numerical-comparison or debugging "
+            "purposes; numerically close to 'sdpa' but not bit-identical."
         ),
     )
 

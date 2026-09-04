@@ -119,7 +119,7 @@ class ModelFactory:
         # Version-specific config
         v060_downscales: int = 3,  # v0.6.0: Reduced from 4 (8x instead of 16x compression)
         v030_downscales: int = 4,  # v0.3.0: Original compression (16x)
-        attention_backend: str = "einsum",
+        attention_backend: str = "sdpa",
     ):
         """
         Initialize model factory.
@@ -535,7 +535,7 @@ def create_bezier_models(
     flow_embedding_size: int = 1024,
     model_version: str = "0.7.0",
     downscales: Optional[int] = None,
-    attention_backend: str = "einsum",
+    attention_backend: str = "sdpa",
 ) -> tuple:
     """
     Convenience function to create full Bezier model set.

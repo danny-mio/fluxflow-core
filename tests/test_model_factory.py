@@ -511,13 +511,25 @@ class TestAttentionBackendVersionGating:
         assert flow_processor is not None
         assert not hasattr(flow_processor.transformer_blocks[0].self_attn, "attn_backend")
 
-    def test_default_attention_backend_is_einsum(self):
+    def test_default_attention_backend_is_sdpa(self):
         factory = ModelFactory(
             model_type="bezier",
             model_version="0.7.0",
             vae_dim=16,
             flow_d_model=32,
             flow_embedding_size=32,
+        )
+        flow_processor = factory.create_flow_processor(n_head=4, ctx_tokens=4)
+        assert flow_processor.transformer_blocks[0].self_attn.attn_backend == "sdpa"
+
+    def test_einsum_still_works_when_explicitly_requested(self):
+        factory = ModelFactory(
+            model_type="bezier",
+            model_version="0.7.0",
+            vae_dim=16,
+            flow_d_model=32,
+            flow_embedding_size=32,
+            attention_backend="einsum",
         )
         flow_processor = factory.create_flow_processor(n_head=4, ctx_tokens=4)
         assert flow_processor.transformer_blocks[0].self_attn.attn_backend == "einsum"

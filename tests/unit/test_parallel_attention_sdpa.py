@@ -37,9 +37,18 @@ def test_sdpa_matches_einsum_with_mask():
     assert torch.allclose(out_einsum, out_sdpa, atol=1e-4, rtol=1e-4)
 
 
-def test_default_backend_is_einsum():
+def test_default_backend_is_sdpa():
     attn = ParallelAttention(16, 4)
+    assert attn.attn_backend == "sdpa"
+
+
+def test_einsum_still_available_when_requested():
+    attn = ParallelAttention(16, 4, attn_backend="einsum")
     assert attn.attn_backend == "einsum"
+    q = torch.randn(1, 3, 16)
+    kv = torch.randn(1, 5, 16)
+    out = attn(q, kv, _id, _id)
+    assert out.shape == q.shape
 
 
 def test_invalid_backend_raises():

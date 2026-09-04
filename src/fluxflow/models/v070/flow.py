@@ -114,15 +114,15 @@ class ParallelAttention(nn.Module):
     Args:
         d_model: Model dimensionality
         n_head: Number of attention heads
-        attn_backend: "einsum" (default, original hand-rolled implementation)
-            or "sdpa" (torch.nn.functional.scaled_dot_product_attention).
-            "sdpa" is numerically close but not bit-identical to "einsum" --
-            opt-in, experimental, useful on backends with an optimized SDPA
-            kernel (e.g. ROCm). Does not change parameter shapes/names, so
-            existing checkpoints load under either backend.
+        attn_backend: "sdpa" (default, torch.nn.functional.scaled_dot_product_attention;
+            benchmarked as fastest on ROCm, CUDA, and MPS) or "einsum" (original
+            hand-rolled implementation, kept as a fallback for numerical-comparison
+            or debugging). Numerically close but not bit-identical between backends.
+            Does not change parameter shapes/names, so existing checkpoints load
+            under either backend.
     """
 
-    def __init__(self, d_model, n_head, attn_backend: str = "einsum"):
+    def __init__(self, d_model, n_head, attn_backend: str = "sdpa"):
         super().__init__()
         if attn_backend not in ("einsum", "sdpa"):
             raise ValueError(f"attn_backend must be 'einsum' or 'sdpa', got {attn_backend!r}")
@@ -175,7 +175,7 @@ class ParallelAttention(nn.Module):
         return self.out_proj(out)
 
     def _forward_einsum(self, q, k, v, attn_mask):
-        """Original hand-rolled attention (default; bit-identical to prior behavior)."""
+        """Original hand-rolled attention (fallback; bit-identical to prior behavior)."""
         attn = torch.einsum("bhqd,bhkd->bhqk", q, k) * (self.d_head**-0.5)
         if attn_mask is not None:
             # attn_mask: [B, S_kv] → broadcast to [B, 1, 1, S_kv]
@@ -184,7 +184,8 @@ class ParallelAttention(nn.Module):
         return torch.einsum("bhqk,bhkd->bhqd", attn, v)
 
     def _forward_sdpa(self, q, k, v, attn_mask):
-        """torch.nn.functional.scaled_dot_product_attention path (opt-in, experimental).
+        """torch.nn.functional.scaled_dot_product_attention path (default; fastest
+        backend on ROCm, CUDA, and MPS per benchmarking).
 
         Numerically close to _forward_einsum but not bit-identical (SDPA may
         use a fused kernel with different reduction order). Verified
@@ -206,7 +207,7 @@ class FluxTransformerBlock(nn.Module):
         n_head: Number of attention heads
     """
 
-    def __init__(self, d_model: int, n_head: int, attn_backend: str = "einsum"):
+    def __init__(self, d_model: int, n_head: int, attn_backend: str = "sdpa"):
         super().__init__()
         self.bezier_activation = BezierActivation()
         self.p_preactivation = nn.SiLU()
@@ -317,7 +318,7 @@ class FluxFlowProcessor(nn.Module):
         n_layers=10,
         max_hw=1024,
         ctx_tokens=4,
-        attn_backend: str = "einsum",
+        attn_backend: str = "sdpa",
     ):
         super().__init__()
         self.max_hw = max_hw

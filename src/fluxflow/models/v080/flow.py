@@ -42,7 +42,7 @@ class FluxTransformerBlock_v080(nn.Module):
         n_head: Number of attention heads
     """
 
-    def __init__(self, d_model: int, n_head: int, attn_backend: str = "einsum"):
+    def __init__(self, d_model: int, n_head: int, attn_backend: str = "sdpa"):
         super().__init__()
         self.bezier_activation = BezierActivation()
         self.p_preactivation = nn.SiLU()
@@ -204,7 +204,7 @@ class FluxFlowProcessor_v080(nn.Module):
         n_layers=10,
         max_hw=1024,
         ctx_tokens=4,
-        attn_backend: str = "einsum",
+        attn_backend: str = "sdpa",
     ):
         super().__init__()
         self.max_hw = max_hw

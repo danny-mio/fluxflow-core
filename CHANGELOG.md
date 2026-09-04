@@ -90,6 +90,13 @@ for the upgrade path and salvage instructions. Not yet released.
 - **`fluxflow.models.pipeline._flow_processor_takes_pertoken_text`** added
   as a polymorphic dispatcher: inspects the loaded flow processor and routes
   v060/v070 checkpoints through the pooled-text path automatically.
+- **`attention_backend` default is now `"sdpa"`** (was `"einsum"`) in
+  `ModelConfig`, `ModelFactory`, and `create_bezier_models`, and in the
+  `ParallelAttention`/`FluxTransformerBlock`/`FluxFlowProcessor` constructors
+  for v0.7.0/v0.8.0/v0.10.0 — benchmarked as the fastest attention backend on
+  ROCm, CUDA, and MPS. `einsum` remains available as an explicit fallback.
+  v0.3.0/v0.6.0 are unaffected (no `attn_backend` kwarg; not in
+  `_SDPA_SUPPORTED_VERSIONS`). See `docs/ROCM.md`.
 
 ### Removed
 - `pillar_cross_attn` and the shared `norm_pillar` LayerNorm from the
