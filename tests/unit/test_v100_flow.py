@@ -342,3 +342,16 @@ class TestFluxFlowProcessorV100CtxAgg:
         with torch.no_grad():
             out = proc(packed, text_seq, text_mask, t)
         assert out.shape == packed.shape
+
+
+class TestFluxFlowProcessorV100Bf16Inference:
+    """Regression test: add_coord_channels must match input dtype (bf16/fp16 inference)."""
+
+    def test_add_coord_channels_matches_input_dtype(self):
+        """Coord channels must be built in x.dtype, not hard-coded float32."""
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        proc = FluxFlowProcessor_v100(d_model=64, vae_dim=32, embedding_size=64, n_layers=1)
+        x = torch.randn(1, 64, 4, 4, dtype=torch.bfloat16)
+        out = proc.add_coord_channels(x)
+        assert out.dtype == torch.bfloat16

@@ -195,6 +195,17 @@ for the upgrade path and salvage instructions. Not yet released.
   finite — even after manually setting the raw `Parameter` to an
   aggressive value (`8.0`, the largest fp32 `tanh` input that doesn't
   saturate to exactly `1.0`).
+- **bf16/fp16 inference crashed in `add_coord_channels`**: `FluxCompressor_v100`
+  and `FluxFlowProcessor_v100` (`v100/vae.py`, `v100/flow.py`) both built their
+  coordinate-channel positional encoding with `torch.linspace` defaulting to
+  float32, regardless of the model's actual dtype. `torch.cat`'s implicit
+  type promotion then silently upcast the whole concatenated tensor back to
+  float32, undoing an explicit `.to(dtype=torch.bfloat16)`/`.to(dtype=torch.float16)`
+  cast right before it hit a same-dtype-cast conv layer, raising
+  `RuntimeError: expected scalar type Float but found BFloat16`. Training was
+  unaffected (autocast casts op arguments dynamically), but this broke real
+  weight-cast inference. Fixed by passing `dtype=x.dtype` to both
+  `torch.linspace` calls in both functions.
 
 ### Migration
 

@@ -435,8 +435,8 @@ class FluxCompressor_v100(nn.Module):
         """Add normalized coordinate channels to input."""
         B, _, H, W = x.shape
         yy, xx = torch.meshgrid(
-            torch.linspace(-1, 1, H, device=x.device),
-            torch.linspace(-1, 1, W, device=x.device),
+            torch.linspace(-1, 1, H, device=x.device, dtype=x.dtype),
+            torch.linspace(-1, 1, W, device=x.device, dtype=x.dtype),
             indexing="ij",
         )
         coords = torch.stack([xx, yy], dim=0).unsqueeze(0).expand(B, -1, -1, -1)

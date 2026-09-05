@@ -211,3 +211,26 @@ class TestSPADEWithLearnableScale:
         from fluxflow.models.v100.conditioning import SPADEWithLearnableScale
 
         assert issubclass(SPADEWithLearnableScale, SPADE)
+
+
+class TestFluxCompressorV100Bf16Inference:
+    """Regression tests: add_coord_channels must match input dtype (bf16/fp16 inference)."""
+
+    def test_add_coord_channels_matches_input_dtype(self):
+        """Coord channels must be built in x.dtype, not hard-coded float32."""
+        from fluxflow.models.v100.vae import FluxCompressor_v100
+
+        x = torch.randn(1, 3, 8, 8, dtype=torch.bfloat16)
+        out = FluxCompressor_v100.add_coord_channels(x)
+        assert out.dtype == torch.bfloat16
+
+    def test_forward_bf16_cast_model_does_not_raise(self):
+        """A fully bf16-cast model must run forward() without dtype mismatch errors."""
+        from fluxflow.models.v100.vae import FluxCompressor_v100
+
+        comp = FluxCompressor_v100(d_model=32, downscales=2, use_gradient_checkpointing=False)
+        comp = comp.to(dtype=torch.bfloat16)
+        img = torch.randn(1, 3, 32, 32, dtype=torch.bfloat16)
+        with torch.no_grad():
+            out = comp(img)
+        assert out.dtype == torch.bfloat16
