@@ -148,3 +148,15 @@ def test_spade_v100b_scale_drift_survives_state_dict_roundtrip():
 
     gamma_drift, _ = layer2.scale_drift()
     assert gamma_drift == pytest.approx(0.5)
+
+
+def test_spade_v100b_accepts_pade_activation_type():
+    layer = SPADE_v100b(context_nc=16, num_features=8, activation_type="pade")
+    assert layer.activation_type == "pade"
+
+    x = torch.randn(2, 8, 4, 4)
+    context = torch.randn(2, 16, 4, 4)
+    with torch.no_grad():
+        out = layer(x, context)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()

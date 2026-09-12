@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..activations import BezierActivation
+from ..activations import make_activation
 from ..v070.conditioning import SPADE
 
 
@@ -40,15 +40,20 @@ class SPADE_v100b(SPADE):
         num_features: Channels of the feature tensor being normalised.
     """
 
-    def __init__(self, context_nc: int, num_features: int) -> None:
+    def __init__(self, context_nc: int, num_features: int, activation_type: str = "bezier") -> None:
         super().__init__(context_nc, num_features)
+        self.activation_type = activation_type
         # Replace the inherited 1-layer mlp_shared / mlp_beta with the new heads.
         hidden = 128
         self.mlp_shared = nn.Sequential(
             nn.Conv2d(context_nc, hidden * 5, kernel_size=3, padding=1),
-            BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+            make_activation(
+                activation_type, "fixed", t_pre_activation="sigmoid", p_preactivation="silu"
+            ),
             nn.Conv2d(hidden, hidden * 5, kernel_size=3, padding=1),
-            BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+            make_activation(
+                activation_type, "fixed", t_pre_activation="sigmoid", p_preactivation="silu"
+            ),
         )
         # Three β heads at increasing receptive field.
         self.beta_low = nn.Conv2d(hidden, num_features, kernel_size=1)
