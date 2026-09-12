@@ -20,7 +20,7 @@ import torch.nn as nn
 from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
-from ..activations import BezierActivation, TrainableBezier, WideTrainableBezier, xavier_init
+from ..activations import make_activation, xavier_init
 from .conditioning import SPADE_v100b
 
 
@@ -52,17 +52,24 @@ class _ResidualUpsampleBlock(nn.Module):
         use_spade: Enable SPADE conditioning
     """
 
-    def __init__(self, channels: int, context_size: int = 1024, use_spade: bool = True) -> None:
+    def __init__(
+        self,
+        channels: int,
+        context_size: int = 1024,
+        use_spade: bool = True,
+        activation_type: str = "bezier",
+    ) -> None:
         super().__init__()
         self.use_spade = use_spade
+        self.activation_type = activation_type
         if self.use_spade:
-            self.spade = SPADE_v100b(context_size, channels)
+            self.spade = SPADE_v100b(context_size, channels, activation_type=activation_type)
 
         self.conv1 = nn.Sequential(
             nn.ConvTranspose2d(channels, channels * 5, kernel_size=16, stride=2, padding=7),
-            BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
+            make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
             nn.Conv2d(channels, channels * 5, kernel_size=5, padding=4, stride=1, dilation=2),
-            BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
+            make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
         )
         self.skip_upsample = nn.Upsample(scale_factor=2, mode="nearest")
         self.conv1_scale = nn.Parameter(torch.zeros(1))
@@ -106,12 +113,15 @@ class _ProgressiveUpscaler(nn.Module):
         context_size: int = 1024,
         use_spade: bool = True,
         use_gradient_checkpointing: bool = True,
+        activation_type: str = "bezier",
     ) -> None:
         super().__init__()
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.layers = nn.ModuleList(
             [
-                _ResidualUpsampleBlock(channels, context_size, use_spade=use_spade)
+                _ResidualUpsampleBlock(
+                    channels, context_size, use_spade=use_spade, activation_type=activation_type
+                )
                 for _ in range(steps)
             ]
         )
@@ -152,8 +162,16 @@ class _AttnBlock(nn.Module):
         ff_mult: Feed-forward expansion multiplier
     """
 
-    def __init__(self, dim: int, heads: int, drop: float = 0.0, ff_mult: int = 2) -> None:
+    def __init__(
+        self,
+        dim: int,
+        heads: int,
+        drop: float = 0.0,
+        ff_mult: int = 2,
+        activation_type: str = "bezier",
+    ) -> None:
         super().__init__()
+        self.activation_type = activation_type
         hidden = dim * ff_mult
         self.norm1 = nn.LayerNorm(dim)
         self.attn = nn.MultiheadAttention(
@@ -162,7 +180,7 @@ class _AttnBlock(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         self.ff = nn.Sequential(
             nn.Linear(dim, hidden * 5),
-            BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+            make_activation(self.activation_type, "fixed", t_pre_activation="sigmoid", p_preactivation="silu"),
             nn.Linear(hidden, dim),
         )
 
@@ -239,6 +257,7 @@ class FluxCompressor_v100(nn.Module):
         ctx_attn_layers: int = 4,
         ctx_attn_heads: int = 8,
         use_gradient_checkpointing: bool = True,
+        activation_type: str = "bezier",
     ) -> None:
         super().__init__()
         self.max_hw = max_hw
@@ -246,6 +265,7 @@ class FluxCompressor_v100(nn.Module):
         self.d_model = d_model
         self.attn_layers = attn_layers  # stored for metadata detection
         self.use_gradient_checkpointing = use_gradient_checkpointing
+        self.activation_type = activation_type
 
         assert d_model % ctx_attn_heads == 0, "d_model must be divisible by ctx_attn_heads"
 
@@ -267,7 +287,7 @@ class FluxCompressor_v100(nn.Module):
                         padding=1,
                         bias=False,
                     ),
-                    BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
                 )
                 for i in range(downscales)
             ]
@@ -283,7 +303,7 @@ class FluxCompressor_v100(nn.Module):
                         stride=2,
                         padding=3,
                     ),
-                    BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
                 )
                 for i in range(downscales)
             ]
@@ -294,7 +314,7 @@ class FluxCompressor_v100(nn.Module):
             *[
                 nn.Sequential(
                     nn.Conv2d(final_ch, d_model * 5, kernel_size=1),
-                    BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
                 )
                 for _ in range(2)
             ]
@@ -303,7 +323,7 @@ class FluxCompressor_v100(nn.Module):
             *[
                 nn.Sequential(
                     nn.Conv2d(d_model, d_model * 5, kernel_size=1),
-                    BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+                    make_activation(self.activation_type, "fixed", t_pre_activation="sigmoid", p_preactivation="silu"),
                 )
                 for _ in range(2)
             ]
@@ -312,23 +332,40 @@ class FluxCompressor_v100(nn.Module):
             *[
                 nn.Sequential(
                     nn.Conv2d(d_model, d_model * 5, kernel_size=1),
-                    BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+                    make_activation(self.activation_type, "fixed", t_pre_activation="sigmoid", p_preactivation="silu"),
                 )
                 for _ in range(2)
             ]
         )
 
-        self.mu_activation = TrainableBezier(
-            shape=(d_model,), channel_only=True, p0=-0.5, p1=-0.1, p2=0.1, p3=0.5
-        )
-        self.logvar_activation = WideTrainableBezier(
-            shape=(d_model,),
-            channel_only=True,
-            p0=-8.0,
-            p1=-2.0,
-            p2=2.0,
-            p3=4.0,
-        )
+        if self.activation_type == "bezier":
+            self.mu_activation = make_activation(
+                "bezier",
+                "trainable",
+                shape=(d_model,),
+                channel_only=True,
+                p0=-0.5,
+                p1=-0.1,
+                p2=0.1,
+                p3=0.5,
+            )
+            self.logvar_activation = make_activation(
+                "bezier",
+                "wide",
+                shape=(d_model,),
+                channel_only=True,
+                p0=-8.0,
+                p1=-2.0,
+                p2=2.0,
+                p3=4.0,
+            )
+        else:
+            self.mu_activation = make_activation(
+                self.activation_type, "trainable", shape=(d_model,), channel_only=True
+            )
+            self.logvar_activation = make_activation(
+                self.activation_type, "wide", shape=(d_model,), channel_only=True
+            )
 
         self.final_norm = nn.LayerNorm(d_model)
 
@@ -349,7 +386,7 @@ class FluxCompressor_v100(nn.Module):
                         padding=1,
                         bias=False,
                     ),
-                    BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
                 )
                 for i in range(downscales)
             ]
@@ -365,7 +402,7 @@ class FluxCompressor_v100(nn.Module):
                         stride=2,
                         padding=3,
                     ),
-                    BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
                 )
                 for i in range(downscales)
             ]
@@ -376,7 +413,7 @@ class FluxCompressor_v100(nn.Module):
             *[
                 nn.Sequential(
                     nn.Conv2d(ctx_final_ch, d_model * 5, kernel_size=1),
-                    BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
                 )
                 for _ in range(2)
             ]
@@ -388,7 +425,7 @@ class FluxCompressor_v100(nn.Module):
         # for warm-start compatibility (M8 salvage script).
         self.ctx_zinject_proj = nn.Sequential(
             nn.Conv2d(d_model, d_model * 5, kernel_size=1),
-            BezierActivation(t_pre_activation="tanh", p_preactivation="silu"),
+            make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
         )
         self.ctx_zinject_beta = nn.Conv2d(d_model, d_model, kernel_size=1)
         self.ctx_zinject_gamma = nn.Conv2d(d_model, d_model, kernel_size=1)
@@ -409,7 +446,13 @@ class FluxCompressor_v100(nn.Module):
             effective_ctx_heads -= 1
         self.ctx_token_attn = nn.ModuleList(
             [
-                _AttnBlock(d_model, effective_ctx_heads, attn_dropout, attn_ff_mult)
+                _AttnBlock(
+                    d_model,
+                    effective_ctx_heads,
+                    attn_dropout,
+                    attn_ff_mult,
+                    activation_type=self.activation_type,
+                )
                 for _ in range(ctx_attn_layers)
             ]
         )
@@ -608,10 +651,12 @@ class FluxExpander_v100(nn.Module):
         max_hw: int = 1024,
         ctx_tokens: int = 4,
         use_gradient_checkpointing: bool = True,
+        activation_type: str = "bezier",
     ) -> None:
         super().__init__()
         self.max_hw = max_hw
         self.d_model = d_model
+        self.activation_type = activation_type
 
         # v0.10.0: context_size = d_model (not the old CONTEXT_DIMS=5)
         self.upscale = _ProgressiveUpscaler(
@@ -620,6 +665,7 @@ class FluxExpander_v100(nn.Module):
             context_size=d_model,
             use_spade=True,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            activation_type=activation_type,
         )
 
         # RGB conversion identical to v070
@@ -633,14 +679,21 @@ class FluxExpander_v100(nn.Module):
             nn.Conv2d(48, 3, kernel_size=1, padding=0),
         )
 
-        self.rgb_activation = TrainableBezier(
-            shape=(3,),
-            p0=-0.5,
-            p1=-0.05,
-            p2=0.05,
-            p3=0.5,
-            channel_only=True,
-        )
+        if activation_type == "bezier":
+            self.rgb_activation = make_activation(
+                "bezier",
+                "trainable",
+                shape=(3,),
+                channel_only=True,
+                p0=-0.5,
+                p1=-0.05,
+                p2=0.05,
+                p3=0.5,
+            )
+        else:
+            self.rgb_activation = make_activation(
+                activation_type, "trainable", shape=(3,), channel_only=True
+            )
 
         # Established codebase convention (conditioning.py, encoders.py, every
         # flow.py) -- see FluxCompressor_v100.__init__ for full rationale.

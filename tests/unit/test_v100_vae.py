@@ -234,3 +234,43 @@ class TestFluxCompressorV100Bf16Inference:
         with torch.no_grad():
             out = comp(img)
         assert out.dtype == torch.bfloat16
+
+
+class TestActivationTypeSelection:
+    """Tests for activation_type selection in FluxCompressor_v100/FluxExpander_v100."""
+
+    def test_compressor_default_is_bezier(self):
+        from fluxflow.models.v100.vae import FluxCompressor_v100
+
+        comp = FluxCompressor_v100(d_model=32, downscales=2)
+        assert comp.activation_type == "bezier"
+
+    def test_compressor_pade_forward_runs(self):
+        from fluxflow.models.v100.vae import FluxCompressor_v100
+
+        comp = FluxCompressor_v100(d_model=32, downscales=2, activation_type="pade")
+        assert comp.activation_type == "pade"
+        img = torch.randn(2, 3, 32, 32)
+        with torch.no_grad():
+            packed = comp(img)
+        assert torch.isfinite(packed).all()
+
+    def test_expander_default_is_bezier(self):
+        from fluxflow.models.v100.vae import FluxExpander_v100
+
+        exp = FluxExpander_v100(d_model=32, upscales=2)
+        assert exp.activation_type == "bezier"
+
+    def test_expander_pade_forward_runs(self):
+        from fluxflow.models.v100.vae import FluxCompressor_v100, FluxExpander_v100
+
+        comp = FluxCompressor_v100(d_model=32, downscales=2, activation_type="pade")
+        exp = FluxExpander_v100(d_model=32, upscales=2, activation_type="pade")
+        assert exp.activation_type == "pade"
+        img = torch.randn(2, 3, 32, 32)
+        with torch.no_grad():
+            packed = comp(img)
+            rgb = exp(packed)
+        assert rgb.shape[0] == 2
+        assert rgb.shape[1] == 3
+        assert torch.isfinite(rgb).all()
