@@ -585,6 +585,9 @@ class ModelLoaderV010(ModelVersionLoader):
         from .v100.vae import FluxCompressor_v100, FluxExpander_v100
 
         config = metadata.architecture
+        activation_type = kwargs.pop("force_activation_type", None) or config.get(
+            "activation_type", "bezier"
+        )
 
         def get_valid_n_head(d_model: int, preferred_heads: int = 8) -> int:
             if d_model % preferred_heads == 0:
@@ -627,6 +630,7 @@ class ModelLoaderV010(ModelVersionLoader):
             max_hw=config.get("max_hw", 1024),
             attn_layers=config.get("vae_attn_layers", 4),
             attn_heads=vae_attn_heads,
+            activation_type=activation_type,
         )
 
         flow_processor = FluxFlowProcessor_v100(
@@ -636,12 +640,14 @@ class ModelLoaderV010(ModelVersionLoader):
             n_head=flow_attn_heads,
             n_layers=config.get("flow_transformer_layers", 10),
             max_hw=config.get("max_hw", 1024),
+            activation_type=activation_type,
         )
 
         expander = FluxExpander_v100(
             d_model=vae_latent_dim,
             upscales=config.get("upscales", config["downscales"]),
             max_hw=config.get("max_hw", 1024),
+            activation_type=activation_type,
         )
 
         pipeline = FluxPipeline(compressor, flow_processor, expander)
@@ -920,6 +926,8 @@ def _detect_architecture(model: Any) -> Dict[str, Any]:
         config["max_hw"] = model.compressor.max_hw
         config["vae_attn_layers"] = model.compressor.attn_layers
         config["in_channels"] = 3  # Default
+        if hasattr(model.compressor, "activation_type"):
+            config["activation_type"] = model.compressor.activation_type
 
     if hasattr(model, "flow_processor"):
         # FluxFlowProcessor doesn't store d_model, infer from linear layer
