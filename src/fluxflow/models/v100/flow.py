@@ -28,7 +28,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
-from ..activations import BezierActivation, TrainableBezier, xavier_init
+from ..activations import make_activation, xavier_init
 from ..conditioning import ContextAttentionMixer, GatedContextInjection
 from ..v070.flow import ParallelAttention, RotaryPositionalEmbedding
 from .pillar import pillarLayerWide
@@ -86,7 +86,13 @@ class FluxTransformerBlock_v100(nn.Module):
         n_head: Number of attention heads (must divide d_model).
     """
 
-    def __init__(self, d_model: int, n_head: int, attn_backend: str = "sdpa") -> None:
+    def __init__(
+        self,
+        d_model: int,
+        n_head: int,
+        attn_backend: str = "sdpa",
+        activation_type: str = "bezier",
+    ) -> None:
         super().__init__()
         assert d_model % n_head == 0
         head_dim = d_model // n_head
@@ -97,7 +103,8 @@ class FluxTransformerBlock_v100(nn.Module):
         self.d_model = d_model
         self.n_head = n_head
         self.head_dim = head_dim
-        self.bezier_activation = BezierActivation()
+        self.activation_type = activation_type
+        self.bezier_activation = make_activation(activation_type, "fixed")
 
         self.self_attn = ParallelAttention(d_model, n_head, attn_backend=attn_backend)
         self.cross_attn = ParallelAttention(d_model, n_head, attn_backend=attn_backend)
@@ -278,6 +285,7 @@ class FluxFlowProcessor_v100(nn.Module):
         ctx_tokens: int = 4,
         context_dims: int | None = None,
         attn_backend: str = "sdpa",
+        activation_type: str = "bezier",
     ) -> None:
         super().__init__()
         assert d_model % n_head == 0
@@ -288,6 +296,7 @@ class FluxFlowProcessor_v100(nn.Module):
         self.max_hw = max_hw
         self.ctx_tokens = ctx_tokens
         self.context_dims = context_dims if context_dims is not None else vae_dim
+        self.activation_type = activation_type
 
         packed_width = vae_dim + self.context_dims
 
@@ -304,7 +313,9 @@ class FluxFlowProcessor_v100(nn.Module):
         # Replaces the old Embedding(1000) + Bezier + Linear chain.
         self.time_mlp = nn.Sequential(
             nn.Linear(d_model, d_model * 5),
-            BezierActivation(t_pre_activation="sigmoid", p_preactivation="silu"),
+            make_activation(
+                activation_type, "fixed", t_pre_activation="sigmoid", p_preactivation="silu"
+            ),
             nn.Linear(d_model, d_model),
         )
 
@@ -317,19 +328,21 @@ class FluxFlowProcessor_v100(nn.Module):
 
         self.transformer_blocks = nn.ModuleList(
             [
-                FluxTransformerBlock_v100(d_model, n_head, attn_backend=attn_backend)
+                FluxTransformerBlock_v100(
+                    d_model, n_head, attn_backend=attn_backend, activation_type=activation_type
+                )
                 for _ in range(n_layers)
             ]
         )
 
         self.flow_predictor = nn.Sequential(
             nn.Conv2d(d_model, d_model, kernel_size=5, padding=2),
-            TrainableBezier((d_model, 1, 1)),
+            make_activation(activation_type, "trainable", shape=(d_model, 1, 1)),
             nn.Conv2d(d_model, d_model, kernel_size=3, padding=1),
         )
         self.context_final = nn.Sequential(
             nn.Conv2d(d_model + 2, d_model, kernel_size=7, padding=3),
-            TrainableBezier((d_model, 1, 1)),
+            make_activation(activation_type, "trainable", shape=(d_model, 1, 1)),
         )
 
     def add_coord_channels(self, x: torch.Tensor) -> torch.Tensor:

@@ -27,6 +27,33 @@ class TestFluxFlowProcessorV100:
             out = proc(packed, text_seq, text_mask, t)
         assert out.shape == packed.shape
 
+    def test_pade_activation_type_forward_runs(self):
+        """activation_type='pade' must construct and run end-to-end."""
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        proc = FluxFlowProcessor_v100(
+            d_model=128, vae_dim=32, embedding_size=64, n_layers=1, activation_type="pade"
+        )
+        assert proc.activation_type == "pade"
+        packed = torch.zeros(1, 17, 64)
+        packed[:, :-1, :] = torch.randn(1, 16, 64)
+        packed[0, -1, 0] = 4 / 1024.0
+        packed[0, -1, 1] = 4 / 1024.0
+        text_seq = torch.randn(1, 5, 64)
+        text_mask = torch.ones(1, 5, dtype=torch.bool)
+        t = torch.tensor([0.5])
+        with torch.no_grad():
+            out = proc(packed, text_seq, text_mask, t)
+        assert out.shape == packed.shape
+        assert torch.isfinite(out).all()
+
+    def test_default_activation_type_is_bezier(self):
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        proc = FluxFlowProcessor_v100(d_model=128, vae_dim=32, embedding_size=64, n_layers=1)
+        assert proc.activation_type == "bezier"
+        assert proc.transformer_blocks[0].bezier_activation.__class__.__name__ == "BezierActivation"
+
     def test_forward_rejects_text_batch_mismatch(self):
         """Mismatched text/latent batch must raise, not silently broadcast.
 
