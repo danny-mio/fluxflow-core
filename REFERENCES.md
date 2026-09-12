@@ -24,6 +24,26 @@ FluxFlow's Bezier activation functions were **inspired by KAN**, which demonstra
 - Paper: [arXiv:2404.19756](https://arxiv.org/abs/2404.19756)
 - GitHub: [KindXiaoming/pykan](https://github.com/KindXiaoming/pykan)
 
+### Padé Activation Units (PAU)
+
+FluxFlow's Padé activation functions are a direct implementation of PAU,
+used as a rational-function generalization of the Bezier activation family
+(a cubic Bezier segment is a degree-(3,0) Padé approximant).
+
+**Citation:**
+```bibtex
+@inproceedings{molina2020pade,
+  title={Pad{\'e} Activation Units: End-to-end Learning of Flexible Activation Functions in Deep Networks},
+  author={Molina, Alejandro and Schramowski, Patrick and Kersting, Kristian},
+  booktitle={International Conference on Learning Representations},
+  year={2020},
+  url={https://arxiv.org/abs/1907.06732}
+}
+```
+
+**Resources:**
+- Paper: [arXiv:1907.06732](https://arxiv.org/abs/1907.06732)
+
 ---
 
 ## Conditioning Mechanisms

@@ -15,6 +15,23 @@ multi-scale SPADE, and a clean Gaussian z. See
 for the upgrade path and salvage instructions. Not yet released.
 
 ### Added
+- **Padé Activation Units** (`PadeActivation`, `TrainablePade`,
+  `WideTrainablePade` in `models/pade_activation.py`): rational-function
+  generalization of the Bezier activation family (a cubic Bezier segment is
+  a degree-(3,0) Padé approximant), using the "safe PAU" denominator
+  construction (`Q(x) = 1 + |Q_raw(x)|`, guaranteeing no pole) to stay
+  transcendental-free. Selectable via `activation_type="pade"` on
+  `ModelConfig`/`ModelFactory` and every `v100/` VAE/Flow/conditioning
+  constructor (default remains `"bezier"`, unchanged behavior). See
+  `docs/PADE-ACTIVATION-ANALYSIS.md` for benchmark results and the
+  explicit "quality unvalidated" caveat.
+- `make_activation(kind, mode, ...)` dispatcher in `models/activations.py`
+  centralizing Bezier-vs-Padé construction across all `v100/` call sites.
+- Checkpoint metadata now records `activation_type` automatically at save
+  time (`_detect_architecture`) and `ModelLoaderV010.load_checkpoint`
+  auto-selects it at load time, with an explicit `force_activation_type`
+  override kwarg. Checkpoints saved before this change default to
+  `"bezier"`.
 - **`WideTrainableBezier`** activation in `models/activations.py`: learnable
   Bezier with wide-range default control points (`p0=-8, p1=-2, p2=2, p3=4`)
   for variational logvar.
