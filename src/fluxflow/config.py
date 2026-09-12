@@ -18,6 +18,15 @@ class ModelConfig(BaseModel):
         default="bezier",
         description="Model architecture type: 'bezier' (default) or 'baseline' (for comparison)",
     )
+    activation_type: Literal["bezier", "pade"] = Field(
+        default="bezier",
+        description=(
+            "Activation family for v0.10.0 models: 'bezier' (default) or 'pade' "
+            "(rational-function Padé activation, comparable cost, strictly larger "
+            "function class). Ignored for v0.3.0/0.6.0/0.7.0/0.8.0 (Bezier-only, "
+            "frozen/historical) and for model_type='baseline'."
+        ),
+    )
     model_version: str = Field(
         default="0.6.0",
         description="Model version: automatically discovered (default: '0.6.0')",

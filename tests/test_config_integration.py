@@ -184,3 +184,26 @@ class TestConfigIntegration:
 
         # Should still use Bezier components
         assert vae_dec.__class__.__name__ == "FluxExpander"
+
+
+def test_model_config_activation_type_default():
+    from fluxflow.config import ModelConfig
+
+    config = ModelConfig()
+    assert config.activation_type == "bezier"
+
+
+def test_model_config_activation_type_pade():
+    from fluxflow.config import ModelConfig
+
+    config = ModelConfig(activation_type="pade")
+    assert config.activation_type == "pade"
+
+
+def test_model_config_activation_type_rejects_invalid():
+    from pydantic import ValidationError
+
+    from fluxflow.config import ModelConfig
+
+    with pytest.raises(ValidationError):
+        ModelConfig(activation_type="chaotic_pendulum")

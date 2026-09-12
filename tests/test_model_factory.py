@@ -535,5 +535,33 @@ class TestAttentionBackendVersionGating:
         assert flow_processor.transformer_blocks[0].self_attn.attn_backend == "einsum"
 
 
+class TestModelFactoryActivationType:
+    """Test ModelFactory activation_type selection for v0.10.0."""
+
+    def test_default_activation_type_is_bezier(self):
+        factory = ModelFactory(model_type="bezier", model_version="0.10.0")
+        assert factory.activation_type == "bezier"
+
+    def test_activation_type_pade(self):
+        factory = ModelFactory(model_type="bezier", model_version="0.10.0", activation_type="pade")
+        assert factory.activation_type == "pade"
+
+    def test_create_vae_encoder_v0100_passes_activation_type(self):
+        factory = ModelFactory(
+            model_type="bezier", model_version="0.10.0", activation_type="pade", vae_dim=32
+        )
+        encoder = factory.create_vae_encoder(downscales=2)
+        assert encoder.activation_type == "pade"
+
+    def test_create_vae_encoder_v070_ignores_activation_type(self):
+        """v0.7.0 is frozen/historical -- activation_type must not be passed to it."""
+        factory = ModelFactory(
+            model_type="bezier", model_version="0.7.0", activation_type="pade", vae_dim=32
+        )
+        # Must not raise TypeError from an unexpected activation_type kwarg.
+        encoder = factory.create_vae_encoder(downscales=2)
+        assert not hasattr(encoder, "activation_type")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

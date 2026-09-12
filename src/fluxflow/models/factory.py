@@ -31,6 +31,12 @@ ModelClassRegistry = registry.ModelClassRegistry
 # separate, unrelated class family).
 _SDPA_SUPPORTED_VERSIONS = {"0.7.0", "0.8.0", "0.10.0"}
 
+# Model versions whose VAE/Flow constructors accept an `activation_type`
+# kwarg (Bezier vs Padé selection). Older versions (v0.3.0/0.6.0/0.7.0/0.8.0)
+# are frozen/historical and remain Bezier-only -- passing activation_type to
+# them raises TypeError, so it is gated the same way as attn_backend.
+_ACTIVATION_SELECTABLE_VERSIONS = {"0.10.0"}
+
 
 # Automatically discover and import all version modules
 # This enables truly self-registering versions - no code changes needed for new versions
@@ -68,6 +74,7 @@ _auto_discover_versions()
 
 ModelType = Literal["bezier", "baseline"]
 ActivationType = Literal["silu", "gelu", "relu"]
+ActivationFamily = Literal["bezier", "pade"]
 
 
 class ModelFactory:
@@ -103,6 +110,7 @@ class ModelFactory:
         self,
         model_type: ModelType = "bezier",
         model_version: str = "0.6.0",
+        activation_type: ActivationFamily = "bezier",
         # Common config
         vae_dim: int = 128,
         feature_maps_dim: int = 128,
@@ -143,6 +151,7 @@ class ModelFactory:
         """
         self.model_type = model_type
         self.model_version = model_version
+        self.activation_type = activation_type
         self.vae_dim = vae_dim
         self.feature_maps_dim = feature_maps_dim
         self.flow_d_model = flow_d_model
@@ -183,6 +192,11 @@ class ModelFactory:
         # Get the appropriate class based on model type and version
         classes = self._get_versioned_classes()
         FluxCompressor = classes["FluxCompressor"]
+        extra_kwargs = (
+            {"activation_type": self.activation_type}
+            if self.model_version in _ACTIVATION_SELECTABLE_VERSIONS
+            else {}
+        )
 
         return FluxCompressor(  # type: ignore
             in_channels=in_channels,
@@ -195,6 +209,7 @@ class ModelFactory:
             attn_ff_mult=attn_ff_mult,
             attn_dropout=attn_dropout,
             use_gradient_checkpointing=use_gradient_checkpointing,
+            **extra_kwargs,
         )
 
     def create_vae_decoder(
@@ -217,12 +232,18 @@ class ModelFactory:
             # Use versioned FluxExpander for bezier models
             classes = self._get_versioned_classes()
             FluxExpander = classes["FluxExpander"]
+            extra_kwargs = (
+                {"activation_type": self.activation_type}
+                if self.model_version in _ACTIVATION_SELECTABLE_VERSIONS
+                else {}
+            )
             return FluxExpander(  # type: ignore
                 d_model=self.vae_dim,
                 upscales=upscales,
                 max_hw=max_hw,
                 ctx_tokens=ctx_tokens,
                 use_gradient_checkpointing=use_gradient_checkpointing,
+                **extra_kwargs,
             )
         else:
             # Baseline: Create custom expander with baseline blocks
@@ -363,6 +384,8 @@ class ModelFactory:
                 if self.model_version in _SDPA_SUPPORTED_VERSIONS
                 else {}
             )
+            if self.model_version in _ACTIVATION_SELECTABLE_VERSIONS:
+                extra_kwargs["activation_type"] = self.activation_type
             return FluxFlowProcessor(  # type: ignore
                 d_model=self.flow_d_model,
                 vae_dim=self.vae_dim,
