@@ -562,6 +562,128 @@ class TestModelFactoryActivationType:
         encoder = factory.create_vae_encoder(downscales=2)
         assert not hasattr(encoder, "activation_type")
 
+    def test_per_component_override_compressor_only(self):
+        factory = ModelFactory(
+            model_type="bezier",
+            model_version="0.10.0",
+            activation_type="bezier",
+            compressor_activation_type="pade",
+            vae_dim=32,
+            flow_d_model=32,
+            flow_embedding_size=32,
+        )
+        encoder = factory.create_vae_encoder(downscales=2)
+        decoder = factory.create_vae_decoder(upscales=2)
+        flow = factory.create_flow_processor(n_head=4, ctx_tokens=4)
+        assert encoder.activation_type == "pade"
+        assert decoder.activation_type == "bezier"
+        assert flow.activation_type == "bezier"
+
+    def test_per_component_overrides_all_three_independently(self):
+        factory = ModelFactory(
+            model_type="bezier",
+            model_version="0.10.0",
+            activation_type="bezier",
+            compressor_activation_type="pade",
+            expander_activation_type="bezier",
+            flow_activation_type="pade",
+            vae_dim=32,
+            flow_d_model=32,
+            flow_embedding_size=32,
+        )
+        encoder = factory.create_vae_encoder(downscales=2)
+        decoder = factory.create_vae_decoder(upscales=2)
+        flow = factory.create_flow_processor(n_head=4, ctx_tokens=4)
+        assert encoder.activation_type == "pade"
+        assert decoder.activation_type == "bezier"
+        assert flow.activation_type == "pade"
+
+
+class TestCreateBezierModelsActivationType:
+    """create_bezier_models is the function create_models_from_config actually
+    calls for model_type='bezier' -- it must thread activation_type through
+    independently of ModelFactory, which it does not use internally."""
+
+    def test_default_activation_type_is_bezier(self):
+        compressor, expander, flow_processor, text_encoder = create_bezier_models(
+            vae_dim=16, flow_d_model=32, flow_embedding_size=32, model_version="0.10.0"
+        )
+        assert compressor.activation_type == "bezier"
+        assert expander.activation_type == "bezier"
+        assert flow_processor.activation_type == "bezier"
+
+    def test_activation_type_pade_threads_to_all_three(self):
+        compressor, expander, flow_processor, text_encoder = create_bezier_models(
+            vae_dim=16,
+            flow_d_model=32,
+            flow_embedding_size=32,
+            model_version="0.10.0",
+            activation_type="pade",
+        )
+        assert compressor.activation_type == "pade"
+        assert expander.activation_type == "pade"
+        assert flow_processor.activation_type == "pade"
+
+    def test_per_component_overrides(self):
+        compressor, expander, flow_processor, text_encoder = create_bezier_models(
+            vae_dim=16,
+            flow_d_model=32,
+            flow_embedding_size=32,
+            model_version="0.10.0",
+            activation_type="bezier",
+            compressor_activation_type="pade",
+        )
+        assert compressor.activation_type == "pade"
+        assert expander.activation_type == "bezier"
+        assert flow_processor.activation_type == "bezier"
+
+    @pytest.mark.parametrize("model_version", ["0.3.0", "0.6.0", "0.7.0"])
+    def test_older_versions_ignore_activation_type(self, model_version):
+        """Frozen/historical versions must not receive activation_type (TypeError guard)."""
+        compressor, expander, flow_processor, text_encoder = create_bezier_models(
+            vae_dim=16,
+            flow_d_model=32,
+            flow_embedding_size=32,
+            model_version=model_version,
+            activation_type="pade",
+        )
+        assert not hasattr(compressor, "activation_type")
+
+    def test_create_models_from_config_threads_activation_type(self):
+        from fluxflow.config import ModelConfig
+        from fluxflow.models.factory import create_models_from_config
+
+        config = ModelConfig(
+            model_type="bezier",
+            model_version="0.10.0",
+            activation_type="pade",
+            vae_dim=16,
+            feature_maps_dim=32,
+            text_embedding_dim=32,
+        )
+        compressor, expander, flow_processor, text_encoder = create_models_from_config(config)
+        assert compressor.activation_type == "pade"
+        assert expander.activation_type == "pade"
+        assert flow_processor.activation_type == "pade"
+
+    def test_create_models_from_config_threads_per_component_overrides(self):
+        from fluxflow.config import ModelConfig
+        from fluxflow.models.factory import create_models_from_config
+
+        config = ModelConfig(
+            model_type="bezier",
+            model_version="0.10.0",
+            activation_type="bezier",
+            compressor_activation_type="pade",
+            vae_dim=16,
+            feature_maps_dim=32,
+            text_embedding_dim=32,
+        )
+        compressor, expander, flow_processor, text_encoder = create_models_from_config(config)
+        assert compressor.activation_type == "pade"
+        assert expander.activation_type == "bezier"
+        assert flow_processor.activation_type == "bezier"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -21,11 +21,25 @@ class ModelConfig(BaseModel):
     activation_type: Literal["bezier", "pade"] = Field(
         default="bezier",
         description=(
-            "Activation family for v0.10.0 models: 'bezier' (default) or 'pade' "
-            "(rational-function Padé activation, comparable cost, strictly larger "
-            "function class). Ignored for v0.3.0/0.6.0/0.7.0/0.8.0 (Bezier-only, "
-            "frozen/historical) and for model_type='baseline'."
+            "Default activation family for v0.10.0 models: 'bezier' (default) or "
+            "'pade' (rational-function Padé activation, comparable cost, strictly "
+            "larger function class). Applies to compressor, expander, and flow "
+            "processor alike unless overridden per-component below. Ignored for "
+            "v0.3.0/0.6.0/0.7.0/0.8.0 (Bezier-only, frozen/historical) and for "
+            "model_type='baseline'."
         ),
+    )
+    compressor_activation_type: Optional[Literal["bezier", "pade"]] = Field(
+        default=None,
+        description="Per-component override of activation_type for the VAE compressor only. None = use activation_type.",
+    )
+    expander_activation_type: Optional[Literal["bezier", "pade"]] = Field(
+        default=None,
+        description="Per-component override of activation_type for the VAE expander only. None = use activation_type.",
+    )
+    flow_activation_type: Optional[Literal["bezier", "pade"]] = Field(
+        default=None,
+        description="Per-component override of activation_type for the flow processor only. None = use activation_type.",
     )
     model_version: str = Field(
         default="0.6.0",

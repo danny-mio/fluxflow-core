@@ -111,6 +111,9 @@ class ModelFactory:
         model_type: ModelType = "bezier",
         model_version: str = "0.6.0",
         activation_type: ActivationFamily = "bezier",
+        compressor_activation_type: Optional[ActivationFamily] = None,
+        expander_activation_type: Optional[ActivationFamily] = None,
+        flow_activation_type: Optional[ActivationFamily] = None,
         # Common config
         vae_dim: int = 128,
         feature_maps_dim: int = 128,
@@ -152,6 +155,9 @@ class ModelFactory:
         self.model_type = model_type
         self.model_version = model_version
         self.activation_type = activation_type
+        self.compressor_activation_type = compressor_activation_type
+        self.expander_activation_type = expander_activation_type
+        self.flow_activation_type = flow_activation_type
         self.vae_dim = vae_dim
         self.feature_maps_dim = feature_maps_dim
         self.flow_d_model = flow_d_model
@@ -193,7 +199,7 @@ class ModelFactory:
         classes = self._get_versioned_classes()
         FluxCompressor = classes["FluxCompressor"]
         extra_kwargs = (
-            {"activation_type": self.activation_type}
+            {"activation_type": self.compressor_activation_type or self.activation_type}
             if self.model_version in _ACTIVATION_SELECTABLE_VERSIONS
             else {}
         )
@@ -233,7 +239,7 @@ class ModelFactory:
             classes = self._get_versioned_classes()
             FluxExpander = classes["FluxExpander"]
             extra_kwargs = (
-                {"activation_type": self.activation_type}
+                {"activation_type": self.expander_activation_type or self.activation_type}
                 if self.model_version in _ACTIVATION_SELECTABLE_VERSIONS
                 else {}
             )
@@ -385,7 +391,7 @@ class ModelFactory:
                 else {}
             )
             if self.model_version in _ACTIVATION_SELECTABLE_VERSIONS:
-                extra_kwargs["activation_type"] = self.activation_type
+                extra_kwargs["activation_type"] = self.flow_activation_type or self.activation_type
             return FluxFlowProcessor(  # type: ignore
                 d_model=self.flow_d_model,
                 vae_dim=self.vae_dim,
@@ -559,11 +565,24 @@ def create_bezier_models(
     model_version: str = "0.7.0",
     downscales: Optional[int] = None,
     attention_backend: str = "sdpa",
+    activation_type: ActivationFamily = "bezier",
+    compressor_activation_type: Optional[ActivationFamily] = None,
+    expander_activation_type: Optional[ActivationFamily] = None,
+    flow_activation_type: Optional[ActivationFamily] = None,
 ) -> tuple:
     """
     Convenience function to create full Bezier model set.
 
     Uses self-registering version system - no if statements needed for new versions.
+
+    Args:
+        activation_type: Default activation family ("bezier" or "pade") applied to
+            compressor, expander, and flow processor alike. Ignored for versions
+            outside `_ACTIVATION_SELECTABLE_VERSIONS` (only v0.10.0 today).
+        compressor_activation_type: Overrides `activation_type` for the compressor
+            only. None (default) means "use `activation_type`".
+        expander_activation_type: Overrides `activation_type` for the expander only.
+        flow_activation_type: Overrides `activation_type` for the flow processor only.
 
     Returns:
         (vae_encoder, vae_decoder, flow_processor, text_encoder)
@@ -595,6 +614,23 @@ def create_bezier_models(
         # All versions use 4 downscales for compatibility
         downscales = 4
 
+    activation_selectable = model_version in _ACTIVATION_SELECTABLE_VERSIONS
+    compressor_kwargs = (
+        {"activation_type": compressor_activation_type or activation_type}
+        if activation_selectable
+        else {}
+    )
+    expander_kwargs = (
+        {"activation_type": expander_activation_type or activation_type}
+        if activation_selectable
+        else {}
+    )
+    flow_activation_kwargs = (
+        {"activation_type": flow_activation_type or activation_type}
+        if activation_selectable
+        else {}
+    )
+
     compressor = Compressor(
         in_channels=3,
         d_model=vae_dim,
@@ -606,6 +642,7 @@ def create_bezier_models(
         attn_ff_mult=2,
         attn_dropout=0.0,
         use_gradient_checkpointing=True,
+        **compressor_kwargs,
     )
 
     expander = Expander(
@@ -614,11 +651,13 @@ def create_bezier_models(
         max_hw=1024,
         ctx_tokens=4,
         use_gradient_checkpointing=True,
+        **expander_kwargs,
     )
 
     extra_kwargs = (
         {"attn_backend": attention_backend} if model_version in _SDPA_SUPPORTED_VERSIONS else {}
     )
+    extra_kwargs.update(flow_activation_kwargs)
     flow_processor = FlowProcessor(
         d_model=flow_d_model,
         vae_dim=vae_dim,
@@ -702,6 +741,10 @@ def create_models_from_config(model_config) -> tuple:
             flow_embedding_size=model_config.text_embedding_dim,
             model_version=model_config.model_version,
             attention_backend=model_config.attention_backend,
+            activation_type=model_config.activation_type,
+            compressor_activation_type=model_config.compressor_activation_type,
+            expander_activation_type=model_config.expander_activation_type,
+            flow_activation_type=model_config.flow_activation_type,
         )
     elif model_config.model_type == "baseline":
         return create_baseline_models(
