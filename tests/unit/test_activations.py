@@ -413,6 +413,61 @@ class TestActivationsIntegration:
         assert torch.isfinite(output).all()
 
 
+class TestMakeActivation:
+    """Tests for the make_activation dispatcher."""
+
+    def test_bezier_fixed_mode(self):
+        from fluxflow.models.activations import BezierActivation, make_activation
+
+        act = make_activation("bezier", "fixed", t_pre_activation="tanh", p_preactivation="silu")
+        assert isinstance(act, BezierActivation)
+
+    def test_pade_fixed_mode(self):
+        from fluxflow.models.activations import make_activation
+        from fluxflow.models.pade_activation import PadeActivation
+
+        act = make_activation("pade", "fixed", t_pre_activation="tanh", p_preactivation="silu")
+        assert isinstance(act, PadeActivation)
+
+    def test_bezier_trainable_mode_with_overrides(self):
+        from fluxflow.models.activations import make_activation
+
+        act = make_activation("bezier", "trainable", shape=(4,), p0=-0.5, p1=-0.1, p2=0.1, p3=0.5)
+        assert torch.allclose(act.p0, torch.ones(4) * -0.5)
+
+    def test_pade_trainable_mode_default(self):
+        from fluxflow.models.activations import make_activation
+        from fluxflow.models.pade_activation import TrainablePade
+
+        act = make_activation("pade", "trainable", shape=(4,))
+        assert isinstance(act, TrainablePade)
+
+    def test_bezier_wide_mode(self):
+        from fluxflow.models.activations import WideTrainableBezier, make_activation
+
+        act = make_activation("bezier", "wide", shape=(4,))
+        assert isinstance(act, WideTrainableBezier)
+
+    def test_pade_wide_mode(self):
+        from fluxflow.models.activations import make_activation
+        from fluxflow.models.pade_activation import WideTrainablePade
+
+        act = make_activation("pade", "wide", shape=(4,))
+        assert isinstance(act, WideTrainablePade)
+
+    def test_unknown_kind_raises(self):
+        from fluxflow.models.activations import make_activation
+
+        with pytest.raises(ValueError):
+            make_activation("unknown", "fixed")
+
+    def test_unknown_mode_raises(self):
+        from fluxflow.models.activations import make_activation
+
+        with pytest.raises(ValueError):
+            make_activation("bezier", "unknown")
+
+
 class TestSlidingBezierActivation:
     pass
 

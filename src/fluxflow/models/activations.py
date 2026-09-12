@@ -263,6 +263,67 @@ class WideTrainableBezier(TrainableBezier):
         super().__init__(shape, p0=p0, p1=p1, p2=p2, p3=p3, channel_only=channel_only)
 
 
+def make_activation(
+    kind: str,
+    mode: str,
+    shape=None,
+    channel_only: bool = False,
+    t_pre_activation: Optional[str] = "sigmoid",
+    p_preactivation: Optional[str] = None,
+    **overrides,
+) -> nn.Module:
+    """
+    Construct a Bezier or Padé activation module by name.
+
+    Centralizes the activation-family dispatch used throughout v100/*.py so
+    the choice between "bezier" (default) and "pade" is made in one place
+    per call site instead of hardcoding a class.
+
+    Args:
+        kind: "bezier" or "pade".
+        mode: "fixed" (data-driven, 5-channel reduction -- BezierActivation /
+            PadeActivation), "trainable" (TrainableBezier / TrainablePade),
+            or "wide" (WideTrainableBezier / WideTrainablePade).
+        shape, channel_only: forwarded to the "trainable"/"wide" constructors.
+        t_pre_activation, p_preactivation: Bezier-only. Bezier's Bernstein
+            basis needs its `t` input squashed into [0, 1]; Padé's rational
+            function is defined on all reals and needs no such squashing, so
+            these are silently ignored for kind="pade" -- a deliberate
+            asymmetry, not a bug.
+        **overrides: control-point / coefficient overrides forwarded to the
+            underlying constructor (e.g. p0=... for Bezier, a0=... for
+            Padé). Overrides use family-specific names -- callers that need
+            custom values for both families must branch on `kind`
+            themselves rather than passing one shared kwargs dict.
+
+    Returns:
+        The constructed activation nn.Module.
+    """
+    from fluxflow.models.pade_activation import PadeActivation, TrainablePade, WideTrainablePade
+
+    if kind == "bezier":
+        if mode == "fixed":
+            return BezierActivation(
+                t_pre_activation=t_pre_activation, p_preactivation=p_preactivation
+            )
+        elif mode == "trainable":
+            return TrainableBezier(shape, channel_only=channel_only, **overrides)
+        elif mode == "wide":
+            return WideTrainableBezier(shape, channel_only=channel_only, **overrides)
+        raise ValueError(f"Unknown mode: {mode!r}")
+
+    elif kind == "pade":
+        if mode == "fixed":
+            return PadeActivation()
+        elif mode == "trainable":
+            return TrainablePade(shape, channel_only=channel_only, **overrides)
+        elif mode == "wide":
+            return WideTrainablePade(shape, channel_only=channel_only, **overrides)
+        raise ValueError(f"Unknown mode: {mode!r}")
+
+    raise ValueError(f"Unknown activation kind: {kind!r}")
+
+
 class Flip(nn.Module):
     """Flip tensor along specified dimensions."""
 
