@@ -89,6 +89,49 @@ required before any quality claim can be made in front of stakeholders.
 That ablation is explicitly out of scope for this pass -- see the design
 spec's "Explicitly out of scope" section.
 
+## Numerical stability: numerator overflow found via real training (2026-09-13)
+
+The first actual training run using `activation_type="pade"`
+(`TrainablePade`/`WideTrainablePade` as `mu_activation`/`logvar_activation`)
+crashed within the first few dozen steps: `Inf` in the compressor's output,
+traced via forward-hook instrumentation directly to `TrainablePade.forward`
+-- input clean and finite, coefficients small and finite (`b1`-`b4` still at
+their zero init), output `Inf`.
+
+Root cause: `Q(x) = 1 + |Q_raw(x)|` is provably pole-free as designed, but
+the **numerator has no equivalent protection**. `TrainableBezier` squashes
+its input through `sigmoid`/`tanh` into `[0,1]` before evaluating its
+(bounded) Bernstein polynomial; `TrainablePade`'s `x` is used raw. A single
+large-but-finite upstream activation is enough to overflow `a5*x^5` before
+the denominator -- which only matters once `Q_raw(x)` grows large relative
+to 1 -- has any chance to bound the result.
+
+**Fix applied** (`pade_activation.py`): clamp `x` to `±65504**(1/5) ≈ ±9.19`
+(fp16's max representable value, sized to the numerator's degree-5 growth)
+before evaluation, instead of a tight `[-1,1]` clamp, to preserve more of
+Padé's dynamic range.
+
+**Known trade-off, not yet resolved**: at `b1`-`b4 = 0` (their init value,
+and what was observed at the point of the crash), `Q(x) = 1` identically
+across the entire clamped domain -- in that regime the network is
+indistinguishable from a plain clamped degree-5 polynomial. The whole reason
+to prefer Padé over a Taylor-style polynomial is graceful behavior over a
+*wide* domain without hard clamping; a tight input clamp sidesteps that
+advantage rather than preserving it. Whether `b1`-`b4` grow large enough
+during training to make `Q(x)` diverge meaningfully from 1 *within*
+`[-9.19, 9.19]` is unobserved (at the clamp boundary `x^4 ≈ 7132`, so even a
+modest `b4 ~ 0.01` would already matter) -- we only have one early,
+unconverged snapshot. This is a real question for anyone deciding whether
+Padé is worth using here, separate from whether the clamp fix itself is
+correct (it is -- the crash was a hard blocker regardless).
+
+Separately, and not itself a bug: the numerator/denominator degree
+asymmetry (5 over 4) is a deliberate match to the literature "safe PAU"
+order (Molina et al., 2019) -- it means the function's true asymptotic
+behavior (absent any clamp) is linear growth, not saturation to a constant.
+"Make the denominator degree match the numerator" is not a drop-in
+improvement without revisiting that cited reference design.
+
 ## Cross-repo follow-up required
 
 `fluxflow-training`'s YAML/CLI config schema needs its own `activation_type`

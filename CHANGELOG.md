@@ -170,6 +170,19 @@ for the upgrade path and salvage instructions. Not yet released.
   683 passed, 1 failed, 11 skipped — the failure is a pre-existing, unrelated
   issue (`tests/unit/test_v100_flow.py::TestFluxTransformerBlockV100::test_no_v080_import_in_v100_flow`
   hardcodes a macOS-only filesystem path) untouched by this change.
+- **`TrainablePade`/`WideTrainablePade` numerator overflow**, found on the
+  first actual training run using `activation_type="pade"`: `Inf` in
+  `mu_activation`/`logvar_activation`'s output from clean, finite input and
+  small, finite coefficients. The "safe PAU" denominator (`Q(x) = 1 +
+  |Q_raw(x)|`) is provably pole-free, but the degree-5 numerator has no
+  equivalent input-range protection (unlike `TrainableBezier`, which squashes
+  its input into `[0,1]` first) — a single large-but-finite upstream
+  activation overflows `a5*x^5`. Now clamps `x` to `±65504**(1/5) ≈ ±9.19`
+  (fp16's max representable value, sized to the degree-5 growth) before
+  evaluation. See `docs/PADE-ACTIVATION-ANALYSIS.md` for the known trade-off
+  this clamp introduces (narrows the effective domain in which the rational
+  structure's advantage over a plain polynomial is actually exercised) —
+  not yet resolved, flagged for whoever evaluates Padé's value here next.
 - **MLX decoder (`FluxExpander` in `mlx/layers/vae.py`) staleness**: this
   backend is frozen at v0.7.0/v0.8.0 parity — single-head `SPADE`, no
   `SPADE_v100b` heads (`beta_low`/`beta_mid`/`beta_hi`/`gamma_head`/
