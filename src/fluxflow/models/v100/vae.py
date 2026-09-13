@@ -553,6 +553,16 @@ class FluxCompressor_v100(nn.Module):
         latent = self.latent_proj(x)
         mu = self.mu_activation(self.mu_proj(latent))
         logvar = self.logvar_activation(self.logvar_proj(latent))
+        # Bezier's mu/logvar activations are inherently bounded (Bernstein convex
+        # combination of control points); Pade's are not (see
+        # docs/PADE-ACTIVATION-ANALYSIS.md's "Known trade-off, not yet resolved").
+        # Observed live: unclamped logvar reaching ~66, giving
+        # std=exp(0.5*66)=~2e14 in reparameterize() below -- overflows fp16's
+        # 65504 ceiling and poisons every downstream consumer of the sampled z.
+        # Clamp to the standard VAE-literature range (matches e.g. Stable
+        # Diffusion's AutoencoderKL) so std stays well inside fp16 range even
+        # with a several-sigma eps draw.
+        logvar = logvar.clamp(-30.0, 20.0)
         z = self.reparameterize(mu, logvar)  # [B, D, H_lat, W_lat]
 
         # ---- z path: clean Gaussian, no tanh, no pe_content leak ----
