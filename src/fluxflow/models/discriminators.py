@@ -113,7 +113,10 @@ class PatchDiscriminator(nn.Module):
         # Lightweight context conditioning (if needed)
         if ctx_dim and ctx_dim > 0:
             # Simple linear projection
-            self.ctx_proj = nn.Linear(ctx_dim, c)
+            ctx_proj = nn.Linear(ctx_dim, c)
+            if use_spectral_norm:
+                ctx_proj = _sn(ctx_proj)
+            self.ctx_proj = ctx_proj
             self.feat_proj = nn.Identity()
 
     def get_ctx_dim(self) -> int:

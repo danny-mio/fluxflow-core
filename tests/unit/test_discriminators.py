@@ -429,9 +429,11 @@ class TestPatchDiscriminatorCtxProjSpectralNorm:
         x = torch.randn(2, 3, 64, 64)
         ctx_vec = torch.randn(2, 16)
 
-        # Forward pass triggers spectral_norm's power-iteration reparametrization,
-        # recomputing the normalized `weight` from `weight_orig`.
-        output = disc(x, ctx_vec=ctx_vec)
+        # Each forward pass triggers spectral_norm's power-iteration
+        # reparametrization, recomputing `weight` from `weight_orig`. Run a few
+        # passes so the power iteration converges from the blown-up init.
+        for _ in range(20):
+            output = disc(x, ctx_vec=ctx_vec)
         assert not torch.isnan(output).any()
         assert not torch.isinf(output).any()
 
