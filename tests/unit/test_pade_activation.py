@@ -152,3 +152,86 @@ class TestWideTrainablePade:
     def test_is_subclass_of_trainable_pade(self):
         module = WideTrainablePade((4,))
         assert isinstance(module, TrainablePade)
+
+
+class TestTrainablePadeInputClamp:
+    """Tests for the numerator input clamp (overflow fix).
+
+    TrainablePade's numerator (degree 5, raw x) has no input range limiting,
+    unlike the safe-by-construction denominator. A finite but large x (a
+    normal early-training outlier) can overflow x^5 even with small learned
+    coefficients. Fix: clamp x to +-65504**0.2 (~9.1887) before the Horner
+    evaluation, sized off fp16's max representable value (65504) for a
+    degree-5 numerator with worst-case unit-magnitude coefficients.
+    """
+
+    def test_clamp_constant_matches_fp16_derivation(self):
+        from fluxflow.models.pade_activation import _INPUT_CLAMP
+
+        assert _INPUT_CLAMP == pytest.approx(65504.0**0.2, rel=1e-9)
+
+    def test_regression_within_clamp_range_matches_unclamped(self):
+        """For |x| well within the clamp bound, output must match the unclamped math."""
+        torch.manual_seed(0)
+        module = TrainablePade((4,))
+        with torch.no_grad():
+            module.a1.copy_(torch.full_like(module.a1, 1.0))
+            module.a4.copy_(torch.full_like(module.a4, 1e-4))
+            module.a5.copy_(torch.full_like(module.a5, 1e-4))
+
+        x = torch.linspace(-5.0, 5.0, steps=20).view(5, 4)
+
+        a0, a1, a2, a3, a4, a5 = (
+            module.a0.expand_as(x),
+            module.a1.expand_as(x),
+            module.a2.expand_as(x),
+            module.a3.expand_as(x),
+            module.a4.expand_as(x),
+            module.a5.expand_as(x),
+        )
+        b1, b2, b3, b4 = (
+            module.b1.expand_as(x),
+            module.b2.expand_as(x),
+            module.b3.expand_as(x),
+            module.b4.expand_as(x),
+        )
+        expected_numerator = a0 + a1 * x + a2 * x**2 + a3 * x**3 + a4 * x**4 + a5 * x**5
+        expected_denominator = 1.0 + (b1 * x + b2 * x**2 + b3 * x**3 + b4 * x**4).abs()
+        expected = expected_numerator / expected_denominator
+
+        output = module(x)
+        assert torch.allclose(output, expected, atol=1e-5)
+
+    def test_extreme_input_produces_no_inf_or_nan(self):
+        """Coefficients at observed crash scale (a1~=1, tiny a4/a5, b*=0) + extreme x."""
+        module = TrainablePade((4,))
+        with torch.no_grad():
+            module.a1.copy_(torch.full_like(module.a1, 1.0))
+            module.a4.copy_(torch.full_like(module.a4, 1e-3))
+            module.a5.copy_(torch.full_like(module.a5, 1e-3))
+
+        x = torch.full((2, 4), 1e8)
+        output = module(x)
+        assert torch.isfinite(output).all()
+
+    def test_wide_trainable_pade_extreme_input_produces_no_inf_or_nan(self):
+        """WideTrainablePade inherits forward unchanged -- same fix must cover it."""
+        module = WideTrainablePade((4,))
+        with torch.no_grad():
+            module.a4.copy_(torch.full_like(module.a4, 1e-3))
+            module.a5.copy_(torch.full_like(module.a5, 1e-3))
+
+        x = torch.full((2, 4), 1e8)
+        output = module(x)
+        assert torch.isfinite(output).all()
+
+    def test_clamp_boundary(self):
+        """Output at exactly the clamp boundary must equal output just past it."""
+        from fluxflow.models.pade_activation import _INPUT_CLAMP
+
+        module = TrainablePade((1,))
+        at_boundary = module(torch.tensor([[_INPUT_CLAMP]]))
+        past_boundary = module(torch.tensor([[_INPUT_CLAMP + 100.0]]))
+        assert torch.allclose(at_boundary, past_boundary, atol=1e-5)
+        assert torch.isfinite(at_boundary).all()
+        assert torch.isfinite(past_boundary).all()
