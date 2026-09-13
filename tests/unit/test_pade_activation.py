@@ -235,3 +235,58 @@ class TestTrainablePadeInputClamp:
         assert torch.allclose(at_boundary, past_boundary, atol=1e-5)
         assert torch.isfinite(at_boundary).all()
         assert torch.isfinite(past_boundary).all()
+
+
+class TestPadeActivationModuleInputClamp:
+    """Tests for the fixed-mode numerator input clamp (overflow fix).
+
+    Unlike TrainablePade, here all five of x, a0, a1, a2, b1 are unbound
+    values split directly from an upstream activation tensor -- none carry a
+    smallness guarantee. The dominant overflow term is a2*x^2, where both
+    factors are unbounded: with everything clamped to +-K, the worst case is
+    K * K^2 = K^3. Solving K^3 <= 65504 (fp16 max) gives K = 65504**(1/3).
+    """
+
+    def test_clamp_constant_matches_fp16_derivation(self):
+        from fluxflow.models.pade_activation import _FIXED_MODE_INPUT_CLAMP
+
+        assert _FIXED_MODE_INPUT_CLAMP == pytest.approx(65504.0 ** (1 / 3), rel=1e-9)
+
+    def test_regression_within_clamp_range_matches_unclamped(self):
+        """For inputs well within the clamp bound, output must match the unclamped math."""
+        module = PadeActivationModule()
+        torch.manual_seed(0)
+        x = torch.empty(100).uniform_(-5.0, 5.0)
+        a0 = torch.empty(100).uniform_(-5.0, 5.0)
+        a1 = torch.empty(100).uniform_(-5.0, 5.0)
+        a2 = torch.empty(100).uniform_(-5.0, 5.0)
+        b1 = torch.empty(100).uniform_(-5.0, 5.0)
+
+        expected_numerator = a0 + a1 * x + a2 * x**2
+        expected_denominator = 1.0 + (b1 * x).abs()
+        expected = expected_numerator / expected_denominator
+
+        output = module(x, a0, a1, a2, b1)
+        assert torch.allclose(output, expected, atol=1e-5)
+
+    def test_extreme_input_overflows_pre_fix_but_not_post_fix(self):
+        """a2*x^2 with both factors at 1e13 must overflow to Inf (float32) before the clamp."""
+        x = torch.tensor([1e13])
+        a0 = torch.tensor([1e13])
+        a1 = torch.tensor([1e13])
+        a2 = torch.tensor([1e13])
+        b1 = torch.tensor([1e13])
+
+        unclamped_numerator = a0 + a1 * x + a2 * x**2
+        assert torch.isinf(unclamped_numerator).all()
+
+        module = PadeActivationModule()
+        output = module(x, a0, a1, a2, b1)
+        assert torch.isfinite(output).all()
+
+    def test_extreme_input_via_public_pade_activation_2d(self):
+        """PadeActivation (2D dispatch) must not produce inf/nan on extreme inputs."""
+        activation = PadeActivation()
+        x = torch.full((2, 25), 1e13)  # 25 = 5 * 5
+        output = activation(x)
+        assert torch.isfinite(output).all()
