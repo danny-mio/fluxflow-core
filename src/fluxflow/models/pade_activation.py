@@ -31,6 +31,17 @@ import torch.nn as nn
 # input squash while eliminating the confirmed overflow.
 _INPUT_CLAMP = 65504.0**0.2
 
+# PadeActivationModule's numerator has the same unbounded-input overflow class
+# as TrainablePade's, but here x, a0, a1, a2, and b1 are all unbound directly
+# from the input tensor's own channels (not learned, near-identity-init
+# parameters), so none of the five factors carry a smallness guarantee. The
+# dominant overflow term is a2*x^2, where *both* factors are unbounded: with
+# every input clamped to +-K, the worst case is K * K^2 = K^3 (degree-2
+# numerator, but cubic rather than TrainablePade's quintic bound since only
+# one coefficient multiplies the squared term instead of a chain of five).
+# Solving K^3 <= 65504 (fp16 max) gives K = 65504**(1/3).
+_FIXED_MODE_INPUT_CLAMP = 65504.0 ** (1 / 3)
+
 
 class PadeActivationModule(nn.Module):
     """
@@ -43,11 +54,9 @@ class PadeActivationModule(nn.Module):
     required on x, a0, a1, a2, or b1.
     """
 
-    # TODO: the numerator here has the same unbounded-input overflow class as
-    # TrainablePade's (see _INPUT_CLAMP above), but a0/a1/a2/b1 are unbound
-    # directly from the input tensor's own channels rather than learned
-    # parameters, so the same fixed clamp constant wouldn't directly apply.
-    # Out of scope for this fix; flagging for a future pass.
+    # All five inputs are clamped to +-_FIXED_MODE_INPUT_CLAMP up front (see
+    # derivation above) so a2*x^2 cannot overflow fp16 range, mirroring how
+    # TrainablePade.forward clamps its input before Horner's method.
     def forward(
         self,
         x: torch.Tensor,
@@ -56,6 +65,12 @@ class PadeActivationModule(nn.Module):
         a2: torch.Tensor,
         b1: torch.Tensor,
     ) -> torch.Tensor:
+        x = x.clamp(-_FIXED_MODE_INPUT_CLAMP, _FIXED_MODE_INPUT_CLAMP)
+        a0 = a0.clamp(-_FIXED_MODE_INPUT_CLAMP, _FIXED_MODE_INPUT_CLAMP)
+        a1 = a1.clamp(-_FIXED_MODE_INPUT_CLAMP, _FIXED_MODE_INPUT_CLAMP)
+        a2 = a2.clamp(-_FIXED_MODE_INPUT_CLAMP, _FIXED_MODE_INPUT_CLAMP)
+        b1 = b1.clamp(-_FIXED_MODE_INPUT_CLAMP, _FIXED_MODE_INPUT_CLAMP)
+
         inner = torch.addcmul(a1, x, a2)
         numerator = torch.addcmul(a0, x, inner)
         denominator = 1.0 + (b1 * x).abs()
