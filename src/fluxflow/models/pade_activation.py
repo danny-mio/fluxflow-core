@@ -21,6 +21,16 @@ Contains:
 import torch
 import torch.nn as nn
 
+# TrainablePade's numerator is degree 5 and, unlike the "safe" denominator,
+# has no built-in range limiting. Clamp the raw input before evaluation so
+# x^5 cannot overflow even with a coefficient magnitude approaching 1 (the
+# observed near-identity-init scale, e.g. a1~=1.0): 65504 is fp16's max
+# representable value, and 65504**(1/5) is the largest |x| for which
+# |x|**5 <= 65504 -- i.e. the worst-case unit-coefficient term stays within
+# fp16 range. This preserves far more dynamic range than Bezier's [0, 1]
+# input squash while eliminating the confirmed overflow.
+_INPUT_CLAMP = 65504.0**0.2
+
 
 class PadeActivationModule(nn.Module):
     """
@@ -33,6 +43,11 @@ class PadeActivationModule(nn.Module):
     required on x, a0, a1, a2, or b1.
     """
 
+    # TODO: the numerator here has the same unbounded-input overflow class as
+    # TrainablePade's (see _INPUT_CLAMP above), but a0/a1/a2/b1 are unbound
+    # directly from the input tensor's own channels rather than learned
+    # parameters, so the same fixed clamp constant wouldn't directly apply.
+    # Out of scope for this fix; flagging for a future pass.
     def forward(
         self,
         x: torch.Tensor,
@@ -151,6 +166,7 @@ class TrainablePade(nn.Module):
         return p.expand_as(x)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.clamp(-_INPUT_CLAMP, _INPUT_CLAMP)
         a0 = self._broadcast(self.a0, x)
         a1 = self._broadcast(self.a1, x)
         a2 = self._broadcast(self.a2, x)
