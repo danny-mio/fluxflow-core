@@ -386,6 +386,61 @@ class TestPatchDiscriminator:
         ), "PatchDiscriminator should not apply spectral norm when disabled"
 
 
+class TestPatchDiscriminatorCtxProjSpectralNorm:
+    """Regression tests: ctx_proj must respect use_spectral_norm like other layers."""
+
+    def test_ctx_proj_plain_when_spectral_norm_disabled(self):
+        """use_spectral_norm=False (default) -> ctx_proj stays a plain nn.Linear."""
+        disc = PatchDiscriminator(in_channels=3, depth=3, ctx_dim=16, use_spectral_norm=False)
+
+        assert isinstance(disc.ctx_proj, nn.Linear)
+        assert not hasattr(disc.ctx_proj, "weight_orig")
+        assert not hasattr(disc.ctx_proj, "weight_u")
+        assert not hasattr(disc.ctx_proj, "weight_v")
+
+    def test_ctx_proj_spectral_normalized_when_enabled(self):
+        """use_spectral_norm=True and ctx_dim>0 -> ctx_proj is spectral-normalized."""
+        disc = PatchDiscriminator(in_channels=3, depth=3, ctx_dim=16, use_spectral_norm=True)
+
+        # torch.nn.utils.spectral_norm reparametrizes weight into weight_orig
+        # (Parameter) plus weight_u/weight_v (Buffers) in this torch version.
+        assert hasattr(disc.ctx_proj, "weight_orig")
+        assert hasattr(disc.ctx_proj, "weight_u")
+        assert hasattr(disc.ctx_proj, "weight_v")
+        assert "weight_orig" in disc.ctx_proj._parameters
+        assert "weight_u" in disc.ctx_proj._buffers
+        assert "weight_v" in disc.ctx_proj._buffers
+
+    def test_ctx_dim_zero_no_ctx_proj_even_with_spectral_norm(self):
+        """ctx_dim=0 with use_spectral_norm=True must not error or create ctx_proj."""
+        disc = PatchDiscriminator(in_channels=3, depth=3, ctx_dim=0, use_spectral_norm=True)
+
+        assert not hasattr(disc, "ctx_proj")
+
+    def test_ctx_proj_effective_weight_bounded_after_large_init(self):
+        """Even with a large-magnitude weight init, ctx_proj's spectral norm bounds its
+        largest singular value to ~1, keeping the projection term from exploding."""
+        disc = PatchDiscriminator(in_channels=3, depth=3, ctx_dim=16, use_spectral_norm=True)
+
+        # Blow up the underlying (pre-normalization) weight magnitude.
+        with torch.no_grad():
+            disc.ctx_proj.weight_orig.mul_(1000.0)
+
+        x = torch.randn(2, 3, 64, 64)
+        ctx_vec = torch.randn(2, 16)
+
+        # Forward pass triggers spectral_norm's power-iteration reparametrization,
+        # recomputing the normalized `weight` from `weight_orig`.
+        output = disc(x, ctx_vec=ctx_vec)
+        assert not torch.isnan(output).any()
+        assert not torch.isinf(output).any()
+
+        effective_weight = disc.ctx_proj.weight
+        largest_singular_value = torch.linalg.svdvals(effective_weight)[0]
+        # Power-iteration approximation, allow a small margin above 1.
+        assert largest_singular_value <= 1.1
+
+
 class TestDiscriminatorIntegration:
     """Integration tests for discriminator usage."""
 
