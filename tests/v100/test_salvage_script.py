@@ -4,10 +4,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import safetensors.torch as st
 import torch
-import pytest
 
+from fluxflow.models.v100.vae import _taper_channels
 from scripts.migrate_v0_10_0_to_redesign import _print_report, migrate_checkpoint
 
 
@@ -270,6 +271,10 @@ def _build_fake_legacy_state_dict() -> dict:
     EMBEDDING_SIZE = 64
     CTX_DIMS = 16
     PACKED = VAE_DIM + CTX_DIMS
+    # v0.10.0 decoder channel taper: layer 0 of a 2-stage upscaler at d_model=D
+    # normalizes at `_taper_channels(D, 2)[0]` channels (out_ch of stage 1),
+    # not D itself -- see vae.py's per-stage tapering schedule.
+    LAYER0_OUT_CH = _taper_channels(D, 2)[0]
     block = "diffuser.flow_processor.transformer_blocks.0"
     state: dict[str, torch.Tensor] = {
         # direct-copy
@@ -282,9 +287,12 @@ def _build_fake_legacy_state_dict() -> dict:
         "diffuser.compressor.logvar_activation.p1": torch.full((D,), -0.5),
         "diffuser.compressor.logvar_activation.p2": torch.full((D,), 0.5),
         "diffuser.compressor.logvar_activation.p3": torch.full((D,), 1.0),
-        # partial-fill (SPADE) — beta_mid shape is (D, hidden=128, 3, 3) in this expander.
-        "diffuser.expander.upscale.layers.0.spade.mlp_beta.weight": torch.randn(D, 128, 3, 3),
-        "diffuser.expander.upscale.layers.0.spade.mlp_beta.bias": torch.randn(D),
+        # partial-fill (SPADE) — beta_mid shape is (out_ch, hidden=128, 3, 3),
+        # out_ch being stage 0's tapered width (not D; see LAYER0_OUT_CH above).
+        "diffuser.expander.upscale.layers.0.spade.mlp_beta.weight": torch.randn(
+            LAYER0_OUT_CH, 128, 3, 3
+        ),
+        "diffuser.expander.upscale.layers.0.spade.mlp_beta.bias": torch.randn(LAYER0_OUT_CH),
         # padded (pillar layers)
         f"{block}.p0.0.0.weight": torch.randn(D, D),
         f"{block}.p0.0.0.bias": torch.randn(D),
@@ -327,8 +335,8 @@ def test_roundtrip_legacy_state_loads_into_redesigned_model(tmp_path):
       * direct-copied / rescaled / padded / duplicated tensors are present after load.
     """
     pytest.importorskip("fluxflow.models.v100.vae")
-    from fluxflow.models.v100.vae import FluxCompressor_v100, FluxExpander_v100
     from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+    from fluxflow.models.v100.vae import FluxCompressor_v100, FluxExpander_v100
 
     D = 32
     VAE_DIM = 16

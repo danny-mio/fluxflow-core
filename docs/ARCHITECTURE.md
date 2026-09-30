@@ -269,7 +269,7 @@ graph TB
 3. Progressive upsampling (4 stages, 2× each = 16× total)
    - Multi-scale SPADE conditioning at each stage (`SPADE_v100b`) fed by `ctx`
    - Transposed convolutions for upsampling
-4. RGB projection (D → 3 channels)
+4. RGB projection (final upsample-stage width → 3 channels)
 5. Clamp to [-1, 1]
 
 **Key Features:**
@@ -279,6 +279,18 @@ graph TB
   zero-initialised `beta_scale` / `gamma_scale`.
 - Bezier activations
 - Skip connections via residuals
+- **Tapered upsample-stage channel width** (memory + fidelity fix, targeting
+  the `vae_dim=16` standard): each stage's width is
+  `max(floor_ch, vae_dim // 2**stage_i)` (`floor_ch=4`) instead of a constant
+  `vae_dim` throughout — e.g. `vae_dim=16` → `[8, 4, 4, 4]` — so a small
+  `vae_dim` no longer runs every full-resolution stage at its original width.
+  The SPADE `context_nc` (the `ctx` signal) stays at full `vae_dim` for every
+  stage regardless of this taper — only the feature-map width shrinks. Where
+  a stage's `in_ch != out_ch`, the residual skip path gets a 1×1
+  channel-projection conv. `to_rgb_conv`'s width now derives from the final
+  stage's actual output channels instead of a hardcoded `96`/`48`, which
+  previously re-expanded small `vae_dim` values back up at full image
+  resolution right before output.
 
 ### 4. BertTextEncoder
 
