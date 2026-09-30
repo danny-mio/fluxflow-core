@@ -302,8 +302,8 @@ class FluxCompressor_v100(nn.Module):
         d_model: Latent dimension (default: 128)
         downscales: Number of 2x downsampling stages (default: 4)
         max_hw: Maximum spatial dimension for normalization (default: 1024)
-        attn_layers: Number of z-path attention layers (kept for API compat, unused in v0.10.0)
-        attn_heads: Number of attention heads in z-path (kept for API compat, unused in v0.10.0)
+        attn_layers: Number of z-path attention layers (z_token_attn)
+        attn_heads: Number of attention heads in z-path (auto-reduced for small d_model)
         attn_ff_mult: Feed-forward multiplier (default: 2)
         attn_dropout: Attention dropout rate (default: 0.0)
         ctx_attn_layers: Number of context branch attention layers (default: 4)
@@ -380,15 +380,19 @@ class FluxCompressor_v100(nn.Module):
             ]
         )
 
+        # Last stage only: kernel=12/padding=5 widens the bottleneck stage's
+        # receptive field. floor((N+2*3-8)/2)+1 == floor((N+2*5-12)/2)+1 for
+        # all N (both reduce to floor((N-2)/2)+1), so output spatial size is
+        # unchanged.
         self.encoder_z = nn.ModuleList(
             [
                 nn.Sequential(
                     nn.Conv2d(
                         self.stage_channels[i + 1],
                         self.stage_channels[i + 1] * 5,
-                        kernel_size=8,
+                        kernel_size=12 if i == downscales - 1 else 8,
                         stride=2,
-                        padding=3,
+                        padding=5 if i == downscales - 1 else 3,
                     ),
                     make_activation(
                         self.activation_type,
@@ -476,6 +480,30 @@ class FluxCompressor_v100(nn.Module):
 
         self.final_norm = nn.LayerNorm(d_model)
 
+        # z is the one signal with no path to global context: SPADE conditions
+        # the decoder on `ctx` only, and `ctx` already gets FiLM-modulated by
+        # `z` via ctx_zinject_* below, but `z` itself never gets anything back.
+        # Give the z-path's final feature map (pre latent_proj) the same
+        # flatten-to-tokens / self-attend / reshape-to-spatial step ctx already
+        # has via ctx_token_attn -- own _AttnBlock instance, own head-count
+        # auto-fallback (see ctx_token_attn below for the identical rationale).
+        effective_z_heads = max(2, d_model // 16)
+        effective_z_heads = min(effective_z_heads, attn_heads)
+        while d_model % effective_z_heads != 0 and effective_z_heads > 1:
+            effective_z_heads -= 1
+        self.z_token_attn = nn.ModuleList(
+            [
+                _AttnBlock(
+                    d_model,
+                    effective_z_heads,
+                    attn_dropout,
+                    attn_ff_mult,
+                    activation_type=self.activation_type,
+                )
+                for _ in range(attn_layers)
+            ]
+        )
+
         # ---- context branch (independent from z) ----
         self.ctx_stage_channels = [
             int(round(c))
@@ -504,15 +532,17 @@ class FluxCompressor_v100(nn.Module):
             ]
         )
 
+        # Last stage only: same kernel/padding bump as encoder_z, for
+        # architectural consistency between the z and ctx paths.
         self.ctx_encoder_z = nn.ModuleList(
             [
                 nn.Sequential(
                     nn.Conv2d(
                         self.ctx_stage_channels[i + 1],
                         self.ctx_stage_channels[i + 1] * 5,
-                        kernel_size=8,
+                        kernel_size=12 if i == downscales - 1 else 8,
                         stride=2,
-                        padding=3,
+                        padding=5 if i == downscales - 1 else 3,
                     ),
                     make_activation(
                         self.activation_type,
@@ -673,6 +703,24 @@ class FluxCompressor_v100(nn.Module):
             x = _maybe_checkpoint(encode_block, img, use_reentrant=True)
         else:
             x = encode_block(img)
+
+        # z-path global-context step (see z_token_attn comment in __init__):
+        # flatten to tokens, self-attend, reshape back to spatial for the
+        # 1x1-conv mu/logvar projections below.
+        Bx, Dx, Hx, Wx = x.shape
+        z_seq = x.flatten(2).permute(0, 2, 1)  # [B, T, D]
+
+        def z_attn_block(seq: torch.Tensor) -> torch.Tensor:
+            for blk in self.z_token_attn:
+                seq = blk(seq)
+            return seq
+
+        if self.use_gradient_checkpointing and z_seq.requires_grad:
+            z_seq = _maybe_checkpoint(z_attn_block, z_seq, use_reentrant=True)
+        else:
+            z_seq = z_attn_block(z_seq)
+
+        x = z_seq.permute(0, 2, 1).reshape(Bx, Dx, Hx, Wx)
 
         latent = self.latent_proj(x)
         mu = self.mu_activation(self.mu_proj(latent))

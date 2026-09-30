@@ -121,3 +121,27 @@ def test_ctx_zinject_scale_bounded_via_tanh():
     with torch.no_grad():
         packed = m(img)
     assert torch.isfinite(packed).all()
+
+
+def test_ctx_encoder_z_last_stage_kernel_bump():
+    """Only the last ctx_encoder_z stage uses kernel_size=12/padding=5."""
+    m = _model(D=32)
+    for i, stage in enumerate(m.ctx_encoder_z):
+        conv = stage[0]
+        if i == m.downscales - 1:
+            assert conv.kernel_size == (12, 12)
+            assert conv.padding == (5, 5)
+        else:
+            assert conv.kernel_size == (8, 8)
+            assert conv.padding == (3, 3)
+        assert conv.stride == (2, 2)
+
+
+def test_ctx_encoder_z_last_stage_kernel_bump_preserves_spatial_size():
+    """Kernel bump on the last ctx stage must not change output token count."""
+    m = _model(D=32).eval()
+    for h, w in [(256, 256), (128, 128), (64, 64)]:
+        img = torch.randn(1, 3, h, w)
+        packed = m(img)
+        T = (h // 16) * (w // 16)
+        assert packed.shape == (1, T + 1, 64)
