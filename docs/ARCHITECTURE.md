@@ -585,6 +585,22 @@ SPADE-injected with `z` before its 4 self-attention layers, so `ctx = f(img, z)`
 encodes the residual `z` could not capture. Packed token format
 `[B, T+1, 2*vae_dim]` (z‖ctx + HW token) is preserved.
 
+The z-path also gets its own global-context step, `z_token_attn`: `ctx` reaches
+the decoder's SPADE blocks and is itself FiLM-modulated by `z` via
+`ctx_zinject_*`, but until now `z` never received anything back — its bottleneck
+was purely local, overlapping strided convs. `z_token_attn` mirrors
+`ctx_token_attn` exactly (same flatten-to-tokens / self-attend /
+reshape-to-spatial pattern on `encoder_z`'s final feature map, applied before
+`latent_proj`), as its own `_AttnBlock` stack with its own head-count
+auto-fallback (`max(2, d_model // 16)`, capped by `attn_heads`, decremented
+until it divides `d_model`) — layer/head counts come from the previously
+unused `attn_layers`/`attn_heads` constructor args. Separately, the *last*
+downsampling stage of both `encoder_z` and `ctx_encoder_z` uses a wider
+kernel (`kernel_size=12, padding=5` vs. the other stages' `kernel_size=8,
+padding=3`) to widen the bottleneck stage's receptive field; the output
+spatial size is unchanged (`floor((N+2p-k)/2)+1` is identical for both
+configurations).
+
 **Flow block reference (`FluxTransformerBlock_v100`).**
 
 ```

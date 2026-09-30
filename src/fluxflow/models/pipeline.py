@@ -319,9 +319,13 @@ class FluxPipeline(nn.Module):
         ]
         config["upscales"] = len(upscale_layers) if upscale_layers else config["downscales"]
 
-        # Detect attention layers
+        # Detect attention layers (v060/v070: `token_attn`; v0.10.0: `z_token_attn`,
+        # the z-path's own global-context step -- distinct from ctx's `ctx_token_attn`).
         attn_layers = [
-            k for k in keys if "compressor.token_attn." in k and ".attn.in_proj_weight" in k
+            k
+            for k in keys
+            if ("compressor.token_attn." in k or "compressor.z_token_attn." in k)
+            and ".attn.in_proj_weight" in k
         ]
         config["vae_attn_layers"] = len(attn_layers) if attn_layers else 2
 
