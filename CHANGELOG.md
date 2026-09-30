@@ -88,6 +88,14 @@ for the upgrade path and salvage instructions. Not yet released.
   `diffusion_pipeline.py` and `utils/visualization.py`; `fluxflow-training`,
   `fluxflow-ui`, and `fluxflow-comfyui` import it with a `32` fallback until
   this version is installed everywhere.
+- **`FluxCompressor_v100.z_token_attn`**: a self-attention step on the
+  z-path's final feature map before `latent_proj`, mirroring
+  `ctx_token_attn`'s flatten/self-attend/reshape pattern with its own
+  independent head-count auto-fallback. Closes a gap found reviewing the
+  `vae_dim=16` schedule: only `ctx` had a path to global context (via
+  `ctx_token_attn` and the `z`→`ctx` FiLM injection in `ctx_zinject_*`);
+  `z` itself — the signal carrying most of the reconstructed content — was
+  built purely from local (if overlapping) strided convs.
 
 ### Changed
 - **`BertTextEncoder.forward`** now returns `(text_seq, text_mask)` per
@@ -114,6 +122,28 @@ for the upgrade path and salvage instructions. Not yet released.
   ROCm, CUDA, and MPS. `einsum` remains available as an explicit fallback.
   v0.3.0/v0.6.0 are unaffected (no `attn_backend` kwarg; not in
   `_SDPA_SUPPORTED_VERSIONS`). See `docs/ROCM.md`.
+- **Decoder channel width now tapers per upsample stage** instead of
+  staying constant at `d_model` through all 4 stages:
+  `_ProgressiveUpscaler`/`_ResidualUpsampleBlock` compute
+  `out_ch(stage_i) = max(floor_ch, d_model // 2**stage_i)` (default
+  `floor_ch=4`). `_ResidualUpsampleBlock` now takes separate `in_ch`/`out_ch`
+  with a 1x1 projection on the `nn.Upsample` skip path when they differ;
+  SPADE's `context_nc` stays fixed at `d_model` for every stage, decoupled
+  from the tapered feature width, so ctx conditioning capacity is
+  unaffected. Motivated by standardizing on `vae_dim=16`: constant width was
+  tuned for `d_model=128` and became needlessly expensive at full image
+  resolution at smaller targets.
+- **`FluxExpander_v100.to_rgb_conv` now sizes off the final upsample stage's
+  actual output channel count** instead of a hardcoded
+  `d_model -> 96 -> 48 -> 3`. At `d_model=128` the fixed 96/48 looked like a
+  mild taper, but at smaller `d_model` (e.g. 16) it silently RE-EXPANDED
+  16→96 channels at full image resolution right before output — the most
+  expensive place in the decoder to carry extra width.
+- **Last downsampling stage of both `encoder_z` and `ctx_encoder_z` widened
+  to `kernel_size=12, padding=5`** (was `8`/`3`), giving the narrowest,
+  most information-critical channel count a larger effective input window
+  per output value. Output spatial size is unchanged:
+  `floor((N + 2·3 − 8)/2) + 1 == floor((N + 2·5 − 12)/2) + 1` for all `N`.
 
 ### Removed
 - `pillar_cross_attn` and the shared `norm_pillar` LayerNorm from the
@@ -141,6 +171,12 @@ for the upgrade path and salvage instructions. Not yet released.
   `time_mlp`) first, and `ModelLoaderLegacy` now routes detected v0.10.0
   checkpoints to the already-existing (but previously unreachable)
   `ModelLoaderV010`.
+- **`FluxPipeline._detect_config`'s attention-layer detection** only matched
+  the legacy `compressor.token_attn.` checkpoint key pattern. This was
+  dormant (the `attn_layers` constructor arg it feeds was previously unused
+  by `FluxCompressor_v100`) until `z_token_attn` made it load-bearing; now
+  also matches `compressor.z_token_attn.` so checkpoint auto-detection
+  counts the z-path's attention layers correctly.
 - **Train/inference text-length mismatch**: training tokenized captions with
   `max_length=32` while generation/inference hardcoded `max_length=512` at
   four call sites across four repos, silently truncating (or padding to a
