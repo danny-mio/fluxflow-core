@@ -37,6 +37,50 @@ def _maybe_checkpoint(fn, *args, **kwargs):
     return fn(*args, **kwargs)
 
 
+# Minimum per-stage channel width for the decoder's upsample taper (Problem 2).
+# Named so it's never a bare magic number at call sites; 4 is small enough to
+# stay memory-cheap at full image resolution while leaving room for the x5
+# "wide" Bezier/Pade activation lanes.
+_MIN_UPSAMPLE_CHANNELS = 4
+
+
+def _taper_channels(
+    d_model: int, upscales: int, floor_ch: int = _MIN_UPSAMPLE_CHANNELS
+) -> list[int]:
+    """Per-stage output channel widths for the decoder's progressive upsampler.
+
+    Constant channel width through every upsample stage silently RE-EXPANDS
+    small d_model configs (e.g. d_model=16) back up at each doubling of
+    spatial resolution, which is expensive right where compute is most
+    costly. Instead, taper the width down each stage: ``out_ch(stage_i) =
+    max(floor_ch, d_model // 2**stage_i)`` for ``stage_i = 1..upscales``.
+
+    Args:
+        d_model: Latent dimension (stage 0's input width).
+        upscales: Number of 2x upsampling stages.
+        floor_ch: Minimum channel width for any stage (default: 4).
+
+    Returns:
+        list[int]: ``out_ch`` for each stage, length ``upscales``.
+    """
+    return [max(floor_ch, d_model // (2**stage_i)) for stage_i in range(1, upscales + 1)]
+
+
+def _safe_group_norm(num_channels: int, max_groups: int = 8) -> nn.GroupNorm:
+    """GroupNorm with the largest num_groups <= max_groups that divides num_channels.
+
+    Mirrors the divisor search in v070/conditioning.py's SPADE, generalized so
+    channel counts derived from `_taper_channels` (which may be small, e.g. 4)
+    never produce an invalid GroupNorm (num_groups must divide num_channels).
+    """
+    num_groups = 1
+    for ng in range(min(max_groups, num_channels), 0, -1):
+        if num_channels % ng == 0:
+            num_groups = ng
+            break
+    return nn.GroupNorm(num_groups, num_channels)
+
+
 # ---------------------------------------------------------------------------
 # Shared helpers (mirrors v070/vae.py but not imported to keep versions clean)
 # ---------------------------------------------------------------------------
@@ -46,15 +90,26 @@ class _ResidualUpsampleBlock(nn.Module):
     """
     Residual block with 2x upsampling — v0.10.0 variant using SPADEWithLearnableScale.
 
+    Per-stage channel width tapers (Problem 2 fix): `in_ch` and `out_ch` may
+    differ, in which case the `nn.Upsample` skip path (which does not itself
+    change channel count) gets a 1x1 channel-projection so it can be added to
+    the channel-changing `conv1` (ConvTranspose2d) path. SPADE conditions the
+    `conv1` output, so its `num_features` is `out_ch` -- the width of the
+    tensor actually being normalized -- while `context_size` (the ctx signal's
+    channel count) stays decoupled at the caller's chosen width (= d_model in
+    v0.10.0), never tapered.
+
     Args:
-        channels: Number of input/output channels
+        in_ch: Number of input channels.
+        out_ch: Number of output channels.
         context_size: Context dimensionality for SPADE (= d_model in v0.10.0)
         use_spade: Enable SPADE conditioning
     """
 
     def __init__(
         self,
-        channels: int,
+        in_ch: int,
+        out_ch: int,
         context_size: int = 1024,
         use_spade: bool = True,
         activation_type: str = "bezier",
@@ -62,32 +117,43 @@ class _ResidualUpsampleBlock(nn.Module):
         super().__init__()
         self.use_spade = use_spade
         self.activation_type = activation_type
+        self.in_ch = in_ch
+        self.out_ch = out_ch
         if self.use_spade:
-            self.spade = SPADE_v100b(context_size, channels, activation_type=activation_type)
+            self.spade = SPADE_v100b(context_size, out_ch, activation_type=activation_type)
 
         self.conv1 = nn.Sequential(
-            nn.ConvTranspose2d(channels, channels * 5, kernel_size=16, stride=2, padding=7),
-            make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
-            nn.Conv2d(channels, channels * 5, kernel_size=5, padding=4, stride=1, dilation=2),
-            make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
+            nn.ConvTranspose2d(in_ch, out_ch * 5, kernel_size=16, stride=2, padding=7),
+            make_activation(
+                self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"
+            ),
+            nn.Conv2d(out_ch, out_ch * 5, kernel_size=5, padding=4, stride=1, dilation=2),
+            make_activation(
+                self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"
+            ),
         )
         self.skip_upsample = nn.Upsample(scale_factor=2, mode="nearest")
+        # Only project the skip path when widths differ, to avoid wasted
+        # params on stages where the taper happens to keep in_ch == out_ch.
+        self.skip_proj = nn.Conv2d(in_ch, out_ch, kernel_size=1) if in_ch != out_ch else None
         self.conv1_scale = nn.Parameter(torch.zeros(1))
 
     def forward(self, x: torch.Tensor, context: torch.Tensor | None = None) -> torch.Tensor:
         """
         Args:
-            x: Input features [B, channels, H, W]
+            x: Input features [B, in_ch, H, W]
             context: Spatial context for SPADE [B, context_size, H', W'] or None
 
         Returns:
-            torch.Tensor: Upsampled features [B, channels, 2*H, 2*W]
+            torch.Tensor: Upsampled features [B, out_ch, 2*H, 2*W]
         """
         identity = x
+        x = self.conv1(x)
         if self.use_spade:
             x = self.spade(x, context)
-        x = self.conv1(x)
         identity_up = self.skip_upsample(identity)
+        if self.skip_proj is not None:
+            identity_up = self.skip_proj(identity_up)
         # conv1_scale is unclamped (see __init__); tanh at the use-site bounds
         # the effective scale to (-1, 1) so this branch can never out-grow the
         # identity path, while tanh(0)==0 keeps identity-at-init exact and
@@ -99,11 +165,17 @@ class _ProgressiveUpscaler(nn.Module):
     """
     Progressive upsampling using stacked _ResidualUpsampleBlocks (v0.10.0 variant).
 
+    Channel width tapers per stage via `_taper_channels` (Problem 2 fix)
+    instead of staying constant, so small `d_model` configs (e.g. 16) don't
+    re-expand at full image resolution. `context_size` (the SPADE ctx signal)
+    stays decoupled at a fixed width for every stage.
+
     Args:
-        channels: Number of channels
+        channels: Input channel count (= d_model)
         steps: Number of upsampling steps (each doubles resolution)
         context_size: Context dimension for SPADE
         use_spade: Enable SPADE conditioning
+        floor_ch: Minimum per-stage channel width (see `_taper_channels`)
     """
 
     def __init__(
@@ -114,17 +186,25 @@ class _ProgressiveUpscaler(nn.Module):
         use_spade: bool = True,
         use_gradient_checkpointing: bool = True,
         activation_type: str = "bezier",
+        floor_ch: int = _MIN_UPSAMPLE_CHANNELS,
     ) -> None:
         super().__init__()
         self.use_gradient_checkpointing = use_gradient_checkpointing
+        stage_out_ch = _taper_channels(channels, steps, floor_ch)
+        stage_in_ch = [channels] + stage_out_ch[:-1]
         self.layers = nn.ModuleList(
             [
                 _ResidualUpsampleBlock(
-                    channels, context_size, use_spade=use_spade, activation_type=activation_type
+                    in_ch,
+                    out_ch,
+                    context_size,
+                    use_spade=use_spade,
+                    activation_type=activation_type,
                 )
-                for _ in range(steps)
+                for in_ch, out_ch in zip(stage_in_ch, stage_out_ch)
             ]
         )
+        self.out_channels = stage_out_ch[-1] if stage_out_ch else channels
 
     def forward(self, x: torch.Tensor, context: torch.Tensor | None) -> torch.Tensor:
         """
@@ -180,7 +260,9 @@ class _AttnBlock(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         self.ff = nn.Sequential(
             nn.Linear(dim, hidden * 5),
-            make_activation(self.activation_type, "fixed", t_pre_activation="sigmoid", p_preactivation="silu"),
+            make_activation(
+                self.activation_type, "fixed", t_pre_activation="sigmoid", p_preactivation="silu"
+            ),
             nn.Linear(hidden, dim),
         )
 
@@ -287,7 +369,12 @@ class FluxCompressor_v100(nn.Module):
                         padding=1,
                         bias=False,
                     ),
-                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(
+                        self.activation_type,
+                        "fixed",
+                        t_pre_activation="tanh",
+                        p_preactivation="silu",
+                    ),
                 )
                 for i in range(downscales)
             ]
@@ -303,7 +390,12 @@ class FluxCompressor_v100(nn.Module):
                         stride=2,
                         padding=3,
                     ),
-                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(
+                        self.activation_type,
+                        "fixed",
+                        t_pre_activation="tanh",
+                        p_preactivation="silu",
+                    ),
                 )
                 for i in range(downscales)
             ]
@@ -314,7 +406,12 @@ class FluxCompressor_v100(nn.Module):
             *[
                 nn.Sequential(
                     nn.Conv2d(final_ch, d_model * 5, kernel_size=1),
-                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(
+                        self.activation_type,
+                        "fixed",
+                        t_pre_activation="tanh",
+                        p_preactivation="silu",
+                    ),
                 )
                 for _ in range(2)
             ]
@@ -323,7 +420,12 @@ class FluxCompressor_v100(nn.Module):
             *[
                 nn.Sequential(
                     nn.Conv2d(d_model, d_model * 5, kernel_size=1),
-                    make_activation(self.activation_type, "fixed", t_pre_activation="sigmoid", p_preactivation="silu"),
+                    make_activation(
+                        self.activation_type,
+                        "fixed",
+                        t_pre_activation="sigmoid",
+                        p_preactivation="silu",
+                    ),
                 )
                 for _ in range(2)
             ]
@@ -332,7 +434,12 @@ class FluxCompressor_v100(nn.Module):
             *[
                 nn.Sequential(
                     nn.Conv2d(d_model, d_model * 5, kernel_size=1),
-                    make_activation(self.activation_type, "fixed", t_pre_activation="sigmoid", p_preactivation="silu"),
+                    make_activation(
+                        self.activation_type,
+                        "fixed",
+                        t_pre_activation="sigmoid",
+                        p_preactivation="silu",
+                    ),
                 )
                 for _ in range(2)
             ]
@@ -386,7 +493,12 @@ class FluxCompressor_v100(nn.Module):
                         padding=1,
                         bias=False,
                     ),
-                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(
+                        self.activation_type,
+                        "fixed",
+                        t_pre_activation="tanh",
+                        p_preactivation="silu",
+                    ),
                 )
                 for i in range(downscales)
             ]
@@ -402,7 +514,12 @@ class FluxCompressor_v100(nn.Module):
                         stride=2,
                         padding=3,
                     ),
-                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(
+                        self.activation_type,
+                        "fixed",
+                        t_pre_activation="tanh",
+                        p_preactivation="silu",
+                    ),
                 )
                 for i in range(downscales)
             ]
@@ -413,7 +530,12 @@ class FluxCompressor_v100(nn.Module):
             *[
                 nn.Sequential(
                     nn.Conv2d(ctx_final_ch, d_model * 5, kernel_size=1),
-                    make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
+                    make_activation(
+                        self.activation_type,
+                        "fixed",
+                        t_pre_activation="tanh",
+                        p_preactivation="silu",
+                    ),
                 )
                 for _ in range(2)
             ]
@@ -425,7 +547,9 @@ class FluxCompressor_v100(nn.Module):
         # for warm-start compatibility (M8 salvage script).
         self.ctx_zinject_proj = nn.Sequential(
             nn.Conv2d(d_model, d_model * 5, kernel_size=1),
-            make_activation(self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"),
+            make_activation(
+                self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"
+            ),
         )
         self.ctx_zinject_beta = nn.Conv2d(d_model, d_model, kernel_size=1)
         self.ctx_zinject_gamma = nn.Conv2d(d_model, d_model, kernel_size=1)
@@ -678,15 +802,19 @@ class FluxExpander_v100(nn.Module):
             activation_type=activation_type,
         )
 
-        # RGB conversion identical to v070
+        # RGB conversion head: widths derive from the final upsample stage's
+        # actual output channel count (final_ch), not a hardcoded 96/48 (which
+        # at small d_model, e.g. 16, silently RE-EXPANDED 16->96 at full image
+        # resolution -- expensive and tuned for a different d_model).
+        final_ch = self.upscale.out_channels
         self.to_rgb_conv = nn.Sequential(
-            nn.Conv2d(d_model, 96, kernel_size=3, padding=1),
-            nn.GroupNorm(8, 96),
+            nn.Conv2d(final_ch, final_ch * 2, kernel_size=3, padding=1),
+            _safe_group_norm(final_ch * 2),
             nn.SiLU(inplace=True),
-            nn.Conv2d(96, 48, kernel_size=3, padding=1),
-            nn.GroupNorm(8, 48),
+            nn.Conv2d(final_ch * 2, final_ch, kernel_size=3, padding=1),
+            _safe_group_norm(final_ch),
             nn.SiLU(inplace=True),
-            nn.Conv2d(48, 3, kernel_size=1, padding=0),
+            nn.Conv2d(final_ch, 3, kernel_size=1, padding=0),
         )
 
         if activation_type == "bezier":
