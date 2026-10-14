@@ -15,6 +15,15 @@ multi-scale SPADE, and a clean Gaussian z. See
 for the upgrade path and salvage instructions. Not yet released.
 
 ### Added
+- `compile_pade_activations(enabled=True)` in `models/pade_activation.py`:
+  opt-in `torch.compile(dynamic=True)` of the Padé forwards (process-wide,
+  idempotent, reversible), fusing each ~10-op elementwise chain into one
+  kernel. ~3.8x faster Padé fwd+bwd and ~17% faster VAE training measured on
+  gfx1151 (ROCm 7.16). Raises Dynamo's `recompile_limit` to 64 to cover the
+  bounded rank/autocast/grad-mode variants. Whole-model compile is not
+  supported on that ROCm build (Inductor autotune `hipErrorInvalidValue`).
+- `ModelConfig.use_gradient_checkpointing` (default `True`), forwarded by
+  `create_models_from_config`.
 - **Padé Activation Units** (`PadeActivation`, `TrainablePade`,
   `WideTrainablePade` in `models/pade_activation.py`): rational-function
   generalization of the Bezier activation family (a cubic Bezier segment is
@@ -98,6 +107,9 @@ for the upgrade path and salvage instructions. Not yet released.
   built purely from local (if overlapping) strided convs.
 
 ### Changed
+- `FluxFlowProcessor_v100` takes `use_gradient_checkpointing` (default
+  `True`, unchanged behavior); previously the transformer block stack was
+  always checkpointed in training with no way to opt out.
 - **`BertTextEncoder.forward`** now returns `(text_seq, text_mask)` per
   token instead of a pooled `[B, E]` vector. Mean-pooling removed.
 - **`FluxFlowProcessor_v100.forward`** signature is now
@@ -160,6 +172,13 @@ for the upgrade path and salvage instructions. Not yet released.
   into separate `norm2_q` and `norm2_kv` LayerNorms.
 
 ### Fixed
+- `create_bezier_models` / `create_models_from_config` hardcoded
+  `use_gradient_checkpointing=True`, silently ignoring the caller's setting;
+  the flag is now threaded through to the compressor, expander, and v0.10.0
+  flow processor. `FluxExpander_v100` now exposes `use_gradient_checkpointing`
+  (proxying its upscaler), so setting it on the expander takes effect.
+- `test_no_v080_import_in_v100_flow` read `v100/flow.py` from a hardcoded
+  local path; it now resolves the module's own file.
 - **v0.10.0 checkpoints were misdetected as v0.7.0** when loaded without a
   `model_metadata.json` sidecar (the common case, since training never wrote
   one). `FluxFlowProcessor_v100` reuses `ctx_mixer`/`context_injection`/

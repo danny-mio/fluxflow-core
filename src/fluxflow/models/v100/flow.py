@@ -272,6 +272,8 @@ class FluxFlowProcessor_v100(nn.Module):
         max_hw: Maximum spatial dimension for HW token decoding (default: 1024).
         ctx_tokens: Number of context tokens for ContextAttentionMixer (default: 4).
         context_dims: Context dim (default: None = vae_dim).
+        use_gradient_checkpointing: Recompute the transformer block stack in
+            backward instead of storing its activations (default: True).
     """
 
     def __init__(
@@ -286,6 +288,7 @@ class FluxFlowProcessor_v100(nn.Module):
         context_dims: int | None = None,
         attn_backend: str = "sdpa",
         activation_type: str = "bezier",
+        use_gradient_checkpointing: bool = True,
     ) -> None:
         super().__init__()
         assert d_model % n_head == 0
@@ -297,6 +300,7 @@ class FluxFlowProcessor_v100(nn.Module):
         self.ctx_tokens = ctx_tokens
         self.context_dims = context_dims if context_dims is not None else vae_dim
         self.activation_type = activation_type
+        self.use_gradient_checkpointing = use_gradient_checkpointing
 
         packed_width = vae_dim + self.context_dims
 
@@ -566,7 +570,11 @@ class FluxFlowProcessor_v100(nn.Module):
                 ctx_agg = gate * ctx_agg + (1.0 - gate) * self.ctx_delta_proj(delta)
             return img_seq, ctx_agg
 
-        if torch.is_grad_enabled() and (img_seq.requires_grad or ctx_agg.requires_grad):
+        if (
+            self.use_gradient_checkpointing
+            and torch.is_grad_enabled()
+            and (img_seq.requires_grad or ctx_agg.requires_grad)
+        ):
             img_seq, ctx_agg = checkpoint(
                 partial(transformer_blocks_fn), img_seq, ctx_agg, use_reentrant=False
             )

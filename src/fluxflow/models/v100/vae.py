@@ -976,6 +976,15 @@ class FluxExpander_v100(nn.Module):
         W = (packed[:, -1, 1] * self.max_hw).round().clamp(min=1).long()
         return img_seq, context, H, W
 
+    @property
+    def use_gradient_checkpointing(self) -> bool:
+        """Whether the progressive upscaler checkpoints its stages."""
+        return bool(self.upscale.use_gradient_checkpointing)
+
+    @use_gradient_checkpointing.setter
+    def use_gradient_checkpointing(self, enabled: bool) -> None:
+        self.upscale.use_gradient_checkpointing = enabled
+
     def forward(self, packed: torch.Tensor, use_context: bool = True) -> torch.Tensor:
         """
         Decode packed latent to image.

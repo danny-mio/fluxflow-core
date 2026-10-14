@@ -18,6 +18,8 @@ Contains:
 - WideTrainablePade: TrainablePade with a wide-range default for logvar use
 """
 
+from collections.abc import Callable
+
 import torch
 import torch.nn as nn
 
@@ -252,3 +254,48 @@ class WideTrainablePade(TrainablePade):
             b4=b4,
             channel_only=channel_only,
         )
+
+
+# Upper bound on compiled variants per Padé forward (see compile_pade_activations).
+_RECOMPILE_LIMIT = 64
+
+# Original (eager) forwards, saved by compile_pade_activations() so the patch
+# is idempotent and reversible.
+_EAGER_FORWARDS: dict[type, Callable[..., torch.Tensor]] = {}
+
+
+def compile_pade_activations(enabled: bool = True) -> None:
+    """Fuse the Padé elementwise math into single kernels via ``torch.compile``.
+
+    Each Padé forward is a chain of ~10 clamp/addcmul/mul/div/abs ops; in eager
+    mode every op is a separate kernel with its own read+write of the full
+    activation tensor (and matching backward kernels). Compiling only this
+    math (not the surrounding model) fuses it into one forward and one
+    backward kernel. ``dynamic=True`` keeps one compiled graph across
+    resolutions instead of recompiling per image shape.
+
+    Patches the class-level forwards of ``PadeActivationModule`` and
+    ``TrainablePade`` (``WideTrainablePade`` inherits it), so it affects all
+    existing and future instances in the process. Compiled kernels compute
+    intermediates in fp32, so bf16/fp16 outputs differ from eager by rounding.
+
+    Each forward is specialized on a small, bounded set of variants -- input
+    rank (2D/3D/4D), autocast on/off, grad mode on/off, parameter shape (static
+    per TrainablePade instance) -- which exceeds Dynamo's default recompile
+    limit of 8 in a typical VAE training step; the limit is raised to
+    ``_RECOMPILE_LIMIT`` so those variants stay compiled instead of silently
+    falling back to eager.
+
+    Args:
+        enabled: True to compile, False to restore the eager forwards.
+    """
+    if enabled:
+        import torch._dynamo.config as dynamo_config
+
+        dynamo_config.recompile_limit = max(dynamo_config.recompile_limit, _RECOMPILE_LIMIT)
+    for cls in (PadeActivationModule, TrainablePade):
+        if enabled and cls not in _EAGER_FORWARDS:
+            _EAGER_FORWARDS[cls] = cls.forward
+            cls.forward = torch.compile(cls.forward, dynamic=True)  # type: ignore[method-assign]
+        elif not enabled and cls in _EAGER_FORWARDS:
+            cls.forward = _EAGER_FORWARDS.pop(cls)  # type: ignore[method-assign]

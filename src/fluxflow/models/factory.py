@@ -37,6 +37,10 @@ _SDPA_SUPPORTED_VERSIONS = {"0.7.0", "0.8.0", "0.10.0"}
 # them raises TypeError, so it is gated the same way as attn_backend.
 _ACTIVATION_SELECTABLE_VERSIONS = {"0.10.0"}
 
+# Model versions whose FluxFlowProcessor accepts `use_gradient_checkpointing`.
+# Older flow processors take no such kwarg (gated like attn_backend).
+_FLOW_CHECKPOINT_FLAG_VERSIONS = {"0.10.0"}
+
 
 # Automatically discover and import all version modules
 # This enables truly self-registering versions - no code changes needed for new versions
@@ -367,6 +371,7 @@ class ModelFactory:
         n_head: int = 8,
         max_hw: int = 1024,
         ctx_tokens: int = 4,
+        use_gradient_checkpointing: bool = True,
     ) -> nn.Module:
         """
         Create flow processor (FluxFlowProcessor).
@@ -385,13 +390,15 @@ class ModelFactory:
             # Use versioned FluxFlowProcessor for bezier models
             classes = self._get_versioned_classes()
             FluxFlowProcessor = classes["FluxFlowProcessor"]
-            extra_kwargs = (
+            extra_kwargs: dict[str, Any] = (
                 {"attn_backend": self.attention_backend}
                 if self.model_version in _SDPA_SUPPORTED_VERSIONS
                 else {}
             )
             if self.model_version in _ACTIVATION_SELECTABLE_VERSIONS:
                 extra_kwargs["activation_type"] = self.flow_activation_type or self.activation_type
+            if self.model_version in _FLOW_CHECKPOINT_FLAG_VERSIONS:
+                extra_kwargs["use_gradient_checkpointing"] = use_gradient_checkpointing
             return FluxFlowProcessor(  # type: ignore
                 d_model=self.flow_d_model,
                 vae_dim=self.vae_dim,
@@ -569,6 +576,7 @@ def create_bezier_models(
     compressor_activation_type: Optional[ActivationFamily] = None,
     expander_activation_type: Optional[ActivationFamily] = None,
     flow_activation_type: Optional[ActivationFamily] = None,
+    use_gradient_checkpointing: bool = True,
 ) -> tuple:
     """
     Convenience function to create full Bezier model set.
@@ -583,6 +591,9 @@ def create_bezier_models(
             only. None (default) means "use `activation_type`".
         expander_activation_type: Overrides `activation_type` for the expander only.
         flow_activation_type: Overrides `activation_type` for the flow processor only.
+        use_gradient_checkpointing: Recompute activations in backward for the
+            compressor, expander and (versions in `_FLOW_CHECKPOINT_FLAG_VERSIONS`)
+            flow processor. Trades compute for memory (default: True).
 
     Returns:
         (vae_encoder, vae_decoder, flow_processor, text_encoder)
@@ -641,7 +652,7 @@ def create_bezier_models(
         attn_heads=8,
         attn_ff_mult=2,
         attn_dropout=0.0,
-        use_gradient_checkpointing=True,
+        use_gradient_checkpointing=use_gradient_checkpointing,
         **compressor_kwargs,
     )
 
@@ -650,14 +661,16 @@ def create_bezier_models(
         upscales=downscales,
         max_hw=1024,
         ctx_tokens=4,
-        use_gradient_checkpointing=True,
+        use_gradient_checkpointing=use_gradient_checkpointing,
         **expander_kwargs,
     )
 
-    extra_kwargs = (
+    extra_kwargs: dict[str, Any] = (
         {"attn_backend": attention_backend} if model_version in _SDPA_SUPPORTED_VERSIONS else {}
     )
     extra_kwargs.update(flow_activation_kwargs)
+    if model_version in _FLOW_CHECKPOINT_FLAG_VERSIONS:
+        extra_kwargs["use_gradient_checkpointing"] = use_gradient_checkpointing
     flow_processor = FlowProcessor(
         d_model=flow_d_model,
         vae_dim=vae_dim,
@@ -745,6 +758,7 @@ def create_models_from_config(model_config) -> tuple:
             compressor_activation_type=model_config.compressor_activation_type,
             expander_activation_type=model_config.expander_activation_type,
             flow_activation_type=model_config.flow_activation_type,
+            use_gradient_checkpointing=model_config.use_gradient_checkpointing,
         )
     elif model_config.model_type == "baseline":
         return create_baseline_models(

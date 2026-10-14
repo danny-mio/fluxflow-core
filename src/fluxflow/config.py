@@ -75,6 +75,15 @@ class ModelConfig(BaseModel):
         ),
     )
 
+    use_gradient_checkpointing: bool = Field(
+        default=True,
+        description=(
+            "Recompute activations in backward instead of storing them (compressor, "
+            "expander, and the v0.10.0 flow processor). Saves memory at the cost of "
+            "an extra forward per backward."
+        ),
+    )
+
     vae_dim: int = Field(
         default=128,
         ge=8,

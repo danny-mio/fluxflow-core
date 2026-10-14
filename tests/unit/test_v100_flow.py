@@ -300,9 +300,9 @@ class TestFluxTransformerBlockV100:
         import ast
         import pathlib
 
-        src = pathlib.Path(
-            "/Volumes/DanieleExt/ai/ffnew/fluxflow-core/src/fluxflow/models/v100/flow.py"
-        ).read_text()
+        import fluxflow.models.v100.flow as v100_flow
+
+        src = pathlib.Path(v100_flow.__file__).read_text()
         tree = ast.parse(src)
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -382,3 +382,73 @@ class TestFluxFlowProcessorV100Bf16Inference:
         x = torch.randn(1, 64, 4, 4, dtype=torch.bfloat16)
         out = proc.add_coord_channels(x)
         assert out.dtype == torch.bfloat16
+
+
+class TestFluxFlowProcessorV100GradientCheckpointing:
+    """use_gradient_checkpointing gates the transformer-stack checkpoint."""
+
+    def _run(self, proc):
+        packed = torch.zeros(1, 17, 64)
+        packed[:, :-1, :] = torch.randn(1, 16, 64)
+        packed[0, -1, 0] = 4 / 1024.0
+        packed[0, -1, 1] = 4 / 1024.0
+        packed.requires_grad_(True)
+        out = proc(
+            packed, torch.randn(1, 5, 64), torch.ones(1, 5, dtype=torch.bool), torch.tensor([0.5])
+        )
+        out.sum().backward()
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_flag_controls_checkpoint(self, monkeypatch, enabled):
+        import fluxflow.models.v100.flow as v100_flow
+
+        calls = []
+        real_checkpoint = v100_flow.checkpoint
+
+        def spy(*args, **kwargs):
+            calls.append(1)
+            return real_checkpoint(*args, **kwargs)
+
+        monkeypatch.setattr(v100_flow, "checkpoint", spy)
+        proc = v100_flow.FluxFlowProcessor_v100(
+            d_model=64,
+            vae_dim=32,
+            embedding_size=64,
+            n_layers=1,
+            use_gradient_checkpointing=enabled,
+        )
+        self._run(proc)
+        assert bool(calls) is enabled
+
+    def test_default_is_enabled(self):
+        from fluxflow.models.v100.flow import FluxFlowProcessor_v100
+
+        proc = FluxFlowProcessor_v100(d_model=64, vae_dim=32, embedding_size=64, n_layers=1)
+        assert proc.use_gradient_checkpointing is True
+
+
+class TestFactoryGradientCheckpointing:
+    """create_models_from_config propagates ModelConfig.use_gradient_checkpointing."""
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_flag_reaches_all_v100_models(self, enabled):
+        from fluxflow.config import ModelConfig
+        from fluxflow.models.factory import create_models_from_config
+
+        cfg = ModelConfig(
+            model_type="bezier",
+            model_version="0.10.0",
+            vae_dim=16,
+            feature_maps_dim=64,
+            text_embedding_dim=64,
+            use_gradient_checkpointing=enabled,
+        )
+        comp, exp, flow, _ = create_models_from_config(cfg)
+        assert comp.use_gradient_checkpointing is enabled
+        assert exp.use_gradient_checkpointing is enabled
+        assert flow.use_gradient_checkpointing is enabled
+
+    def test_model_config_default_is_enabled(self):
+        from fluxflow.config import ModelConfig
+
+        assert ModelConfig().use_gradient_checkpointing is True

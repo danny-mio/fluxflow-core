@@ -290,3 +290,43 @@ class TestPadeActivationModuleInputClamp:
         x = torch.full((2, 25), 1e13)  # 25 = 5 * 5
         output = activation(x)
         assert torch.isfinite(output).all()
+
+
+class TestCompilePadeActivations:
+    """compile_pade_activations patches/restores the class forwards."""
+
+    def test_patch_is_idempotent_and_reversible(self, monkeypatch):
+        import fluxflow.models.pade_activation as pa
+
+        compiled = []
+
+        def fake_compile(fn, **kwargs):
+            assert kwargs == {"dynamic": True}
+
+            def wrapper(*a, **k):
+                compiled.append(fn)
+                return fn(*a, **k)
+
+            return wrapper
+
+        monkeypatch.setattr(torch, "compile", fake_compile)
+        import torch._dynamo.config as dynamo_config
+
+        monkeypatch.setattr(dynamo_config, "recompile_limit", 8)
+        eager_module = pa.PadeActivationModule.forward
+        eager_trainable = pa.TrainablePade.forward
+        try:
+            pa.compile_pade_activations()
+            patched = pa.PadeActivationModule.forward
+            pa.compile_pade_activations()
+            assert pa.PadeActivationModule.forward is patched
+
+            pa.PadeActivation()(torch.randn(2, 10, 4, 4))
+            pa.WideTrainablePade((3,), channel_only=True)(torch.randn(2, 3, 4, 4))
+            assert len(compiled) == 2
+            assert dynamo_config.recompile_limit == pa._RECOMPILE_LIMIT
+        finally:
+            pa.compile_pade_activations(enabled=False)
+
+        assert pa.PadeActivationModule.forward is eager_module
+        assert pa.TrainablePade.forward is eager_trainable
