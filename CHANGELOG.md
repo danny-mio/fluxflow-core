@@ -192,6 +192,14 @@ for the upgrade path and salvage instructions. Not yet released.
   into separate `norm2_q` and `norm2_kv` LayerNorms.
 
 ### Fixed
+- **Padé memory regression**: the smooth-abs / soft-clamp numerics made
+  autograd save ~3.5× more tensors (fixed mode 2.8× → 9.8× input size; VAE
+  peak 4.6 → 12 GB). Padé forwards now run in a custom autograd Function that
+  saves only inputs and recomputes (chunked) in backward; numerics unchanged.
+  Under `torch.compile` the plain math is used.
+- `_ProgressiveUpscaler` keeps gradient checkpointing when its params are
+  frozen (`requires_grad` off or swapped via `functional_call`): params are
+  snapshotted as detached constants so the recompute matches.
 - Padé denominator coefficients never received gradient (`|0|` subgradient
   with zero init), so every trainable Padé was a clamped polynomial.
 - Padé high-degree coefficient steps were amplified up to ~65k× at the

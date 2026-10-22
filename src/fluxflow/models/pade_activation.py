@@ -38,6 +38,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+from torch.autograd.function import once_differentiable
 
 # TrainablePade's numerator is degree 5 and, unlike the "safe" denominator,
 # has no built-in range limiting. The raw input is soft-clamped to +-K so x^5
@@ -84,6 +85,96 @@ def _soft_clamp(x: torch.Tensor, k: float) -> torch.Tensor:
     return x.clamp(-knee, knee) + x.sign() * span * (u / (1.0 + u))
 
 
+# Backward recompute is chunked so its transient autograd graph (~10-25x the
+# chunk) stays small instead of ~10-25x the full activation.
+_RECOMPUTE_CHUNK_ELEMS = 1 << 22
+
+
+class _RecomputeFn(torch.autograd.Function):
+    """Run ``fn`` without a graph; save only its inputs; recompute in backward.
+
+    Elementwise rational math otherwise saves ~10 intermediates per call
+    (several x the activation size). Recomputing locally from the inputs costs
+    a few cheap kernels and keeps saved memory at ~1x input. ``dims`` gives, per
+    tensor, the dim along which it is chunked in backward (None: whole tensor,
+    gradient summed over chunks); ``dims[0]`` also chunks the output gradient.
+    Autocast state of the forward is replayed in backward. Double backward is
+    not supported.
+    """
+
+    @staticmethod
+    def forward(
+        ctx: Any,
+        fn: Callable[..., torch.Tensor],
+        dims: tuple[int | None, ...],
+        *tensors: torch.Tensor,
+    ) -> torch.Tensor:
+        dev = tensors[0].device.type
+        ctx.fn, ctx.dims = fn, dims
+        ctx.ac = (dev, torch.is_autocast_enabled(dev), torch.get_autocast_dtype(dev))
+        ctx.save_for_backward(*tensors)
+        return fn(*tensors)
+
+    @staticmethod
+    @once_differentiable
+    def backward(ctx: Any, grad_out: torch.Tensor) -> tuple[torch.Tensor | None, ...]:
+        saved, dims, need = ctx.saved_tensors, ctx.dims, ctx.needs_input_grad[2:]
+        grads = [torch.zeros_like(t) if n else None for t, n in zip(saved, need)]
+        d0, t0 = dims[0], saved[0]
+        size = 1 if d0 is None else t0.shape[d0]
+        step = size if d0 is None else max(1, _RECOMPUTE_CHUNK_ELEMS // max(1, t0.numel() // size))
+        for st in range(0, size, step):
+            n = min(step, size - st)
+            sl = [t if d is None else t.narrow(d, st, n) for t, d in zip(saved, dims)]
+            go = grad_out if d0 is None else grad_out.narrow(d0, st, n)
+            part = _recompute_grads(ctx, sl, need, go)
+            for i, g in enumerate(part):
+                acc, d = grads[i], dims[i]
+                if g is None or acc is None:
+                    continue
+                if d is None:
+                    acc += g
+                else:
+                    acc.narrow(d, st, g.shape[d]).copy_(g)
+        return (None, None, *grads)
+
+
+def _recompute_grads(
+    ctx: Any, tensors: list[torch.Tensor], need: tuple[bool, ...], go: torch.Tensor
+) -> tuple[torch.Tensor | None, ...]:
+    """Recompute ``fn`` on detached ``tensors`` and return grads for those in ``need``."""
+    dev, enabled, ac_dtype = ctx.ac
+    with torch.enable_grad(), torch.autocast(dev, dtype=ac_dtype, enabled=enabled):
+        inputs = [t.detach().requires_grad_(n) for t, n in zip(tensors, need)]
+        out = ctx.fn(*inputs)
+        wrt = [t for t, n in zip(inputs, need) if n]
+        got = iter(torch.autograd.grad(out, wrt, go, allow_unused=True) if wrt else ())
+        return tuple(next(got) if n else None for n in need)
+
+
+def _apply_recompute(
+    fn: Callable[..., torch.Tensor], dims: tuple[int | None, ...], *tensors: torch.Tensor
+) -> torch.Tensor:
+    """Memory-lean ``fn(*tensors)``; plain math under torch.compile (inductor already recomputes)."""
+    if torch.compiler.is_compiling():
+        return fn(*tensors)
+    out: torch.Tensor = _RecomputeFn.apply(fn, dims, *tensors)
+    return out
+
+
+def _pade_fixed_math(
+    x: torch.Tensor, a0: torch.Tensor, a1: torch.Tensor, a2: torch.Tensor, b1: torch.Tensor
+) -> torch.Tensor:
+    dtype = x.dtype
+    x, a0, a1, a2, b1 = (
+        _soft_clamp(t.float(), _FIXED_MODE_INPUT_CLAMP) for t in (x, a0, a1, a2, b1)
+    )
+    inner = torch.addcmul(a1, x, a2)
+    numerator = torch.addcmul(a0, x, inner)
+    denominator = 1.0 + (b1 * x).abs()
+    return (numerator / denominator).to(dtype)
+
+
 class PadeActivationModule(nn.Module):
     """
     Core low-order (m=2, n=1) Padé computation: P(x)/Q(x).
@@ -104,14 +195,9 @@ class PadeActivationModule(nn.Module):
         a2: torch.Tensor,
         b1: torch.Tensor,
     ) -> torch.Tensor:
-        dtype = x.dtype
-        x, a0, a1, a2, b1 = (
-            _soft_clamp(t.float(), _FIXED_MODE_INPUT_CLAMP) for t in (x, a0, a1, a2, b1)
-        )
-        inner = torch.addcmul(a1, x, a2)
-        numerator = torch.addcmul(a0, x, inner)
-        denominator = 1.0 + (b1 * x).abs()
-        return (numerator / denominator).to(dtype)
+        ts = (x, a0, a1, a2, b1)
+        same = all(t.shape == x.shape for t in ts) and x.dim() >= 2
+        return _apply_recompute(_pade_fixed_math, (1 if same else None,) * 5, *ts)
 
 
 class PadeActivation(nn.Module):
@@ -238,11 +324,9 @@ class TrainablePade(nn.Module):
             return p.view(1, -1, 1, 1)
         return p.expand_as(x)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _math(self, x: torch.Tensor, *coeffs: torch.Tensor) -> torch.Tensor:
         u = _soft_clamp(x, _INPUT_CLAMP) / _INPUT_CLAMP
-        a0, a1, a2, a3, a4, a5, b1, b2, b3, b4 = (
-            self._broadcast(getattr(self, n), u) for n in _COEFF_NAMES
-        )
+        a0, a1, a2, a3, a4, a5, b1, b2, b3, b4 = (self._broadcast(c, u) for c in coeffs)
 
         # Horner's method in u = x/K.
         numerator = torch.addcmul(a4, u, a5)
@@ -260,6 +344,14 @@ class TrainablePade(nn.Module):
 
         out: torch.Tensor = numerator / denominator
         return out
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        coeffs = [getattr(self, n) for n in _COEFF_NAMES]
+        chunked = x.dim() == 4 and all(
+            c.dim() in (1, 3) and c.shape[0] == x.shape[1] for c in coeffs
+        )
+        dims = (1 if chunked else None,) + (0 if chunked else None,) * len(coeffs)
+        return _apply_recompute(self._math, dims, x, *coeffs)
 
 
 def _scale(name: str) -> float:

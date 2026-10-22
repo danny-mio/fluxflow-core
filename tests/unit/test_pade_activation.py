@@ -460,3 +460,200 @@ class TestCompilePadeActivations:
 
         assert pa.PadeActivationModule.forward is eager_module
         assert pa.TrainablePade.forward is eager_trainable
+
+
+# ---------------------------------------------------------------------------
+# Memory-lean autograd (save only inputs, recompute in backward)
+# ---------------------------------------------------------------------------
+import fluxflow.models.pade_activation as _pa  # noqa: E402
+
+
+def _ref_soft_clamp(x, k):
+    knee = 0.75 * k
+    span = k - knee
+    x = x.clamp(-1e4, 1e4)
+    u = (x.abs() - knee).clamp(min=0.0) / span
+    return x.clamp(-knee, knee) + x.sign() * span * (u / (1.0 + u))
+
+
+def _ref_fixed(x, a0, a1, a2, b1):
+    dtype = x.dtype
+    x, a0, a1, a2, b1 = (_ref_soft_clamp(t.float(), 30.0) for t in (x, a0, a1, a2, b1))
+    num = torch.addcmul(a0, x, torch.addcmul(a1, x, a2))
+    return (num / (1.0 + (b1 * x).abs())).to(dtype)
+
+
+def _ref_trainable(mod, x):
+    k = _pa._INPUT_CLAMP
+    u = _ref_soft_clamp(x, k) / k
+    a0, a1, a2, a3, a4, a5, b1, b2, b3, b4 = (
+        mod._broadcast(getattr(mod, n), u) for n in _pa._COEFF_NAMES
+    )
+    n = torch.addcmul(a4, u, a5)
+    for a in (a3, a2, a1, a0):
+        n = torch.addcmul(a, u, n)
+    q = torch.addcmul(b3, u, b4)
+    for b in (b2, b1):
+        q = torch.addcmul(b, u, q)
+    q = u * q
+    return n / (1.0 + torch.sqrt(q * q + 1e-6) - 1e-3)
+
+
+def _saved_ratio(fn, x):
+    total = [0]
+
+    def pack(t):
+        total[0] += t.numel() * t.element_size()
+        return t
+
+    with torch.autograd.graph.saved_tensors_hooks(pack, lambda t: t):
+        fn(x)
+    return total[0] / (x.numel() * x.element_size())
+
+
+def _autocast(enabled):
+    return torch.autocast("cpu", dtype=torch.bfloat16, enabled=enabled)
+
+
+@pytest.mark.parametrize("ac", [False, True])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+class TestPadeLeanAutograd:
+    def test_fixed_matches_reference(self, ac, dtype):
+        torch.manual_seed(0)
+        x = (torch.randn(2, 20, 5, 6) * 20).to(dtype).requires_grad_(True)
+        x2 = x.detach().clone().requires_grad_(True)
+        w = torch.randn(2, 4, 5, 6)
+        with _autocast(ac):
+            y = PadeActivation()(x)
+            t, a0, a1, a2, b1 = x2.view(2, 4, 5, 5, 6).unbind(2)
+            ref = _ref_fixed(t, a0, a1, a2, b1)
+        assert y.dtype == ref.dtype
+        torch.testing.assert_close(y, ref, rtol=1e-6, atol=1e-6)
+        (y.float() * w).sum().backward()
+        (ref.float() * w).sum().backward()
+        torch.testing.assert_close(x.grad, x2.grad, rtol=1e-5, atol=1e-6)
+
+    def test_trainable_matches_reference(self, ac, dtype):
+        torch.manual_seed(0)
+        for co, shape, xs in ((True, (3,), (2, 3, 5, 6)), (False, (3, 5, 6), (2, 3, 5, 6))):
+            m = TrainablePade(shape, channel_only=co)
+            for p in m.parameters():
+                p.data += 0.1 * torch.randn_like(p) * p.abs().max()
+            m2 = TrainablePade(shape, channel_only=co)
+            m2.load_state_dict(m.state_dict())
+            x = (torch.randn(xs) * 5).to(dtype).requires_grad_(True)
+            x2 = x.detach().clone().requires_grad_(True)
+            w = torch.randn(xs)
+            with _autocast(ac):
+                y = m(x)
+                ref = _ref_trainable(m2, x2)
+            assert y.dtype == ref.dtype
+            torch.testing.assert_close(y, ref, rtol=1e-6, atol=1e-6)
+            (y.float() * w).sum().backward()
+            (ref.float() * w).sum().backward()
+            torch.testing.assert_close(x.grad, x2.grad, rtol=1e-5, atol=1e-6)
+            for (n, p), q in zip(m.named_parameters(), m2.parameters()):
+                torch.testing.assert_close(p.grad, q.grad, rtol=1e-5, atol=1e-6, msg=n)
+
+
+class TestPadeSavedBytes:
+    def test_fixed_saved_bound(self):
+        x = torch.randn(2, 40, 16, 16, requires_grad=True)
+        assert _saved_ratio(PadeActivation(), x) <= 1.5
+
+    def test_trainable_saved_bound(self):
+        x = torch.randn(2, 8, 16, 16, requires_grad=True)
+        assert _saved_ratio(TrainablePade((8,), channel_only=True), x) <= 2.0
+
+    def test_wide_trainable_saved_bound(self):
+        x = torch.randn(2, 8, 16, 16, requires_grad=True)
+        assert _saved_ratio(WideTrainablePade((8,), channel_only=True), x) <= 2.0
+
+
+class TestPadeLeanEdgeCases:
+    def test_no_grad_and_frozen_params(self):
+        m = TrainablePade((3,), channel_only=True)
+        with torch.no_grad():
+            assert not m(torch.randn(1, 3, 4, 4)).requires_grad
+        for p in m.parameters():
+            p.requires_grad_(False)
+        x = torch.randn(1, 3, 4, 4, requires_grad=True)
+        m(x).sum().backward()
+        assert x.grad is not None and all(p.grad is None for p in m.parameters())
+
+    def test_input_without_grad_params_get_grad(self):
+        m = TrainablePade((3,), channel_only=True)
+        m(torch.randn(1, 3, 4, 4)).sum().backward()
+        assert m.a1.grad is not None
+
+    def test_compiled_matches_eager_with_requires_grad_toggle(self):
+        torch.manual_seed(0)
+        m = TrainablePade((3,), channel_only=True)
+        x = torch.randn(2, 3, 8, 8, requires_grad=True)
+        px = torch.randn(2, 15, 8, 8, requires_grad=True)
+        (m(x).sum() + PadeActivation()(px).sum()).backward()
+        eager = [x.grad.clone(), px.grad.clone(), m.a1.grad.clone()]
+        x.grad = px.grad = None
+        m.zero_grad()
+        _pa.compile_pade_activations(True)
+        try:
+            for _ in range(2):
+                (m(x).sum() + PadeActivation()(px).sum()).backward()
+            m.a1.grad = None
+            x.grad = px.grad = None
+            m.zero_grad()
+            (m(x).sum() + PadeActivation()(px).sum()).backward()
+            got = [x.grad, px.grad, m.a1.grad]
+            for g, e in zip(got, eager):
+                torch.testing.assert_close(g, e, rtol=1e-4, atol=1e-5)
+            for p in m.parameters():
+                p.requires_grad_(False)
+            m(x).sum().backward()
+            for p in m.parameters():
+                p.requires_grad_(True)
+            m(x).sum().backward()
+        finally:
+            _pa.compile_pade_activations(False)
+
+    def test_checkpoint_same_grads(self):
+        from torch.utils.checkpoint import checkpoint
+
+        torch.manual_seed(0)
+        conv = nn.Conv2d(3, 10, 3, padding=1)
+        act, tp = PadeActivation(), TrainablePade((2,), channel_only=True)
+
+        def block(x):
+            return tp(act(conv(x)))
+
+        x = torch.randn(2, 3, 6, 6, requires_grad=True)
+        block(x).square().sum().backward()
+        ref = [x.grad.clone(), conv.weight.grad.clone(), tp.a2.grad.clone()]
+        x.grad = None
+        conv.zero_grad()
+        tp.zero_grad()
+        checkpoint(block, x, use_reentrant=False).square().sum().backward()
+        for g, e in zip([x.grad, conv.weight.grad, tp.a2.grad], ref):
+            torch.testing.assert_close(g, e, rtol=1e-5, atol=1e-6)
+
+
+class TestPadeChunkedBackward:
+    def test_chunked_grads_match_unchunked(self, monkeypatch):
+        torch.manual_seed(0)
+        cases = [
+            (PadeActivation(), (2, 20, 5, 7)),
+            (TrainablePade((4,), channel_only=True), (2, 4, 5, 7)),
+            (TrainablePade((4, 5, 7)), (2, 4, 5, 7)),
+        ]
+        for m, shape in cases:
+            x = torch.randn(shape, requires_grad=True)
+            w = torch.randn_like(m(x))
+            m(x).mul(w).sum().backward()
+            ref = [x.grad.clone()] + [p.grad.clone() for p in m.parameters()]
+            x.grad = None
+            m.zero_grad()
+            monkeypatch.setattr(_pa, "_RECOMPUTE_CHUNK_ELEMS", 70)
+            m(x).mul(w).sum().backward()
+            monkeypatch.undo()
+            got = [x.grad] + [p.grad for p in m.parameters()]
+            for g, e in zip(got, ref):
+                torch.testing.assert_close(g, e, rtol=1e-5, atol=1e-6)

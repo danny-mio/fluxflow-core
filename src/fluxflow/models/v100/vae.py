@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+from torch.func import functional_call
 from torch.utils.checkpoint import checkpoint
 
 from ..activations import make_activation, xavier_init
@@ -36,6 +37,17 @@ def _maybe_checkpoint(fn, *args, **kwargs):
         return checkpoint(fn, *args, **kwargs)
     kwargs.pop("use_reentrant", None)
     return fn(*args, **kwargs)
+
+
+def _frozen_call(layer: nn.Module):
+    """Run `layer` with parameters snapshotted as detached constants.
+
+    Frozen params (flags off, or swapped via `torch.func.functional_call`) are
+    captured at forward time, so the checkpoint recompute sees the same
+    grad-free tensors even if flags/swaps are restored before backward.
+    """
+    params = {n: p.detach() for n, p in layer.named_parameters()}
+    return lambda x, ctx: functional_call(layer, params, (x, ctx))
 
 
 # Minimum per-stage channel width for the decoder's upsample taper (Problem 2).
@@ -277,16 +289,12 @@ class _ProgressiveUpscaler(nn.Module):
         Returns:
             torch.Tensor: Upsampled output [B, channels, H*2^steps, W*2^steps]
         """
-        # Frozen params (requires_grad toggled off around forward) must not be
-        # checkpointed: the backward recompute would see restored flags, which
-        # leaks grads into them (reentrant) or breaks saved-tensor metadata.
-        if (
-            self.use_gradient_checkpointing
-            and x.requires_grad
-            and any(p.requires_grad for p in self.parameters())
-        ):
+        if self.use_gradient_checkpointing and x.requires_grad:
+            frozen = not any(p.requires_grad for p in self.parameters())
             for layer in self.layers:
-                x = _maybe_checkpoint(layer, x, context, use_reentrant=False)
+                x = _maybe_checkpoint(
+                    _frozen_call(layer) if frozen else layer, x, context, use_reentrant=False
+                )
             return x
         for layer in self.layers:
             x = layer(x, context)
