@@ -19,6 +19,8 @@ from typing import Any
 import safetensors.torch as st
 import torch
 
+from fluxflow.models.v100.conditioning import SPADE_SCALE_INIT
+
 # Keys that survive shape-compatible direct copy.
 DIRECT_COPY_PREFIXES = (
     "diffuser.compressor.encoder_first_step.",
@@ -132,12 +134,29 @@ def _maybe_zero_init_new_spade_heads(out: dict[str, torch.Tensor]) -> list[str]:
             f"{base}.beta_hi.bias": torch.zeros(C_out),
             f"{base}.gamma_head.weight": torch.zeros(C_out, hidden, 3, 3),
             f"{base}.gamma_head.bias": torch.zeros(C_out),
-            f"{base}.gamma_scale": torch.zeros(1),
+            # gamma_head is zero, so a nonzero scale keeps identity and avoids
+            # the double-zero gate that would starve gamma_head.
+            f"{base}.gamma_scale": torch.full((1,), SPADE_SCALE_INIT),
         }
         for nk, nv in defaults.items():
             if nk not in out:
                 out[nk] = nv
                 added.append(nk)
+        # beta_scale: a salvaged 0 (or missing) is raised to SPADE_SCALE_INIT
+        # only if beta_mid's warm start is all-zero (identity preserved);
+        # otherwise it is left as-is so the warm-started output is unchanged.
+        bs_key = f"{base}.beta_scale"
+        beta_mid_off = not (bm.any() or out.get(f"{base}.beta_mid.bias", torch.zeros(1)).any())
+        old_bs = out.get(bs_key)
+        if beta_mid_off and (old_bs is None or not old_bs.any()):
+            out[bs_key] = torch.full((1,), SPADE_SCALE_INIT)
+            added.append(bs_key)
+        elif old_bs is None:
+            out[bs_key] = torch.zeros(1)
+            added.append(bs_key)
+        # Snapshot buffers = final scales, so scale_drift starts at 0.
+        for name in ("gamma_scale", "beta_scale"):
+            out[f"{base}._{name}_init"] = out[f"{base}.{name}"].detach().clone()
     return added
 
 

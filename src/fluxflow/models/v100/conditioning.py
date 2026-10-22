@@ -3,8 +3,9 @@ v0.10.0 conditioning modules.
 
 Contains SPADE_v100b — a multi-scale SPADE variant with three additive β heads
 (1×1 low-freq, 3×3 mid-freq, 3×3 dilated high-freq — effective 7×7 receptive
-field via dilation=3) and a bounded multiplicative γ branch.  Both scales
-start at 0 so the layer is exactly identity at init.
+field via dilation=3) and a bounded multiplicative γ branch.  ControlNet-style
+zero-init: head weights/biases start at 0 (exact identity at init) while the
+scales start at ``SPADE_SCALE_INIT`` so the heads receive gradient immediately.
 
 ``SPADEWithLearnableScale`` is kept as a deprecated alias for one release to
 ease migration of any external code; the v100 callsites are updated in M2.4.
@@ -19,6 +20,9 @@ import torch.nn.functional as F
 from ..activations import make_activation
 from ..v070.conditioning import SPADE
 
+# Init for beta_scale/gamma_scale. Nonzero so zero-init heads get gradient.
+SPADE_SCALE_INIT = 0.5
+
 
 class SPADE_v100b(SPADE):
     """
@@ -31,8 +35,10 @@ class SPADE_v100b(SPADE):
     which is strictly > 0, exactly 1 at init, and can only amplify never null
     features — preserving the beta-only design's MSE-blur safety.
 
-    Two learnable scalars ``beta_scale`` and ``gamma_scale`` start at 0 so the
-    layer is exactly identity at init (out == GroupNorm(x)). The shared MLP
+    Two learnable scalars ``beta_scale`` and ``gamma_scale`` start at
+    ``SPADE_SCALE_INIT``; the β/γ heads are zero-init (weights and biases), so
+    the layer is exactly identity at init (out == GroupNorm(x)) while the heads
+    still get nonzero gradient. The shared MLP
     is two Conv3×3 + Bezier(sig, silu) pairs, ethos-aligned.
 
     Args:
@@ -65,9 +71,12 @@ class SPADE_v100b(SPADE):
         # from old SPADEWithLearnableScale cleanly fail at load time.
         if hasattr(self, "mlp_beta"):
             del self.mlp_beta
-        # Learnable scalars — both start at 0 → identity at init.
-        self.beta_scale = nn.Parameter(torch.zeros(1))
-        self.gamma_scale = nn.Parameter(torch.zeros(1))
+        # ControlNet-style: zero heads give identity; nonzero scales let them learn.
+        for head in (self.beta_low, self.beta_mid, self.beta_hi, self.gamma_head):
+            for param in head.parameters():
+                nn.init.zeros_(param)
+        self.beta_scale = nn.Parameter(torch.full((1,), SPADE_SCALE_INIT))
+        self.gamma_scale = nn.Parameter(torch.full((1,), SPADE_SCALE_INIT))
         # Snapshot init values so ``scale_drift`` can report how far training has
         # moved these scalars from identity — the first direct signal (independent
         # of any disconnected diagnostic probe upstream) that gradient is reaching
@@ -95,8 +104,7 @@ class SPADE_v100b(SPADE):
         actv = self.mlp_shared(context)
 
         # beta_scale/gamma_scale are unclamped (see __init__); tanh at the
-        # use-site bounds the effective scale to (-1, 1), preserving
-        # identity-at-init (tanh(0)==0) and init gradient flow (tanh'(0)==1).
+        # use-site bounds the effective scale to (-1, 1).
         beta = self.beta_low(actv) + self.beta_mid(actv) + self.beta_hi(actv)
         beta = torch.tanh(self.beta_scale) * beta
 
@@ -113,8 +121,8 @@ class SPADE_v100b(SPADE):
     def scale_drift(self) -> tuple[float, float]:
         """Mean absolute deviation of gamma_scale/beta_scale from their init values.
 
-        Both scalars start at exactly 0 (identity at init; see class docstring),
-        so any nonzero drift is direct evidence that gradient is reaching SPADE's
+        Both scalars start at ``SPADE_SCALE_INIT`` (snapshotted in buffers), so
+        any nonzero drift is direct evidence that gradient is reaching SPADE's
         conditioning scales during training.
 
         Returns:

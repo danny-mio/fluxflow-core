@@ -215,9 +215,16 @@ class _ProgressiveUpscaler(nn.Module):
         Returns:
             torch.Tensor: Upsampled output [B, channels, H*2^steps, W*2^steps]
         """
-        if self.use_gradient_checkpointing and x.requires_grad:
+        # Frozen params (requires_grad toggled off around forward) must not be
+        # checkpointed: the backward recompute would see restored flags, which
+        # leaks grads into them (reentrant) or breaks saved-tensor metadata.
+        if (
+            self.use_gradient_checkpointing
+            and x.requires_grad
+            and any(p.requires_grad for p in self.parameters())
+        ):
             for layer in self.layers:
-                x = _maybe_checkpoint(layer, x, context, use_reentrant=True)
+                x = _maybe_checkpoint(layer, x, context, use_reentrant=False)
             return x
         for layer in self.layers:
             x = layer(x, context)

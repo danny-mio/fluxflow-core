@@ -47,7 +47,9 @@ for the upgrade path and salvage instructions. Not yet released.
 - **`SPADE_v100b`** multi-scale conditioning block with three additive heads
   (`beta_low` 1×1, `beta_mid` 3×3, `beta_hi` 3×3 dilated) and a bounded
   multiplicative gamma (`1 + softplus(scale·raw) - softplus(0)`); identity at
-  init via zero-initialized `beta_scale` / `gamma_scale` parameters.
+  init via ControlNet-style zero-initialized heads (weights + biases) with
+  `beta_scale` / `gamma_scale` starting at `SPADE_SCALE_INIT = 0.5`, so the
+  heads receive gradient from step 0.
 - **2D axial RoPE** helper (`build_axial_rope_2d`) with per-axis (H, W)
   buffers for the flow self-attention path.
 - **Sinusoidal time embedding** (continuous; replaces the legacy
@@ -86,7 +88,7 @@ for the upgrade path and salvage instructions. Not yet released.
   checkpoint), used by `fluxflow-training`, `fluxflow-ui`, and
   `fluxflow-comfyui`.
 - **`SPADE_v100b.scale_drift()`**: returns the mean absolute deviation of
-  `gamma_scale`/`beta_scale` from their (zero) init values, snapshotted as
+  `gamma_scale`/`beta_scale` from their init values, snapshotted as
   buffers at construction. Gives a direct, ground-truth signal that gradient
   is reaching SPADE's conditioning scales, independent of the "Ctx" console
   metric, which a training-diagnostics audit found was disconnected from
@@ -172,6 +174,20 @@ for the upgrade path and salvage instructions. Not yet released.
   into separate `norm2_q` and `norm2_kv` LayerNorms.
 
 ### Fixed
+- **Latent-cycle gradient leak into the frozen expander**: `_ProgressiveUpscaler`
+  checkpointed with `use_reentrant=True`, so a `requires_grad` toggle around
+  the forward was undone at backward recompute and the "frozen" upscaler
+  (`conv1`, `SPADE_v100b`, `conv1_scale`) still received gradients. Now uses
+  `use_reentrant=False` and skips checkpointing when all upscaler params are
+  frozen.
+- **`SPADE_v100b` heads starved of gradient**: zero `beta_scale`/`gamma_scale`
+  multiplied random heads, so head weights got exactly zero gradient until the
+  scales moved (on top of the outer `conv1_scale` gate). Heads are now
+  zero-init and scales start at `SPADE_SCALE_INIT`; still exact identity at init.
+- **Salvage script**: writes `gamma_scale = SPADE_SCALE_INIT` (and
+  `beta_scale` when `beta_mid` is not warm-started) instead of 0, and writes
+  the `_gamma_scale_init`/`_beta_scale_init` buffers so `scale_drift()` starts
+  at 0 on salvaged checkpoints.
 - `create_bezier_models` / `create_models_from_config` hardcoded
   `use_gradient_checkpointing=True`, silently ignoring the caller's setting;
   the flag is now threaded through to the compressor, expander, and v0.10.0

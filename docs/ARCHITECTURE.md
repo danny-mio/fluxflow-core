@@ -276,7 +276,8 @@ graph TB
 - Multi-scale SPADE (`beta_low` 1×1, `beta_mid` 3×3, `beta_hi` 3×3 dilated
   with effective 7×7 receptive field via `dilation=3`); bounded multiplicative
   gamma `1 + softplus(scale·raw) - softplus(0)`. Identity at init via
-  zero-initialised `beta_scale` / `gamma_scale`.
+  zero-initialised heads; `beta_scale` / `gamma_scale` start at
+  `SPADE_SCALE_INIT = 0.5` so the heads learn from step 0.
 - Bezier activations
 - Skip connections via residuals
 - **Tapered upsample-stage channel width** (memory + fidelity fix, targeting

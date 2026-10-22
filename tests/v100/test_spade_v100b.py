@@ -3,11 +3,11 @@
 import pytest
 import torch
 
-from fluxflow.models.v100.conditioning import SPADE_v100b
+from fluxflow.models.v100.conditioning import SPADE_SCALE_INIT, SPADE_v100b
 
 
 def test_spade_v100b_identity_at_init():
-    """With beta_scale=0 and gamma_scale=0 at init, output == GroupNorm(x)."""
+    """Zero-init heads make output == GroupNorm(x) at init despite nonzero scales."""
     torch.manual_seed(0)
     layer = SPADE_v100b(context_nc=32, num_features=32)
     x = torch.randn(2, 32, 16, 16)
@@ -55,11 +55,13 @@ def test_spade_v100b_none_context_is_identity():
 
 
 def test_spade_v100b_context_changes_output():
-    """When scales are nonzero, different contexts produce different outputs."""
+    """When heads are nonzero, different contexts produce different outputs."""
     torch.manual_seed(3)
     layer = SPADE_v100b(context_nc=8, num_features=32)
     layer.beta_scale.data.fill_(1.0)
     layer.gamma_scale.data.fill_(1.0)
+    for head in (layer.beta_low, layer.beta_mid, layer.beta_hi, layer.gamma_head):
+        torch.nn.init.normal_(head.weight, std=0.1)
     x = torch.randn(2, 32, 8, 8)
     ctx_a = torch.randn(2, 8, 8, 8)
     ctx_b = torch.randn(2, 8, 8, 8)
@@ -69,7 +71,7 @@ def test_spade_v100b_context_changes_output():
 
 
 def test_spade_v100b_scale_drift_zero_at_init():
-    """gamma_scale/beta_scale start at 0, so drift is exactly 0 before training."""
+    """Scales snapshot their init value, so drift is exactly 0 before training."""
     layer = SPADE_v100b(context_nc=16, num_features=32)
     gamma_drift, beta_drift = layer.scale_drift()
     assert gamma_drift == 0.0
@@ -77,13 +79,13 @@ def test_spade_v100b_scale_drift_zero_at_init():
 
 
 def test_spade_v100b_scale_drift_tracks_parameter_change():
-    """Drift reflects |current - init| once the scalars move away from 0."""
+    """Drift reflects |current - init| once the scalars move away from init."""
     layer = SPADE_v100b(context_nc=16, num_features=32)
     layer.gamma_scale.data.fill_(0.3)
     layer.beta_scale.data.fill_(-0.2)
     gamma_drift, beta_drift = layer.scale_drift()
-    assert gamma_drift == pytest.approx(0.3)
-    assert beta_drift == pytest.approx(0.2)
+    assert gamma_drift == pytest.approx(abs(0.3 - SPADE_SCALE_INIT))
+    assert beta_drift == pytest.approx(abs(-0.2 - SPADE_SCALE_INIT))
 
 
 def test_spade_v100b_beta_scale_bounded_via_tanh():
@@ -147,7 +149,7 @@ def test_spade_v100b_scale_drift_survives_state_dict_roundtrip():
     layer2.load_state_dict(state)
 
     gamma_drift, _ = layer2.scale_drift()
-    assert gamma_drift == pytest.approx(0.5)
+    assert gamma_drift == pytest.approx(abs(0.5 - SPADE_SCALE_INIT))
 
 
 def test_spade_v100b_accepts_pade_activation_type():
@@ -160,3 +162,24 @@ def test_spade_v100b_accepts_pade_activation_type():
         out = layer(x, context)
     assert out.shape == x.shape
     assert torch.isfinite(out).all()
+
+
+def test_spade_v100b_zero_init_heads_and_scales():
+    layer = SPADE_v100b(context_nc=16, num_features=32)
+    for head in (layer.beta_low, layer.beta_mid, layer.beta_hi, layer.gamma_head):
+        assert torch.count_nonzero(head.weight) == 0
+        assert torch.count_nonzero(head.bias) == 0
+    assert SPADE_SCALE_INIT == 0.5
+    assert layer.beta_scale.item() == SPADE_SCALE_INIT
+    assert layer.gamma_scale.item() == SPADE_SCALE_INIT
+
+
+def test_spade_v100b_heads_get_grad_at_init():
+    """Zero-init heads must still receive nonzero grad (no double zero-gating)."""
+    torch.manual_seed(0)
+    layer = SPADE_v100b(context_nc=16, num_features=32)
+    x = torch.randn(2, 32, 8, 8)
+    ctx = torch.randn(2, 16, 8, 8)
+    (layer(x, ctx) * torch.randn(2, 32, 8, 8)).sum().backward()
+    for head in (layer.beta_low, layer.beta_mid, layer.beta_hi, layer.gamma_head):
+        assert head.weight.grad is not None and head.weight.grad.abs().sum() > 0

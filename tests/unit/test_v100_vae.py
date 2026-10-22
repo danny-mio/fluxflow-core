@@ -129,15 +129,16 @@ class TestFluxExpanderV100:
         assert H[0].item() == 16
         assert W[0].item() == 16
 
-    def test_spade_beta_scale_starts_at_zero(self):
-        """SPADEWithLearnableScale.beta_scale must init to 0 (identity at init)."""
+    def test_spade_beta_scale_starts_at_init_const(self):
+        """beta_scale inits to SPADE_SCALE_INIT (identity comes from zero heads)."""
+        from fluxflow.models.v100.conditioning import SPADE_SCALE_INIT
         from fluxflow.models.v100.vae import FluxExpander_v100
 
         exp = FluxExpander_v100(d_model=32, upscales=2)
         for layer in exp.upscale.layers:
             assert hasattr(layer, "spade"), "ResidualUpsampleBlock must have .spade"
             assert hasattr(layer.spade, "beta_scale"), "SPADE must have beta_scale"
-            assert float(layer.spade.beta_scale.item()) == 0.0
+            assert float(layer.spade.beta_scale.item()) == SPADE_SCALE_INIT
 
     def test_roundtrip_image_reconstruct_shape(self):
         """comp(img) → exp(packed) must yield original image shape."""
@@ -176,12 +177,15 @@ class TestSPADEWithLearnableScale:
         spade = SPADEWithLearnableScale(context_nc=64, num_features=32)
         assert isinstance(spade.beta_scale, torch.nn.Parameter)
 
-    def test_beta_scale_starts_at_zero(self):
-        """At init, beta_scale == 0 so SPADE acts as plain GroupNorm."""
-        from fluxflow.models.v100.conditioning import SPADEWithLearnableScale
+    def test_beta_scale_starts_at_init_const(self):
+        """At init beta_scale == SPADE_SCALE_INIT; zero heads keep GroupNorm identity."""
+        from fluxflow.models.v100.conditioning import (
+            SPADE_SCALE_INIT,
+            SPADEWithLearnableScale,
+        )
 
         spade = SPADEWithLearnableScale(context_nc=64, num_features=32)
-        assert float(spade.beta_scale.item()) == 0.0
+        assert float(spade.beta_scale.item()) == SPADE_SCALE_INIT
 
     def test_forward_with_context(self):
         """forward must return normalized + beta_scale * raw_beta."""
@@ -192,7 +196,7 @@ class TestSPADEWithLearnableScale:
         ctx = torch.randn(1, 8, 8, 8)
         with torch.no_grad():
             out = spade(x, ctx)
-        # With beta_scale=0, output == GroupNorm(x)
+        # Zero-init heads: output == GroupNorm(x)
         assert out.shape == x.shape
 
     def test_forward_without_context(self):
@@ -274,3 +278,29 @@ class TestActivationTypeSelection:
         assert rgb.shape[0] == 2
         assert rgb.shape[1] == 3
         assert torch.isfinite(rgb).all()
+
+
+def test_progressive_upscaler_checkpoint_respects_frozen_params():
+    """Non-reentrant checkpointing: params frozen during forward get no grad."""
+    from fluxflow.models.v100.vae import _ProgressiveUpscaler
+
+    torch.manual_seed(0)
+    up = _ProgressiveUpscaler(
+        channels=16, steps=2, context_size=16, use_gradient_checkpointing=True
+    )
+    for layer in up.layers:
+        for n in ("conv1_scale", "beta_scale", "gamma_scale"):
+            for m in layer.modules():
+                if hasattr(m, n):
+                    getattr(m, n).data.fill_(0.3)
+    x = torch.randn(1, 16, 4, 4, requires_grad=True)
+    ctx = torch.randn(1, 16, 4, 4, requires_grad=True)
+    for p in up.parameters():
+        p.requires_grad_(False)
+    out = up(x, ctx)
+    for p in up.parameters():
+        p.requires_grad_(True)
+    out.sum().backward()
+    for name, p in up.named_parameters():
+        assert p.grad is None or p.grad.abs().sum() == 0, name
+    assert x.grad is not None and x.grad.abs().sum() > 0

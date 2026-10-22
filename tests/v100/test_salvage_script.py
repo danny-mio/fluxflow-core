@@ -8,6 +8,7 @@ import pytest
 import safetensors.torch as st
 import torch
 
+from fluxflow.models.v100.conditioning import SPADE_SCALE_INIT
 from fluxflow.models.v100.vae import _taper_channels
 from scripts.migrate_v0_10_0_to_redesign import _print_report, migrate_checkpoint
 
@@ -86,9 +87,10 @@ def test_migrate_spade_partial_fill(tmp_path):
     assert new["diffuser.expander.upscale.layers.0.spade.beta_low.weight"].abs().sum() == 0
     assert "diffuser.expander.upscale.layers.0.spade.beta_hi.weight" in new
     assert "diffuser.expander.upscale.layers.0.spade.gamma_head.weight" in new
-    # gamma_scale zero-init
+    # gamma_scale = SPADE_SCALE_INIT (gamma_head is zero, so identity holds)
     assert torch.allclose(
-        new["diffuser.expander.upscale.layers.0.spade.gamma_scale"], torch.zeros(1)
+        new["diffuser.expander.upscale.layers.0.spade.gamma_scale"],
+        torch.full((1,), SPADE_SCALE_INIT),
     )
     # mlp_shared from old form is dropped (new deeper MLP doesn't fit)
     assert "diffuser.expander.upscale.layers.0.spade.mlp_shared.0.weight" not in new
@@ -410,3 +412,63 @@ def test_roundtrip_legacy_state_loads_into_redesigned_model(tmp_path):
     # duplicated FiLM
     assert "transformer_blocks.0.film_p0_text.weight" in flow_state
     assert "transformer_blocks.0.film_p0_time.weight" in flow_state
+
+
+_SPADE = "diffuser.expander.upscale.layers.0.spade"
+
+
+def _salvage_spade(tmp_path, beta_mid_scale, beta_scale):
+    src, dst = tmp_path / "s.safetensors", tmp_path / "d.safetensors"
+    tensors = {
+        f"{_SPADE}.mlp_beta.weight": torch.randn(32, 128, 3, 3) * beta_mid_scale,
+        f"{_SPADE}.mlp_beta.bias": torch.randn(32) * beta_mid_scale,
+    }
+    if beta_scale is not None:
+        tensors[f"{_SPADE}.beta_scale"] = torch.tensor([beta_scale])
+    st.save_file(tensors, str(src))
+    migrate_checkpoint(src, dst)
+    return st.load_file(str(dst))
+
+
+def _load_spade(new):
+    from fluxflow.models.v100.conditioning import SPADE_v100b
+
+    layer = SPADE_v100b(context_nc=16, num_features=32)
+    sd = {k[len(_SPADE) + 1 :]: v for k, v in new.items() if k.startswith(_SPADE + ".")}
+    res = layer.load_state_dict(sd, strict=False)
+    assert not res.unexpected_keys
+    assert all(k.startswith("mlp_shared") for k in res.missing_keys)
+    return layer
+
+
+def test_salvage_gamma_scale_and_buffers_match(tmp_path):
+    from fluxflow.models.v100.conditioning import SPADE_SCALE_INIT
+
+    new = _salvage_spade(tmp_path, 1.0, 0.3)
+    assert new[f"{_SPADE}.gamma_scale"].item() == SPADE_SCALE_INIT
+    assert torch.equal(new[f"{_SPADE}._gamma_scale_init"], new[f"{_SPADE}.gamma_scale"])
+    assert torch.equal(new[f"{_SPADE}._beta_scale_init"], new[f"{_SPADE}.beta_scale"])
+    layer = _load_spade(new)
+    assert layer.scale_drift() == (0.0, 0.0)
+
+
+@pytest.mark.parametrize("beta_scale", [0.0, None])
+def test_salvage_zero_beta_mid_gets_init_scale_and_identity(tmp_path, beta_scale):
+    from fluxflow.models.v100.conditioning import SPADE_SCALE_INIT
+
+    new = _salvage_spade(tmp_path, 0.0, beta_scale)
+    assert new[f"{_SPADE}.beta_scale"].item() == SPADE_SCALE_INIT
+    layer = _load_spade(new)
+    x, ctx = torch.randn(2, 32, 8, 8), torch.randn(2, 16, 8, 8)
+    assert torch.allclose(layer(x, ctx), layer.bn(x), atol=1e-6)
+    assert layer.scale_drift() == (0.0, 0.0)
+
+
+def test_salvage_warm_beta_mid_with_zero_scale_keeps_zero_scale(tmp_path):
+    new = _salvage_spade(tmp_path, 1.0, 0.0)
+    assert new[f"{_SPADE}.beta_scale"].item() == 0.0
+    assert new[f"{_SPADE}._beta_scale_init"].item() == 0.0
+    layer = _load_spade(new)
+    x, ctx = torch.randn(2, 32, 8, 8), torch.randn(2, 16, 8, 8)
+    assert torch.allclose(layer(x, ctx), layer.bn(x), atol=1e-6)
+    assert layer.scale_drift() == (0.0, 0.0)
