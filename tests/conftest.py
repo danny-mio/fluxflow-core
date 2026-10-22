@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 import torch
+from fluxflow.utils.rocm_compat import disable_broken_rocm_sdpa
 from PIL import Image
 
 # ============================================================================
@@ -18,6 +19,13 @@ from PIL import Image
 def device():
     """Get test device (CPU for CI, CUDA if available locally)."""
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_broken_rocm_sdpa():
+    """Mirror training startup: drop AOTriton SDPA kernels that fail on this ROCm build."""
+    if torch.cuda.is_available():
+        disable_broken_rocm_sdpa(torch.device("cuda"))
 
 
 @pytest.fixture(scope="session")

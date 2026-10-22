@@ -12,6 +12,7 @@ from .io import (
     save_training_state,
 )
 from .logger import get_default_logger, get_logger, setup_logger
+from .rocm_compat import disable_broken_rocm_sdpa
 from .visualization import (
     build_cfg_null_pair,
     generate_latent_images,
@@ -47,4 +48,5 @@ __all__ = [
     "is_rocm",
     "parse_device",
     "DeviceInfo",
+    "disable_broken_rocm_sdpa",
 ]

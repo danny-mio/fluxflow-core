@@ -15,6 +15,10 @@ multi-scale SPADE, and a clean Gaussian z. See
 for the upgrade path and salvage instructions. Not yet released.
 
 ### Added
+- `fluxflow.utils.disable_broken_rocm_sdpa(device)` (`utils/rocm_compat.py`):
+  probes AOTriton flash/mem-efficient SDPA once per device on ROCm and
+  disables broken backends (falls back to MATH). Moved from
+  fluxflow-training; call it at startup in any core-based app.
 - `compile_pade_activations(enabled=True)` in `models/pade_activation.py`:
   opt-in `torch.compile(dynamic=True)` of the Padé forwards (process-wide,
   idempotent, reversible), fusing each ~10-op elementwise chain into one
@@ -192,6 +196,8 @@ for the upgrade path and salvage instructions. Not yet released.
   into separate `norm2_q` and `norm2_kv` LayerNorms.
 
 ### Fixed
+- 21 GPU tests failed on ROCm 7.16 / gfx1151 (`hipErrorInvalidValue` from
+  AOTriton SDPA); the test session now applies the SDPA probe.
 - **Padé memory regression**: the smooth-abs / soft-clamp numerics made
   autograd save ~3.5× more tensors (fixed mode 2.8× → 9.8× input size; VAE
   peak 4.6 → 12 GB). Padé forwards now run in a custom autograd Function that
