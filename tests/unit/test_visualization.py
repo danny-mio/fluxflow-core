@@ -86,3 +86,46 @@ class TestSafeVaeSampleContextOnly:
         saved_paths = [str(c.args[1]) for c in mock_save.call_args_list if c.args]
         ctx_paths = [p for p in saved_paths if "-ctx" in p]
         assert len(ctx_paths) == 1, f"Expected exactly one -ctx file; got: {saved_paths}"
+
+
+class TestSafeVaeSampleImageModes:
+    """safe_vae_sample must accept RGBA / grayscale / palette inputs."""
+
+    @staticmethod
+    def _run(tmp_path, mode, name):
+        import os
+
+        from PIL import Image
+
+        from fluxflow.utils import visualization as viz
+
+        diffuser = MagicMock()
+        diffuser.compressor.return_value = torch.zeros(1, 65, 32)
+        diffuser.compressor.get_context_dims.return_value = 0
+        diffuser.compressor.d_model = 32
+        diffuser.expander.return_value = torch.zeros(1, 3, 64, 64)
+        diffuser.return_value = torch.zeros(1, 3, 64, 64)
+        path = str(tmp_path / name)
+        Image.new(mode, (64, 64)).save(path)
+        out = str(tmp_path / "out")
+        os.makedirs(out, exist_ok=True)
+        viz._VAE_SAMPLE_CACHE.pop(path, None)
+        with patch("fluxflow.utils.visualization.save_image"):
+            viz.safe_vae_sample(
+                diffuser=diffuser,
+                image_address=path,
+                channels=3,
+                output_path=out,
+                epoch=0,
+                device=torch.device("cpu"),
+            )
+        return viz._VAE_SAMPLE_CACHE[path][0]
+
+    def test_rgba_converted_to_3_channels(self, tmp_path):
+        assert self._run(tmp_path, "RGBA", "a.png").shape == (1, 3, 64, 64)
+
+    def test_grayscale_converted_to_3_channels(self, tmp_path):
+        assert self._run(tmp_path, "L", "g.png").shape == (1, 3, 64, 64)
+
+    def test_palette_converted_to_3_channels(self, tmp_path):
+        assert self._run(tmp_path, "P", "p.png").shape == (1, 3, 64, 64)

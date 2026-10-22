@@ -152,7 +152,7 @@ def safe_vae_sample(
                 transforms.Normalize([0.5] * channels, [0.5] * channels),
             ]
         )
-        img = Image.open(image_address)
+        img = Image.open(image_address).convert("RGB" if channels == 3 else "L")
         tensor_imgs = torch.stack([transform(img)], 0).to(device)
         _VAE_SAMPLE_CACHE[image_address] = (tensor_imgs, image_hash)
 

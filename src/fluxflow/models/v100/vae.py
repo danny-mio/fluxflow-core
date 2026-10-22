@@ -17,6 +17,7 @@ from typing import cast
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from einops import rearrange
 from torch.utils.checkpoint import checkpoint
 
@@ -64,6 +65,67 @@ def _taper_channels(
         list[int]: ``out_ch`` for each stage, length ``upscales``.
     """
     return [max(floor_ch, d_model // (2**stage_i)) for stage_i in range(1, upscales + 1)]
+
+
+def _smooth(conv: nn.Conv2d, x: torch.Tensor) -> torch.Tensor:
+    """Apply a 3x3 reflect-padded seam conv; replicate-pad when a dim < 2 (reflect needs >= 2)."""
+    if min(x.shape[-2:]) >= 2:
+        return cast(torch.Tensor, conv(x))
+    return F.conv2d(F.pad(x, (1, 1, 1, 1), mode="replicate"), conv.weight, conv.bias)
+
+
+_CAL_PROBE_SEED = 1234
+_CAL_PROBE_SIDE = 128
+_CAL_PROBE_BATCH = 6
+_CAL_ITERS = 12
+_CAL_TOL = 0.05  # |log(rms/target)|
+
+
+def _mean_abs(t: torch.Tensor) -> float:
+    """Calibration scale: geometric mean over samples of per-sample mean|t|.
+
+    Bezier/Padé outputs are heavy-tailed across samples; RMS or a pooled mean is
+    dominated by one outlier image and does not generalise to other inputs.
+    """
+    per_sample = t.float().abs().flatten(1).mean(1).clamp_min(1e-30)
+    return float(per_sample.log().mean().exp().item())
+
+
+def _calibrate_block(
+    block: nn.Module, conv: nn.Conv2d, x: torch.Tensor, target: float
+) -> torch.Tensor:
+    """Scale `conv.weight` (init only) until block(x) has scale (_mean_abs) ~= target; return block(x).
+
+    Bezier/Padé 5x-wide activations are strongly non-linear in conv scale, so a
+    fixed gain is unstable across seeds/widths; secant search in log-space is robust.
+    """
+    slope, prev, s_prev = 1.0, None, 1.0
+    with torch.no_grad():
+        y = cast(torch.Tensor, block(x))
+        for _ in range(_CAL_ITERS):
+            r = _mean_abs(y)
+            if not math.isfinite(r) or r <= 0:
+                break
+            err = math.log(target / r)
+            if abs(err) < _CAL_TOL:
+                break
+            if prev is not None and abs(math.log(s_prev)) > 1e-6:
+                slope = min(max(math.log(r / prev) / math.log(s_prev), 0.5), 6.0)
+            s_prev = math.exp(max(min(err / slope, 1.5), -1.5))
+            prev = r
+            conv.weight.mul_(s_prev)
+            y = cast(torch.Tensor, block(x))
+    return y
+
+
+def _calibrate_chain(
+    blocks: list[nn.Module], x: torch.Tensor, target: float | None = None
+) -> torch.Tensor:
+    """Calibrate Sequential(Conv2d, act) blocks in order, each to preserve the incoming RMS."""
+    for blk in blocks:
+        conv = next(m for m in blk.modules() if isinstance(m, nn.Conv2d))
+        x = _calibrate_block(blk, conv, x, target if target is not None else _mean_abs(x))
+    return x
 
 
 def _safe_group_norm(num_channels: int, max_groups: int = 8) -> nn.GroupNorm:
@@ -462,10 +524,10 @@ class FluxCompressor_v100(nn.Module):
                 "trainable",
                 shape=(d_model,),
                 channel_only=True,
-                p0=-0.5,
-                p1=-0.1,
-                p2=0.1,
-                p3=0.5,
+                p0=-2.0,
+                p1=-0.6,
+                p2=0.6,
+                p3=2.0,
             )
             self.logvar_activation = make_activation(
                 "bezier",
@@ -481,8 +543,15 @@ class FluxCompressor_v100(nn.Module):
             self.mu_activation = make_activation(
                 self.activation_type, "trainable", shape=(d_model,), channel_only=True
             )
+            # Bezier wide logvar init is ~-0.5 (Bernstein midpoint of -8,-2,2,4);
+            # match it (x - 0.5) instead of x - 8 (std~0.018, near-deterministic AE).
             self.logvar_activation = make_activation(
-                self.activation_type, "wide", shape=(d_model,), channel_only=True
+                self.activation_type,
+                "wide",
+                shape=(d_model,),
+                channel_only=True,
+                a0=-0.5,
+                b1=1e-3,
             )
 
         self.final_norm = nn.LayerNorm(d_model)
@@ -633,6 +702,41 @@ class FluxCompressor_v100(nn.Module):
         # bare Parameters (not Modules), so .apply() never visits them --
         # placement here is safe regardless of order.
         self.apply(xavier_init)
+        self._calibrate_init()
+
+    def _calibrate_init(self) -> None:
+        """Rescale conv inits so per-stage signal scale is preserved down both encoder paths (init only).
+
+        Without it Bezier shrinks RMS ~3.5x/layer (bottleneck ~1e-5, ctx_proj below
+        GroupNorm eps) and Padé ~2x/layer. Uses a local-generator probe so global RNG
+        and zero-inits (seam smoothers / zinject scales) are untouched.
+        """
+        side = _CAL_PROBE_SIDE
+        gen = torch.Generator().manual_seed(_CAL_PROBE_SEED)
+        probe = torch.randn(
+            _CAL_PROBE_BATCH, self.stage_channels[0] - 2, side, side, generator=gen
+        ).clamp(-1, 1)
+        x0 = self.add_coord_channels(probe)
+        z = _calibrate_chain(
+            [
+                m
+                for i in range(self.downscales)
+                for m in (self.encoder_first_step[i], self.encoder_z[i])
+            ],
+            x0,
+        )
+        lat = _calibrate_chain(list(self.latent_proj), z)
+        _calibrate_chain(list(self.mu_proj), lat)
+        _calibrate_chain(list(self.logvar_proj), lat)
+        cx = _calibrate_chain(
+            [
+                m
+                for i in range(self.downscales)
+                for m in (self.ctx_encoder_first_step[i], self.ctx_encoder_z[i])
+            ],
+            x0,
+        )
+        _calibrate_chain(list(self.ctx_proj), cx)
 
     @staticmethod
     def add_coord_channels(x: torch.Tensor) -> torch.Tensor:
@@ -878,14 +982,15 @@ class FluxExpander_v100(nn.Module):
                 "trainable",
                 shape=(3,),
                 channel_only=True,
-                p0=-0.5,
-                p1=-0.05,
-                p2=0.05,
-                p3=0.5,
+                p0=-1.25,
+                p1=-0.4,
+                p2=0.4,
+                p3=1.25,
             )
         else:
+            # Softsign-like y = 1.25x/(1+|x|): bounded by +-1.25 at init (data is [-1, 1]).
             self.rgb_activation = make_activation(
-                activation_type, "trainable", shape=(3,), channel_only=True
+                activation_type, "trainable", shape=(3,), channel_only=True, a1=1.25, b1=1.0
             )
 
         # Established codebase convention (conditioning.py, encoders.py, every
@@ -1012,13 +1117,15 @@ class FluxExpander_v100(nn.Module):
             assert t_valid <= L, f"Mismatch: tokens {L} < h*w {t_valid}"
 
             feat = rearrange(img_seq[:, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
-            feat = feat + self.seam_smoother(
-                feat
+            feat = feat + _smooth(
+                self.seam_smoother, feat
             )  # zero-init residual; learns to blend token seams
 
             if use_context:
                 ctx = rearrange(context[:, :t_valid], "b (h w) c -> b c h w", h=h, w=w).contiguous()
-                ctx = ctx + self.seam_smoother_ctx(ctx)  # zero-init residual; blends context seams
+                ctx = ctx + _smooth(
+                    self.seam_smoother_ctx, ctx
+                )  # zero-init residual; blends context seams
             else:
                 ctx = None
 
@@ -1033,15 +1140,15 @@ class FluxExpander_v100(nn.Module):
                 assert t_valid <= L, f"Mismatch: tokens {L} < h*w {t_valid}"
 
                 feat_i = rearrange(img_seq[i : i + 1, :t_valid], "b (h w) d -> b d h w", h=h, w=w)
-                feat_i = feat_i + self.seam_smoother(
-                    feat_i
+                feat_i = feat_i + _smooth(
+                    self.seam_smoother, feat_i
                 )  # zero-init residual; blends token seams
                 if use_context:
                     ctx_i = rearrange(
                         context[i : i + 1, :t_valid], "b (h w) c -> b c h w", h=h, w=w
                     ).contiguous()
-                    ctx_i = ctx_i + self.seam_smoother_ctx(
-                        ctx_i
+                    ctx_i = ctx_i + _smooth(
+                        self.seam_smoother_ctx, ctx_i
                     )  # zero-init residual; blends context seams  # noqa: E501
                 else:
                     ctx_i = None

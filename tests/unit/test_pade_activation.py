@@ -2,6 +2,7 @@
 
 import pytest
 import torch
+import torch.nn as nn
 
 from fluxflow.models.pade_activation import (
     PadeActivation,
@@ -94,10 +95,16 @@ class TestTrainablePade:
 
     def test_initialization_is_identity_at_default(self):
         """Default coefficients (a0=0, a1=1, rest 0) must compute P(x)/Q(x) == x."""
-        module = TrainablePade((4,))
+        module = TrainablePade((4,), b1=0.0)
         x = torch.randn(2, 4)
         output = module(x)
         assert torch.allclose(output, x, atol=1e-5)
+
+    def test_default_is_near_identity(self):
+        """Default b1 is small nonzero (E1) so the init stays close to identity."""
+        module = TrainablePade((4,))
+        x = torch.randn(2, 4)
+        assert torch.allclose(module(x), x, atol=2e-2)
 
     def test_parameters_are_learnable(self):
         module = TrainablePade((3, 4, 4))
@@ -144,7 +151,7 @@ class TestWideTrainablePade:
 
     def test_initialization_is_shifted_identity_at_default(self):
         """Default coefficients (a0=-8, a1=1, rest 0) must compute P(x)/Q(x) == x - 8."""
-        module = WideTrainablePade((4,))
+        module = WideTrainablePade((4,), b1=0.0)
         x = torch.randn(2, 4)
         output = module(x)
         assert torch.allclose(output, x - 8.0, atol=1e-5)
@@ -171,36 +178,20 @@ class TestTrainablePadeInputClamp:
         assert _INPUT_CLAMP == pytest.approx(65504.0**0.2, rel=1e-9)
 
     def test_regression_within_clamp_range_matches_unclamped(self):
-        """For |x| well within the clamp bound, output must match the unclamped math."""
-        torch.manual_seed(0)
-        module = TrainablePade((4,))
-        with torch.no_grad():
-            module.a1.copy_(torch.full_like(module.a1, 1.0))
-            module.a4.copy_(torch.full_like(module.a4, 1e-4))
-            module.a5.copy_(torch.full_like(module.a5, 1e-4))
-
+        """Effective coefficients (ctor args) reproduce the plain rational math in range."""
         x = torch.linspace(-5.0, 5.0, steps=20).view(5, 4)
+        a = dict(a0=0.1, a1=1.0, a2=0.02, a3=-0.01, a4=1e-4, a5=1e-4)
+        module = TrainablePade((4,), b1=0.0, b2=0.0, b3=0.0, b4=0.0, **a)
+        expected = sum(a[f"a{k}"] * x**k for k in range(6))
+        assert torch.allclose(module(x), expected, atol=1e-4, rtol=1e-5)
 
-        a0, a1, a2, a3, a4, a5 = (
-            module.a0.expand_as(x),
-            module.a1.expand_as(x),
-            module.a2.expand_as(x),
-            module.a3.expand_as(x),
-            module.a4.expand_as(x),
-            module.a5.expand_as(x),
-        )
-        b1, b2, b3, b4 = (
-            module.b1.expand_as(x),
-            module.b2.expand_as(x),
-            module.b3.expand_as(x),
-            module.b4.expand_as(x),
-        )
-        expected_numerator = a0 + a1 * x + a2 * x**2 + a3 * x**3 + a4 * x**4 + a5 * x**5
-        expected_denominator = 1.0 + (b1 * x + b2 * x**2 + b3 * x**3 + b4 * x**4).abs()
-        expected = expected_numerator / expected_denominator
-
-        output = module(x)
-        assert torch.allclose(output, expected, atol=1e-5)
+    def test_denominator_matches_abs_within_smooth_eps(self):
+        x = torch.linspace(-4.0, 4.0, steps=20).view(5, 4)
+        b = dict(b1=0.1, b2=-0.02, b3=0.003, b4=-1e-4)
+        module = TrainablePade((4,), **b)
+        q = sum(b[f"b{k}"] * x**k for k in range(1, 5))
+        expected = x / (1.0 + q.abs())
+        assert torch.allclose(module(x), expected, atol=5e-3)
 
     def test_extreme_input_produces_no_inf_or_nan(self):
         """Coefficients at observed crash scale (a1~=1, tiny a4/a5, b*=0) + extreme x."""
@@ -225,16 +216,137 @@ class TestTrainablePadeInputClamp:
         output = module(x)
         assert torch.isfinite(output).all()
 
-    def test_clamp_boundary(self):
-        """Output at exactly the clamp boundary must equal output just past it."""
+    def test_soft_clamp_bounded_monotone_with_gradient(self):
+        """E5: bounded by K, monotone, nonzero gradient beyond K, identity well inside."""
+        from fluxflow.models.pade_activation import _INPUT_CLAMP, _soft_clamp
+
+        x = torch.linspace(-50.0, 50.0, 2001, requires_grad=True)
+        y = _soft_clamp(x, _INPUT_CLAMP)
+        assert (y.abs() <= _INPUT_CLAMP).all()
+        assert (y[1:] >= y[:-1]).all()
+        y.sum().backward()
+        assert (x.grad > 0).all()
+        inside = torch.linspace(-5.0, 5.0, 11)
+        assert torch.equal(_soft_clamp(inside, _INPUT_CLAMP), inside)
+
+    def test_gradient_flows_beyond_old_hard_clamp(self):
         from fluxflow.models.pade_activation import _INPUT_CLAMP
 
         module = TrainablePade((1,))
-        at_boundary = module(torch.tensor([[_INPUT_CLAMP]]))
-        past_boundary = module(torch.tensor([[_INPUT_CLAMP + 100.0]]))
-        assert torch.allclose(at_boundary, past_boundary, atol=1e-5)
-        assert torch.isfinite(at_boundary).all()
-        assert torch.isfinite(past_boundary).all()
+        x = torch.tensor([[_INPUT_CLAMP + 3.0]], requires_grad=True)
+        module(x).sum().backward()
+        assert x.grad.abs().item() > 0
+
+    def test_infinite_input_stays_finite(self):
+        module = TrainablePade((1,))
+        out = module(torch.tensor([[float("inf")], [-float("inf")]]))
+        assert torch.isfinite(out).all()
+
+
+class TestTrainablePadeParameterization:
+    """E1/E2: gradient reaches the denominator at init; params live in a normalized basis."""
+
+    def test_default_b_gradients_nonzero(self):
+        for cls in (TrainablePade, WideTrainablePade):
+            module = cls((4,))
+            module(torch.randn(8, 4) * 2).pow(2).sum().backward()
+            assert module.b1.grad.abs().sum() > 0
+
+    def test_all_b_gradients_nonzero_with_nonzero_b1(self):
+        module = TrainablePade((4,), a2=0.1, a3=0.05)
+        module(torch.randn(8, 4) * 2).pow(2).sum().backward()
+        for name in ("b1", "b2", "b3", "b4"):
+            assert getattr(module, name).grad.abs().sum() > 0
+
+    def test_raw_param_grads_balanced(self):
+        """E2: high-order raw grads are not amplified by |x|^k (K^5 ~ 65k) vs a1."""
+        torch.manual_seed(0)
+        module = TrainablePade((16,))
+        x = torch.randn(256, 16) * 5
+        module(x).pow(2).mean().backward()
+        g1, g5 = module.a1.grad.abs().mean(), module.a5.grad.abs().mean()
+        assert g5 < 10 * g1
+
+    def test_effective_coefficients_roundtrip(self):
+        module = TrainablePade((2,), a0=0.3, a3=-0.2, a5=1e-3, b2=0.05)
+        eff = module.effective_coefficients()
+        assert eff["a0"].allclose(torch.full((2,), 0.3))
+        assert eff["a3"].allclose(torch.full((2,), -0.2), rtol=1e-5)
+        assert eff["a5"].allclose(torch.full((2,), 1e-3), rtol=1e-5)
+        assert eff["b2"].allclose(torch.full((2,), 0.05), rtol=1e-5)
+
+    def test_legacy_state_dict_loads_with_identical_forward(self):
+        """Old checkpoints stored effective a*/b* under same names, version 1."""
+        from collections import OrderedDict
+
+        coeffs = dict(a0=0.2, a1=0.9, a2=0.03, a3=-0.004, a4=1e-4, a5=-2e-5)
+        coeffs.update(b1=0.0, b2=0.0, b3=0.0, b4=0.0)
+        legacy = OrderedDict((k, torch.full((3,), v)) for k, v in coeffs.items())
+        legacy._metadata = {"": {"version": 1}}  # type: ignore[attr-defined]
+
+        module = TrainablePade((3,))
+        module.load_state_dict(legacy)
+        x = torch.linspace(-3, 3, 12).view(4, 3)
+        expected = sum(coeffs[f"a{k}"] * x**k for k in range(6))
+        assert torch.allclose(module(x), expected, atol=1e-4)
+
+    def test_legacy_state_dict_without_metadata_treated_as_legacy(self):
+        module = TrainablePade((2,))
+        legacy = {k: torch.full((2,), 0.0) for k in ("a0", "a2", "a3", "a4", "a5")}
+        legacy.update({"a1": torch.ones(2), **{f"b{i}": torch.zeros(2) for i in range(1, 5)}})
+        module.load_state_dict(legacy)
+        x = torch.randn(3, 2)
+        assert torch.allclose(module(x), x, atol=1e-5)
+
+    def test_new_state_dict_roundtrip(self):
+        src = TrainablePade((2,), a2=0.07, a5=3e-4, b1=0.02)
+        dst = TrainablePade((2,))
+        dst.load_state_dict(src.state_dict())
+        x = torch.randn(4, 2)
+        assert torch.equal(src(x), dst(x))
+        assert torch.equal(src.a5, dst.a5)
+
+    def test_safetensors_roundtrip_twice_identical(self, tmp_path):
+        from safetensors.torch import load_file, save_file
+
+        src = TrainablePade((3,), a2=0.07, a5=3e-4, b1=0.02)
+        x = torch.randn(4, 3)
+        ref = src(x)
+        sd = src.state_dict()
+        for i in range(2):
+            save_file({k: v.contiguous() for k, v in sd.items()}, str(tmp_path / f"{i}.st"))
+            sd = load_file(str(tmp_path / f"{i}.st"))
+            dst = TrainablePade((3,))
+            dst.load_state_dict(sd)
+            assert torch.equal(dst(x), ref)
+            sd = dst.state_dict()
+
+    def test_plain_dict_copy_not_reconverted(self):
+        src = TrainablePade((2,), a3=0.05)
+        dst = TrainablePade((2,))
+        dst.load_state_dict(dict(src.state_dict()))
+        assert torch.equal(dst.a3, src.a3)
+
+    def test_legacy_strict_load_converted_once_and_marker_added(self):
+        legacy = {
+            k: v * 0 + (1.0 if k == "a1" else 0.5)
+            for k, v in TrainablePade((2,)).state_dict().items()
+            if k != "pade_basis_version"
+        }
+        m = TrainablePade((2,))
+        m.load_state_dict(legacy, strict=True)
+        assert torch.allclose(m.effective_coefficients()["a3"], torch.full((2,), 0.5), rtol=1e-5)
+        assert "pade_basis_version" in m.state_dict()
+
+    def test_nested_prefix_and_strict_false(self):
+        net = nn.Sequential(TrainablePade((2,)), WideTrainablePade((2,)))
+        legacy = {k: v for k, v in net.state_dict().items() if "pade_basis_version" not in k}
+        missing, unexpected = net.load_state_dict(legacy, strict=False)
+        assert not missing and not unexpected
+
+    def test_param_names(self):
+        names = {n for n, _ in TrainablePade((1,)).named_parameters()}
+        assert names == {f"a{i}" for i in range(6)} | {f"b{i}" for i in range(1, 5)}
 
 
 class TestPadeActivationModuleInputClamp:
@@ -244,13 +356,31 @@ class TestPadeActivationModuleInputClamp:
     values split directly from an upstream activation tensor -- none carry a
     smallness guarantee. The dominant overflow term is a2*x^2, where both
     factors are unbounded: with everything clamped to +-K, the worst case is
-    K * K^2 = K^3. Solving K^3 <= 65504 (fp16 max) gives K = 65504**(1/3).
+    K * K^2 = K^3. Horner worst case is K + K^2 + K^3 <= 65504 (fp16 max), K = 30.
     """
 
     def test_clamp_constant_matches_fp16_derivation(self):
         from fluxflow.models.pade_activation import _FIXED_MODE_INPUT_CLAMP
 
-        assert _FIXED_MODE_INPUT_CLAMP == pytest.approx(65504.0 ** (1 / 3), rel=1e-9)
+        k = _FIXED_MODE_INPUT_CLAMP
+        assert k + k**2 + k**3 <= 65504.0  # Horner worst case: a0 + x*(a1 + x*a2)
+        assert k == 30.0
+
+    def test_fp16_extreme_inputs_finite(self):
+        """E4: math runs in fp32; fp16 output must stay finite at the worst case."""
+        module = PadeActivationModule()
+        big = torch.full((8,), 60000.0, dtype=torch.float16)
+        out = module(big, big, big, big, torch.zeros(8, dtype=torch.float16))
+        assert out.dtype == torch.float16
+        assert torch.isfinite(out).all()
+
+    def test_gradient_beyond_clamp_nonzero(self):
+        """E5: soft clamp keeps gradient alive past K."""
+        module = PadeActivationModule()
+        x = torch.tensor([45.0], requires_grad=True)
+        one = torch.tensor([0.5])
+        module(x, one, one, one, one * 0.0).sum().backward()
+        assert x.grad.abs().item() > 0
 
     def test_regression_within_clamp_range_matches_unclamped(self):
         """For inputs well within the clamp bound, output must match the unclamped math."""

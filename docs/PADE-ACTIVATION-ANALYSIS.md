@@ -7,9 +7,12 @@ proposal was rejected in favor of this one.
 
 ## Math
 
-`PAU(x) = P(x) / Q(x)`, `Q(x) = 1 + |Q_raw(x)|` (guarantees `Q(x) >= 1`,
-no pole, for every real x and every real coefficient). Evaluated via
-Horner's method: FMAs + one division, zero transcendental calls.
+`PAU(x) = P(x) / Q(x)`, `Q(x) = 1 + sqrt(Q_raw(x)² + ε) − √ε` (smooth
+abs; guarantees `Q(x) >= 1`, no pole, for every real x and every real
+coefficient, and keeps a gradient where `Q_raw ≈ 0`). Trainable variants
+evaluate both polynomials in `u = softclamp(x)/K` and store coefficients in
+that normalized basis (see "Normalized basis" below). Evaluated via Horner's
+method: FMAs, one square root and one division.
 
 Two variants, mirroring Bezier's two usage patterns:
 - `PadeActivation` (data-driven, m=2/n=1): input split 5 ways into
@@ -131,6 +134,22 @@ order (Molina et al., 2019) -- it means the function's true asymptotic
 behavior (absent any clamp) is linear growth, not saturation to a constant.
 "Make the denominator degree match the numerator" is not a drop-in
 improvement without revisiting that cited reference design.
+
+## Follow-up fixes (2026-10-22 audit)
+
+- **Denominator never trained**: with `b1`-`b4 = 0`, `Q_raw ≡ 0` and the
+  subgradient of `|·|` at 0 is 0, so the "known trade-off" above was
+  permanent. Fixed by the smooth abs plus a default `b1 = 1e-3`.
+- **Normalized basis**: Adam/Lion move each coefficient by ~lr per step;
+  in the raw x basis a step on `a5` changed the output ~65k× more at
+  `|x| ≈ 9` than at `|x| ≈ 1`. Coefficients are now stored as
+  `effective·K^k` and evaluated in `u = x/K`. A `pade_basis_version` buffer
+  marks the format; legacy state dicts are converted once on load.
+- **Soft clamp**: the hard `±K` clamp zeroed gradients beyond K. A rational
+  soft clamp (identity for `|x| ≤ 0.75K`, saturating to ±K) replaces it.
+- **Fixed-mode fp16**: the old `65504**(1/3)` clamp ignored the lower-order
+  Horner terms (worst case K+K²+K³). Fixed mode now computes in fp32 with
+  clamp 30.
 
 ## Cross-repo follow-up required
 

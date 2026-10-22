@@ -109,6 +109,24 @@ for the upgrade path and salvage instructions. Not yet released.
   built purely from local (if overlapping) strided convs.
 
 ### Changed
+- **Padé trainable activations reparameterized** (`TrainablePade`/`WideTrainablePade`):
+  polynomials evaluated in a normalized basis `u = x/K` (K ≈ 9.19); stored
+  `a*`/`b*` are raw (`effective·K^k`), constructor args stay effective
+  (`effective_coefficients()` returns them). A persistent
+  `pade_basis_version` buffer marks the format; legacy state dicts (no
+  marker) are converted once on load, safetensors-safe. Optimizer moments
+  from older runs no longer match these params.
+- **Padé numerics**: smooth-abs denominator `1 + sqrt(q²+ε) − √ε`, default
+  `b1 = 1e-3` (denominator now trains); rational soft input clamp (identity
+  for |x| ≤ 0.75K, nonzero gradient beyond); fixed mode computes in fp32 with
+  clamp 30 (Horner worst case K+K²+K³ < fp16 max); Dynamo recompile limit 256.
+- **v0.10.0 VAE init** (fresh models only; checkpoints unaffected):
+  Bezier `mu_activation` ±2/±0.6, decoder `rgb_activation` ±1.25/±0.4 (was
+  ±0.5, data is ±1); Padé rgb head bounded softsign init (`a1=1.25, b1=1`),
+  Padé logvar `a0=-0.5` (was −8, near-deterministic);
+  `FluxCompressor_v100._calibrate_init()` rescales encoder z/ctx/mu/logvar
+  convs on a seeded 128px probe so signal no longer vanishes (bottleneck
+  RMS ~1e-5 → ~1; ctx_proj far above GroupNorm eps). Global RNG untouched.
 - `FluxFlowProcessor_v100` takes `use_gradient_checkpointing` (default
   `True`, unchanged behavior); previously the transformer block stack was
   always checkpointed in training with no way to opt out.
@@ -174,6 +192,15 @@ for the upgrade path and salvage instructions. Not yet released.
   into separate `norm2_q` and `norm2_kv` LayerNorms.
 
 ### Fixed
+- Padé denominator coefficients never received gradient (`|0|` subgradient
+  with zero init), so every trainable Padé was a clamped polynomial.
+- Padé high-degree coefficient steps were amplified up to ~65k× at the
+  input clamp and dominated global grad clipping.
+- Fixed-mode Padé could overflow to inf in fp16 (clamp derivation ignored
+  lower-order Horner terms); hard clamps zeroed gradients beyond ±K.
+- `FluxExpander_v100` seam smoothers crashed (reflect padding) on
+  one-token-wide latents (e.g. 16px crops); now replicate-pad fallback.
+- Sample loader in `utils/visualization.py` failed on RGBA/grayscale images.
 - **Latent-cycle gradient leak into the frozen expander**: `_ProgressiveUpscaler`
   checkpointed with `use_reentrant=True`, so a `requires_grad` toggle around
   the forward was undone at backward recompute and the "frozen" upscaler

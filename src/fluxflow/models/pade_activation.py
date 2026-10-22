@@ -6,9 +6,24 @@ Bezier segment is a degree-(3,0) Padé approximant, so PAU is a strictly
 larger function class at comparable cost. Uses the "safe PAU" denominator
 construction (Molina et al., "Padé Activation Units: End-to-end Learning of
 Flexible Activation Functions in Deep Networks," ICLR 2020):
-Q(x) = 1 + |Q_raw(x)| guarantees Q(x) >= 1 for every real x and every real
-coefficient, so the activation has no pole, ever. Evaluated via Horner's
-method: fused multiply-adds and one division, zero transcendental calls.
+Q(x) >= 1 for every real x and every real coefficient, so the activation has
+no pole, ever. Fixed mode uses Q = 1 + |b1*x|; TrainablePade uses the smooth
+form Q = 1 + sqrt(q^2 + eps) - sqrt(eps), q = b1*x + ... + b4*x^4, so the
+denominator coefficients receive gradient even at q == 0 (|.| has zero
+subgradient there). Evaluated via Horner's method: fused multiply-adds and one
+division; the only non-FMA ops are the square root of the smooth abs and the
+rational soft clamp (no exp/tanh).
+
+Input range limiting uses a rational soft clamp (see ``_soft_clamp``): exact
+identity for |x| <= 0.75*K, then a monotone saturation to +-K with nonzero
+gradient everywhere, instead of a hard clamp whose gradient is zero beyond K.
+
+TrainablePade stores its parameters in a normalized basis: the polynomials are
+evaluated in u = x_clamped / K (|u| <= 1) with stored raw coefficients
+r_k = c_k * K^k, so one optimizer step moves every term equally instead of
+being amplified by |x|^k (up to K^5 ~ 65k for a5). Constructor arguments and
+``effective_coefficients()`` are in the original x basis; state dicts without
+the persistent ``pade_basis_version`` buffer (legacy) are converted on load.
 
 Contains:
 - PadeActivationModule: core low-order (m=2, n=1) rational computation
@@ -19,13 +34,14 @@ Contains:
 """
 
 from collections.abc import Callable
+from typing import Any
 
 import torch
 import torch.nn as nn
 
 # TrainablePade's numerator is degree 5 and, unlike the "safe" denominator,
-# has no built-in range limiting. Clamp the raw input before evaluation so
-# x^5 cannot overflow even with a coefficient magnitude approaching 1 (the
+# has no built-in range limiting. The raw input is soft-clamped to +-K so x^5
+# cannot overflow even with a coefficient magnitude approaching 1 (the
 # observed near-identity-init scale, e.g. a1~=1.0): 65504 is fp16's max
 # representable value, and 65504**(1/5) is the largest |x| for which
 # |x|**5 <= 65504 -- i.e. the worst-case unit-coefficient term stays within
@@ -33,16 +49,39 @@ import torch.nn as nn
 # input squash while eliminating the confirmed overflow.
 _INPUT_CLAMP = 65504.0**0.2
 
-# PadeActivationModule's numerator has the same unbounded-input overflow class
-# as TrainablePade's, but here x, a0, a1, a2, and b1 are all unbound directly
-# from the input tensor's own channels (not learned, near-identity-init
-# parameters), so none of the five factors carry a smallness guarantee. The
-# dominant overflow term is a2*x^2, where *both* factors are unbounded: with
-# every input clamped to +-K, the worst case is K * K^2 = K^3 (degree-2
-# numerator, but cubic rather than TrainablePade's quintic bound since only
-# one coefficient multiplies the squared term instead of a chain of five).
-# Solving K^3 <= 65504 (fp16 max) gives K = 65504**(1/3).
-_FIXED_MODE_INPUT_CLAMP = 65504.0 ** (1 / 3)
+# PadeActivationModule: x, a0, a1, a2, b1 all come straight from the input
+# tensor's channels, so none carries a smallness guarantee. With every factor
+# bounded by K, Horner evaluation of a0 + x*(a1 + x*a2) has worst case
+# K + K^2 + K^3 (not K^3 alone: the lower-order terms add). Requiring
+# K + K^2 + K^3 <= 65504 (fp16 max) gives K ~= 39.3; K = 30 leaves margin
+# (worst case 27930). Math runs in fp32 and the result is cast back, so the
+# bound holds for the fp16 output too (Q >= 1 cannot increase |P/Q|).
+_FIXED_MODE_INPUT_CLAMP = 30.0
+
+# Soft clamp: identity up to _KNEE_FRACTION * K, rational saturation beyond.
+_KNEE_FRACTION = 0.75
+# Absolute guard so +-inf cannot reach the saturation arithmetic (inf/inf).
+_FINITE_GUARD = 1e4
+# Smooth-abs epsilon for the trainable denominator (see TrainablePade).
+_SMOOTH_ABS_EPS = 1e-6
+# Default b1: small, nonzero so the denominator trains from init (E1).
+_DEFAULT_B1 = 1e-3
+_BASIS_KEY = "pade_basis_version"
+_BASIS_VERSION = 2  # absent: legacy effective coefficients; 2: raw (K^k-scaled)
+_COEFF_NAMES = ("a0", "a1", "a2", "a3", "a4", "a5", "b1", "b2", "b3", "b4")
+
+
+def _soft_clamp(x: torch.Tensor, k: float) -> torch.Tensor:
+    """Rational soft clamp to (-k, k): identity for |x| <= 0.75k, C1, monotone.
+
+    Beyond the knee ``kn``: sign(x) * (kn + span * u / (1 + u)), u = (|x|-kn)/span,
+    span = k - kn. Gradient is 1/(1+u)^2 > 0 everywhere (never exactly zero).
+    """
+    knee = _KNEE_FRACTION * k
+    span = k - knee
+    x = x.clamp(-_FINITE_GUARD, _FINITE_GUARD)
+    u = (x.abs() - knee).clamp(min=0.0) / span
+    return x.clamp(-knee, knee) + x.sign() * span * (u / (1.0 + u))
 
 
 class PadeActivationModule(nn.Module):
@@ -53,12 +92,10 @@ class PadeActivationModule(nn.Module):
     Q(x) = 1 + |b1*x|                  (denominator, degree 1, "safe" form)
 
     Q(x) >= 1 for every real x and every real b1 -- no domain restriction is
-    required on x, a0, a1, a2, or b1.
+    required on x, a0, a1, a2, or b1. Computed in fp32; result cast back to
+    the dtype of ``x``.
     """
 
-    # All five inputs are clamped to +-_FIXED_MODE_INPUT_CLAMP up front (see
-    # derivation above) so a2*x^2 cannot overflow fp16 range, mirroring how
-    # TrainablePade.forward clamps its input before Horner's method.
     def forward(
         self,
         x: torch.Tensor,
@@ -67,16 +104,14 @@ class PadeActivationModule(nn.Module):
         a2: torch.Tensor,
         b1: torch.Tensor,
     ) -> torch.Tensor:
-        x = x.clamp(-_FIXED_MODE_INPUT_CLAMP, _FIXED_MODE_INPUT_CLAMP)
-        a0 = a0.clamp(-_FIXED_MODE_INPUT_CLAMP, _FIXED_MODE_INPUT_CLAMP)
-        a1 = a1.clamp(-_FIXED_MODE_INPUT_CLAMP, _FIXED_MODE_INPUT_CLAMP)
-        a2 = a2.clamp(-_FIXED_MODE_INPUT_CLAMP, _FIXED_MODE_INPUT_CLAMP)
-        b1 = b1.clamp(-_FIXED_MODE_INPUT_CLAMP, _FIXED_MODE_INPUT_CLAMP)
-
+        dtype = x.dtype
+        x, a0, a1, a2, b1 = (
+            _soft_clamp(t.float(), _FIXED_MODE_INPUT_CLAMP) for t in (x, a0, a1, a2, b1)
+        )
         inner = torch.addcmul(a1, x, a2)
         numerator = torch.addcmul(a0, x, inner)
         denominator = 1.0 + (b1 * x).abs()
-        return numerator / denominator
+        return (numerator / denominator).to(dtype)
 
 
 class PadeActivation(nn.Module):
@@ -134,11 +169,17 @@ class TrainablePade(nn.Module):
     Padé activation with learnable rational-function coefficients.
 
     P(x) = a0 + a1*x + a2*x^2 + a3*x^3 + a4*x^4 + a5*x^5   (degree 5)
-    Q(x) = 1 + |b1*x + b2*x^2 + b3*x^3 + b4*x^4|            (degree 4, safe)
+    Q(x) = 1 + smooth|b1*x + b2*x^2 + b3*x^3 + b4*x^4|      (degree 4, safe)
 
-    Matches the literature-standard "safe PAU" order (Molina et al., 2019).
-    Default coefficients (a0=0, a1=1, rest 0) initialize to the identity
-    function: P(x)/Q(x) = x/1 = x.
+    smooth|q| = sqrt(q^2 + eps) - sqrt(eps), so Q >= 1 and Q is differentiable
+    (and trainable) at q == 0. Matches the literature-standard "safe PAU"
+    order (Molina et al., 2019). Defaults (a0=0, a1=1, b1=1e-3, rest 0)
+    initialize to a near-identity function.
+
+    Constructor arguments are *effective* coefficients (x basis). Stored
+    parameters (same names ``a0..a5``, ``b1..b4``) are raw: ``r_k = c_k * K^k``
+    with K = ``_INPUT_CLAMP``, and the polynomials are evaluated in u = x/K.
+    Use ``effective_coefficients()`` to read the x-basis values.
 
     Args:
         shape: Shape of the input tensor excluding batch dimension.
@@ -154,7 +195,7 @@ class TrainablePade(nn.Module):
         a3=0.0,
         a4=0.0,
         a5=0.0,
-        b1=0.0,
+        b1=_DEFAULT_B1,
         b2=0.0,
         b3=0.0,
         b4=0.0,
@@ -162,20 +203,35 @@ class TrainablePade(nn.Module):
     ):
         super().__init__()
         self.channel_only = channel_only
+        # Persistent format marker: present => raw (K^k-scaled) coefficients.
+        # Lives in the state dict itself (safetensors drops _metadata).
+        self.register_buffer(_BASIS_KEY, torch.tensor(_BASIS_VERSION, dtype=torch.long))
+        values = dict(zip(_COEFF_NAMES, (a0, a1, a2, a3, a4, a5, b1, b2, b3, b4)))
+        for name, value in values.items():
+            setattr(self, name, nn.Parameter(torch.ones(shape) * value * _scale(name)))
 
-        def make_param(value):
-            return nn.Parameter(torch.ones(shape) * value)
+    def effective_coefficients(self) -> dict[str, torch.Tensor]:
+        """Coefficients in the x basis (detached): raw / K^k."""
+        return {n: getattr(self, n).detach() / _scale(n) for n in _COEFF_NAMES}
 
-        self.a0 = make_param(a0)
-        self.a1 = make_param(a1)
-        self.a2 = make_param(a2)
-        self.a3 = make_param(a3)
-        self.a4 = make_param(a4)
-        self.a5 = make_param(a5)
-        self.b1 = make_param(b1)
-        self.b2 = make_param(b2)
-        self.b3 = make_param(b3)
-        self.b4 = make_param(b4)
+    def _load_from_state_dict(
+        self,
+        state_dict: dict[str, Any],
+        prefix: str,
+        local_metadata: dict[str, Any],
+        strict: bool,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        error_msgs: list[str],
+    ) -> None:
+        if prefix + _BASIS_KEY not in state_dict:  # legacy: effective -> raw, once
+            for name in _COEFF_NAMES:
+                if prefix + name in state_dict:
+                    state_dict[prefix + name] = state_dict[prefix + name] * _scale(name)
+            state_dict[prefix + _BASIS_KEY] = self._buffers[_BASIS_KEY]
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+        )
 
     def _broadcast(self, p: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         if self.channel_only and x.dim() == 4:
@@ -183,40 +239,40 @@ class TrainablePade(nn.Module):
         return p.expand_as(x)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.clamp(-_INPUT_CLAMP, _INPUT_CLAMP)
-        a0 = self._broadcast(self.a0, x)
-        a1 = self._broadcast(self.a1, x)
-        a2 = self._broadcast(self.a2, x)
-        a3 = self._broadcast(self.a3, x)
-        a4 = self._broadcast(self.a4, x)
-        a5 = self._broadcast(self.a5, x)
-        b1 = self._broadcast(self.b1, x)
-        b2 = self._broadcast(self.b2, x)
-        b3 = self._broadcast(self.b3, x)
-        b4 = self._broadcast(self.b4, x)
+        u = _soft_clamp(x, _INPUT_CLAMP) / _INPUT_CLAMP
+        a0, a1, a2, a3, a4, a5, b1, b2, b3, b4 = (
+            self._broadcast(getattr(self, n), u) for n in _COEFF_NAMES
+        )
 
-        # Horner's method, zero transcendental calls.
-        numerator = torch.addcmul(a4, x, a5)
-        numerator = torch.addcmul(a3, x, numerator)
-        numerator = torch.addcmul(a2, x, numerator)
-        numerator = torch.addcmul(a1, x, numerator)
-        numerator = torch.addcmul(a0, x, numerator)
+        # Horner's method in u = x/K.
+        numerator = torch.addcmul(a4, u, a5)
+        numerator = torch.addcmul(a3, u, numerator)
+        numerator = torch.addcmul(a2, u, numerator)
+        numerator = torch.addcmul(a1, u, numerator)
+        numerator = torch.addcmul(a0, u, numerator)
 
-        denom_raw = torch.addcmul(b3, x, b4)
-        denom_raw = torch.addcmul(b2, x, denom_raw)
-        denom_raw = torch.addcmul(b1, x, denom_raw)
-        denom_raw = x * denom_raw
-        denominator = 1.0 + denom_raw.abs()
+        q = torch.addcmul(b3, u, b4)
+        q = torch.addcmul(b2, u, q)
+        q = torch.addcmul(b1, u, q)
+        q = u * q
+        sqrt_eps = _SMOOTH_ABS_EPS**0.5
+        denominator = 1.0 + torch.sqrt(q * q + _SMOOTH_ABS_EPS) - sqrt_eps
 
-        return numerator / denominator
+        out: torch.Tensor = numerator / denominator
+        return out
+
+
+def _scale(name: str) -> float:
+    """K^k for coefficient ``a<k>`` / ``b<k>`` (raw = effective * scale)."""
+    return _INPUT_CLAMP ** int(name[1:])
 
 
 class WideTrainablePade(TrainablePade):
     """
     TrainablePade with a wide-range default for unbounded logvar use.
 
-    Default coefficients (a0=-8, a1=1, rest 0) initialize to a shifted
-    identity: P(x)/Q(x) = x - 8, mirroring WideTrainableBezier's very
+    Default coefficients (a0=-8, a1=1, b1=1e-3, rest 0) initialize to a shifted
+    identity: P(x)/Q(x) = x - 8, (up to the small b1) mirroring WideTrainableBezier's very
     negative default control point (p0=-8) that lets logvar effectively
     shut off noise on specific channels.
 
@@ -234,7 +290,7 @@ class WideTrainablePade(TrainablePade):
         a3=0.0,
         a4=0.0,
         a5=0.0,
-        b1=0.0,
+        b1=_DEFAULT_B1,
         b2=0.0,
         b3=0.0,
         b4=0.0,
@@ -257,7 +313,9 @@ class WideTrainablePade(TrainablePade):
 
 
 # Upper bound on compiled variants per Padé forward (see compile_pade_activations).
-_RECOMPILE_LIMIT = 64
+# Measured: 28 graphs in a latent-cycle VAE run (limit was 64), plus more for
+# flow's non-channel_only shapes; 256 leaves ~4x headroom over the old limit.
+_RECOMPILE_LIMIT = 256
 
 # Original (eager) forwards, saved by compile_pade_activations() so the patch
 # is idempotent and reversible.
@@ -285,6 +343,13 @@ def compile_pade_activations(enabled: bool = True) -> None:
     limit of 8 in a typical VAE training step; the limit is raised to
     ``_RECOMPILE_LIMIT`` so those variants stay compiled instead of silently
     falling back to eager.
+
+    ``requires_grad`` of the parameters is also part of the variant key
+    (verified: freezing/unfreezing the expander, as the latent cycle does,
+    recompiles once per state; flipping back reuses the cached graph). Dynamo
+    guards on ``requires_grad`` of every tensor input, so compiling a pure
+    function that takes the coefficient tensors as arguments would not remove
+    the guard -- it is unavoidable, hence the generous limit instead.
 
     Args:
         enabled: True to compile, False to restore the eager forwards.
