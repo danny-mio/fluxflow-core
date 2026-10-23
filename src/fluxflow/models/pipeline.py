@@ -12,6 +12,7 @@ import torch.nn as nn
 
 from .v060.flow import FluxFlowProcessor
 from .v060.vae import FluxCompressor, FluxExpander
+from .v100.vae import check_decoder_layout
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +319,11 @@ class FluxPipeline(nn.Module):
             k for k in keys if "expander.upscale.layers." in k and ".conv1.0.weight" in k
         ]
         config["upscales"] = len(upscale_layers) if upscale_layers else config["downscales"]
+
+        # Pre-release v0.10.0 decoders (ConvTranspose2d k=16) cannot load; older
+        # versions legitimately use k=16 and are untouched.
+        if detect_architecture_version(keys) == "0.10.0":
+            check_decoder_layout(state_dict)
 
         # Detect attention layers (v060/v070: `token_attn`; v0.10.0: `z_token_attn`,
         # the z-path's own global-context step -- distinct from ctx's `ctx_token_attn`).

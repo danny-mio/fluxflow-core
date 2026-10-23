@@ -36,6 +36,23 @@ projection, flow MLPs whose shapes are unchanged.
 flow attention QKV (pooled → per-token), the ctx channel, and any FiLM heads
 that depend on per-token text.
 
+**Also lost (decoder + packed-latent format changes, pre-release):**
+
+- Decoder upsample blocks are now nearest-upsample + two 3x3 convs (was
+  `ConvTranspose2d` k=16 + dilated 5x5), and the channel floor is 16 (was 4).
+  `upscale.layers.N.conv1.*` is not transferable: the script drops it and the
+  decoder must be retrained. Loading a legacy decoder state dict directly
+  (`FluxExpander_v100`, `FluxPipeline`/`FluxFlowPipeline` config detection) raises
+  `IncompatibleCheckpointError`. Where the floor changes stage widths
+  (`vae_dim // 2**i < 16`), `skip_proj`/SPADE/`to_rgb_conv` shapes change too and
+  fail on load with a shape mismatch; retrain those as well.
+- `compressor.final_norm` is removed and the packed z half is now the raw `z`
+  (no PE, no LayerNorm). Encoder weights stay valid (stale `final_norm.*` keys are
+  dropped with a warning), but **flow models trained on the old packed format are
+  incompatible** and must be retrained.
+- `FluxCompressor_v100.forward(img, training=False, sample=None)`: `sample`
+  defaults to `training`; `sample=False` packs `z = mu` (deterministic).
+
 After running the script, fine-tune with the standard v0.10.0 pipeline config
 to recover quality.
 

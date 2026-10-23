@@ -113,6 +113,21 @@ for the upgrade path and salvage instructions. Not yet released.
   built purely from local (if overlapping) strided convs.
 
 ### Changed
+- **Clean z in the packed latent** (`FluxCompressor_v100`): the z half is the raw
+  `z` (no 2D sincos PE, no `final_norm` LayerNorm), so the flow sees the
+  KL-shaped `N(0, I)` signal. `forward(img, training=False, sample=None)`:
+  `sample=None` follows `training`; `sample=False` uses `z = mu` (also for the ctx
+  z-injection). `final_norm` and `_build_2d_sincos_pe` removed.
+- **Decoder upsample block is resize-conv** (`_ResidualUpsampleBlock`): nearest
+  `Upsample(2x)` then `Conv2d(in, 5*out, 3)` + `Conv2d(out, 5*out, 3)`; removes the
+  ConvTranspose2d period-2 checkerboard. `_MIN_UPSAMPLE_CHANNELS` 4 -> 16.
+- **Migration note (breaking, pre-release):** legacy decoder state dicts (16x16
+  ConvTranspose `conv1.0.weight`) raise `IncompatibleCheckpointError` in
+  `FluxExpander_v100`, `FluxPipeline._detect_config` and
+  `FluxFlowPipeline._detect_config` (v0.10.0 checkpoints only). Compressor
+  `final_norm.*` keys are dropped with a warning; flow models trained on the old
+  packed z format must be retrained. `migrate_v0_10_0_to_redesign.py` now drops
+  decoder `conv1.*` and `compressor.final_norm.*`.
 - **Padé trainable activations reparameterized** (`TrainablePade`/`WideTrainablePade`):
   polynomials evaluated in a normalized basis `u = x/K` (K ≈ 9.19); stored
   `a*`/`b*` are raw (`effective·K^k`), constructor args stay effective

@@ -19,18 +19,18 @@ from fluxflow.models.v100.vae import (
 
 
 def test_taper_channels_d16_upscales4():
-    """d_model=16, upscales=4, default floor_ch=4 -> [8, 4, 4, 4]."""
-    assert _taper_channels(16, 4) == [8, 4, 4, 4]
+    """d_model=16, upscales=4, default floor_ch=16 -> [16, 16, 16, 16]."""
+    assert _taper_channels(16, 4) == [16, 16, 16, 16]
 
 
 def test_taper_channels_d32_upscales4():
-    """d_model=32, upscales=4 -> [16, 8, 4, 4]."""
-    assert _taper_channels(32, 4) == [16, 8, 4, 4]
+    """d_model=32, upscales=4 -> [16, 16, 16, 16]."""
+    assert _taper_channels(32, 4) == [16, 16, 16, 16]
 
 
 def test_taper_channels_d128_upscales4():
-    """d_model=128, upscales=4 -> [64, 32, 16, 8], no floor clamping needed."""
-    assert _taper_channels(128, 4) == [64, 32, 16, 8]
+    """d_model=128, upscales=4 -> [64, 32, 16, 16]."""
+    assert _taper_channels(128, 4) == [64, 32, 16, 16]
 
 
 def test_taper_channels_never_below_floor():
@@ -42,16 +42,16 @@ def test_taper_channels_never_below_floor():
 
 def test_taper_channels_custom_floor():
     """A custom floor_ch is respected instead of the module default."""
-    assert _taper_channels(16, 4, floor_ch=2) == [8, 4, 2, 2]
+    assert _taper_channels(64, 4, floor_ch=2) == [32, 16, 8, 4]
 
 
 def test_progressive_upscaler_exposes_final_out_channels():
     """`_ProgressiveUpscaler.out_channels` tracks the last stage's taper width."""
-    up = _ProgressiveUpscaler(channels=16, steps=4, context_size=16)
-    assert up.out_channels == 4
-    assert up.layers[0].in_ch == 16
-    assert up.layers[0].out_ch == 8
-    assert up.layers[-1].out_ch == 4
+    up = _ProgressiveUpscaler(channels=64, steps=4, context_size=16)
+    assert up.out_channels == 16
+    assert up.layers[0].in_ch == 64
+    assert up.layers[0].out_ch == 32
+    assert up.layers[-1].out_ch == 16
 
 
 def test_to_rgb_conv_tracks_final_stage_width_not_hardcoded_96():
@@ -59,7 +59,7 @@ def test_to_rgb_conv_tracks_final_stage_width_not_hardcoded_96():
     not the old hardcoded 96, for a small d_model."""
     m = FluxExpander_v100(d_model=16, upscales=4, use_gradient_checkpointing=False)
     final_ch = m.upscale.out_channels
-    assert final_ch == 4  # d_model=16, upscales=4, floor_ch=4 -> [8,4,4,4]
+    assert final_ch == 16  # d_model=16, upscales=4, floor_ch=16 -> [16]*4
 
     first_conv = m.to_rgb_conv[0]
     assert isinstance(first_conv, torch.nn.Conv2d)

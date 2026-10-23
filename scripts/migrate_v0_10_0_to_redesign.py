@@ -8,7 +8,7 @@ Usage:
 Emits a one-page console report covering: direct-copy keys, rescaled keys
 (logvar activation), partial-fill warm starts (SPADE), padded keys (pillar
 layers), duplicated keys (FiLM, norm2), and dropped legacy keys (time_embed,
-pillar_cross_attn, norm_pillar).
+pillar_cross_attn, norm_pillar, decoder conv1.*, compressor.final_norm).
 """
 
 import argparse
@@ -29,13 +29,12 @@ DIRECT_COPY_PREFIXES = (
     "diffuser.compressor.mu_proj.",
     "diffuser.compressor.logvar_proj.",
     "diffuser.compressor.mu_activation.",
-    "diffuser.compressor.final_norm.",
     "diffuser.compressor.ctx_encoder_first_step.",
     "diffuser.compressor.ctx_encoder_z.",
     "diffuser.compressor.ctx_proj.",
     "diffuser.compressor.ctx_token_attn.",
     "diffuser.compressor.ctx_final_norm.",
-    "diffuser.expander.upscale.layers.",  # conv stack inside ResidualUpsampleBlock
+    "diffuser.expander.upscale.layers.",  # skip_proj etc.; conv1.* dropped (see _is_dropped)
     "diffuser.expander.to_rgb_conv.",
     "diffuser.expander.rgb_activation.",
     "diffuser.expander.seam_smoother.",
@@ -56,7 +55,13 @@ DROP_SUBSTRINGS = (
     "time_embed.",
     "pillar_cross_attn.",
     "norm_pillar.",
+    # z-path LayerNorm removed: the packed z half is now the raw sampled z.
+    "diffuser.compressor.final_norm.",
 )
+
+# Legacy ConvTranspose2d(k=16) + dilated 5x5 decoder conv stack; the new
+# nearest-upsample + 3x3 convs layout shares no transferable weights.
+_DECODER_CONV1_RE = re.compile(r"^diffuser\.expander\.upscale\.layers\.\d+\.conv1\.")
 
 
 # Logvar activation rescale: the four control points moved from [-1, 1] to
@@ -263,7 +268,7 @@ def _maybe_duplicate_norm2(key: str, value: torch.Tensor) -> dict[str, torch.Ten
 
 
 def _is_dropped(key: str) -> bool:
-    return any(sub in key for sub in DROP_SUBSTRINGS)
+    return any(sub in key for sub in DROP_SUBSTRINGS) or bool(_DECODER_CONV1_RE.match(key))
 
 
 def _is_direct_copy(key: str) -> bool:

@@ -12,8 +12,10 @@ Key changes vs v0.7.0/v0.8.0:
 Full retraining is required; no weight migration from v0.8.0 is supported.
 """
 
+import logging
 import math
-from typing import cast
+import re
+from typing import Any, Mapping, cast
 
 import torch
 import torch.nn as nn
@@ -23,7 +25,10 @@ from torch.func import functional_call
 from torch.utils.checkpoint import checkpoint
 
 from ..activations import make_activation, xavier_init
+from ...exceptions import IncompatibleCheckpointError
 from .conditioning import SPADE_v100b
+
+logger = logging.getLogger(__name__)
 
 
 def _should_checkpoint(args: tuple) -> bool:
@@ -50,11 +55,39 @@ def _frozen_call(layer: nn.Module):
     return lambda x, ctx: functional_call(layer, params, (x, ctx))
 
 
-# Minimum per-stage channel width for the decoder's upsample taper (Problem 2).
-# Named so it's never a bare magic number at call sites; 4 is small enough to
-# stay memory-cheap at full image resolution while leaving room for the x5
-# "wide" Bezier/Pade activation lanes.
-_MIN_UPSAMPLE_CHANNELS = 4
+# Minimum per-stage channel width for the decoder's upsample taper. 16 keeps
+# full-resolution stages from being starved (4 channels could not carry
+# texture) while staying cheap now that the x5 wide lanes sit behind 3x3 convs.
+_MIN_UPSAMPLE_CHANNELS = 16
+
+# Legacy (pre-release) decoder upsample blocks used ConvTranspose2d with this kernel.
+_LEGACY_UPSAMPLE_KERNEL = 16
+LEGACY_DECODER_MSG = (
+    "Checkpoint has the pre-release v0.10.0 decoder layout "
+    "(upscale.layers.{idx}.conv1.0 is a 16x16 ConvTranspose2d). The decoder upsample "
+    "block changed to nearest-upsample + 3x3 convs and cannot load old weights: "
+    "retrain the decoder, or use scripts/migrate_v0_10_0_to_redesign.py to salvage the "
+    "encoder and flow weights."
+)
+_UPSAMPLE_CONV1_RE = re.compile(r"(?:^|\.)upscale\.layers\.(\d+)\.conv1\.0\.weight$")
+
+
+def legacy_upsample_keys(state_dict: Mapping[str, Any]) -> list[str]:
+    """Keys of ``upscale.layers.N.conv1.0.weight`` tensors that use the legacy ConvTranspose layout."""
+    return [
+        k
+        for k, v in state_dict.items()
+        if _UPSAMPLE_CONV1_RE.search(k)
+        and getattr(v, "ndim", 0) == 4
+        and v.shape[-1] == _LEGACY_UPSAMPLE_KERNEL
+    ]
+
+
+def check_decoder_layout(state_dict: Mapping[str, Any]) -> None:
+    """Raise IncompatibleCheckpointError if the state dict holds legacy v0.10.0 upsample blocks."""
+    bad = legacy_upsample_keys(state_dict)
+    if bad:
+        raise IncompatibleCheckpointError(f"{LEGACY_DECODER_MSG} (found: '{bad[0]}')")
 
 
 def _taper_channels(
@@ -71,7 +104,7 @@ def _taper_channels(
     Args:
         d_model: Latent dimension (stage 0's input width).
         upscales: Number of 2x upsampling stages.
-        floor_ch: Minimum channel width for any stage (default: 4).
+        floor_ch: Minimum channel width for any stage (default: 16).
 
     Returns:
         list[int]: ``out_ch`` for each stage, length ``upscales``.
@@ -144,7 +177,7 @@ def _safe_group_norm(num_channels: int, max_groups: int = 8) -> nn.GroupNorm:
     """GroupNorm with the largest num_groups <= max_groups that divides num_channels.
 
     Mirrors the divisor search in v070/conditioning.py's SPADE, generalized so
-    channel counts derived from `_taper_channels` (which may be small, e.g. 4)
+    channel counts derived from `_taper_channels`
     never produce an invalid GroupNorm (num_groups must divide num_channels).
     """
     num_groups = 1
@@ -162,12 +195,12 @@ def _safe_group_norm(num_channels: int, max_groups: int = 8) -> nn.GroupNorm:
 
 class _ResidualUpsampleBlock(nn.Module):
     """
-    Residual block with 2x upsampling — v0.10.0 variant using SPADEWithLearnableScale.
+    Residual block with 2x upsampling (nearest + 3x3 convs) — v0.10.0 variant using SPADEWithLearnableScale.
 
     Per-stage channel width tapers (Problem 2 fix): `in_ch` and `out_ch` may
     differ, in which case the `nn.Upsample` skip path (which does not itself
     change channel count) gets a 1x1 channel-projection so it can be added to
-    the channel-changing `conv1` (ConvTranspose2d) path. SPADE conditions the
+    the channel-changing `conv1` path. SPADE conditions the
     `conv1` output, so its `num_features` is `out_ch` -- the width of the
     tensor actually being normalized -- while `context_size` (the ctx signal's
     channel count) stays decoupled at the caller's chosen width (= d_model in
@@ -196,12 +229,16 @@ class _ResidualUpsampleBlock(nn.Module):
         if self.use_spade:
             self.spade = SPADE_v100b(context_size, out_ch, activation_type=activation_type)
 
+        # Resize-conv: nearest upsample BEFORE the convs, so every output parity
+        # phase sees the same kernel (a stride-2 ConvTranspose2d gives each phase
+        # disjoint taps -> period-2 checkerboard that later layers cannot mix).
+        self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
         self.conv1 = nn.Sequential(
-            nn.ConvTranspose2d(in_ch, out_ch * 5, kernel_size=16, stride=2, padding=7),
+            nn.Conv2d(in_ch, out_ch * 5, kernel_size=3, padding=1),
             make_activation(
                 self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"
             ),
-            nn.Conv2d(out_ch, out_ch * 5, kernel_size=5, padding=4, stride=1, dilation=2),
+            nn.Conv2d(out_ch, out_ch * 5, kernel_size=3, padding=1),
             make_activation(
                 self.activation_type, "fixed", t_pre_activation="tanh", p_preactivation="silu"
             ),
@@ -222,7 +259,7 @@ class _ResidualUpsampleBlock(nn.Module):
             torch.Tensor: Upsampled features [B, out_ch, 2*H, 2*W]
         """
         identity = x
-        x = self.conv1(x)
+        x = self.conv1(self.upsample(x))
         if self.use_spade:
             x = self.spade(x, context)
         identity_up = self.skip_upsample(identity)
@@ -372,7 +409,7 @@ class FluxCompressor_v100(nn.Module):
       ctx_token_attn, ctx_final_norm) with no shared parameters with the z path.
     - context_dims == d_model (not a fixed 5-dimensional constant).
     - z-path token_attn and context_proj removed.
-    - Packed output shape: [B, T+1, 2*D] (was [B, T+1, D+5]).
+    - Packed output shape: [B, T+1, 2*D] (was [B, T+1, D+5]); z half is raw z.
 
     Args:
         in_channels: Input image channels (default: 3)
@@ -562,8 +599,6 @@ class FluxCompressor_v100(nn.Module):
                 b1=1e-3,
             )
 
-        self.final_norm = nn.LayerNorm(d_model)
-
         # z is the one signal with no path to global context: SPADE conditions
         # the decoder on `ctx` only, and `ctx` already gets FiLM-modulated by
         # `z` via ctx_zinject_* below, but `z` itself never gets anything back.
@@ -696,10 +731,6 @@ class FluxCompressor_v100(nn.Module):
         )
         self.ctx_final_norm = nn.LayerNorm(d_model)
 
-        # Fixed PE cache
-        self.register_buffer("_pe_dummy", torch.zeros(1), persistent=False)
-        self._pos_cache: dict = {}
-
         # Established codebase convention (conditioning.py, encoders.py, every
         # flow.py) -- PyTorch's raw default Conv2d init was never validated
         # against this architecture's deep unnormalized Conv2d->BezierActivation
@@ -758,44 +789,46 @@ class FluxCompressor_v100(nn.Module):
         coords = torch.stack([xx, yy], dim=0).unsqueeze(0).expand(B, -1, -1, -1)
         return torch.cat([x, coords], dim=1)
 
-    def _build_2d_sincos_pe(
-        self, H: int, W: int, D: int, device: torch.device, dtype: torch.dtype
-    ) -> torch.Tensor:
-        """Build 2D sinusoidal positional encoding [H*W, D]."""
-        key = (H, W, D, device)
-        if key in self._pos_cache:
-            return cast(torch.Tensor, self._pos_cache[key])
-
-        half = D // 2
-
-        def _pe_1d(L: int, C: int) -> torch.Tensor:
-            pos = torch.arange(L, device=device, dtype=dtype).unsqueeze(1)
-            div = torch.exp(
-                torch.arange(0, C, 2, device=device, dtype=dtype) * (-math.log(10000.0) / C)
-            )
-            pe = torch.zeros(L, C, device=device, dtype=dtype)
-            pe[:, 0::2] = torch.sin(pos * div)
-            pe[:, 1::2] = torch.cos(pos * div)
-            return pe
-
-        Cx = half
-        Cy = D - Cx
-        pe_x = _pe_1d(W, Cx)
-        pe_y = _pe_1d(H, Cy)
-        pe_y_expanded = pe_y[:, None, :].expand(H, W, Cy)
-        pe_x_expanded = pe_x[None, :, :].expand(H, W, Cx)
-        pe = torch.cat([pe_y_expanded, pe_x_expanded], dim=-1).reshape(H * W, D)
-        self._pos_cache[key] = pe
-        return pe
-
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """Reparameterization trick for VAE."""
         std = (0.5 * logvar).exp()
         eps = torch.randn_like(std)
         return mu + eps * std
 
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ) -> None:
+        # Pre-release checkpoints carry a z-path LayerNorm that no longer exists.
+        stale = [k for k in state_dict if k.startswith(prefix + "final_norm.")]
+        if stale:
+            for k in stale:
+                del state_dict[k]
+            logger.warning(
+                "Dropped %d stale '%sfinal_norm.*' keys: the packed z format changed "
+                "(raw z, no LayerNorm/PE). Encoder weights remain valid; flow models "
+                "trained on the old packed format are incompatible.",
+                len(stale),
+                prefix,
+            )
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+
     def forward(
-        self, img: torch.Tensor, training: bool = False
+        self, img: torch.Tensor, training: bool = False, sample: bool | None = None
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Encode image to packed latent representation.
@@ -803,9 +836,12 @@ class FluxCompressor_v100(nn.Module):
         Args:
             img: Input image [B, C, H, W]
             training: If True, returns (packed, mu, logvar) for KL loss
+            sample: Draw z = mu + eps*std if True, use the deterministic z = mu if
+                False; None -> same as ``training``. The ctx z-injection uses the same z.
 
         Returns:
-            packed: [B, T+1, 2*D] where T = H_lat * W_lat tokens + 1 HW vector
+            packed: [B, T+1, 2*D] where T = H_lat * W_lat; first D channels are the raw
+                z tokens (no PE, no LayerNorm), last D the context tokens; row T is HW.
             mu, logvar: (if training=True) [B, D, H_latent, W_latent]
         """
         assert img.dim() == 4, f"Expected 4D input [B,C,H,W], got {img.dim()}D"
@@ -854,17 +890,15 @@ class FluxCompressor_v100(nn.Module):
         # Diffusion's AutoencoderKL) so std stays well inside fp16 range even
         # with a several-sigma eps draw.
         logvar = logvar.clamp(-30.0, 20.0)
-        z = self.reparameterize(mu, logvar)  # [B, D, H_lat, W_lat]
+        if sample is None:
+            sample = training
+        z = self.reparameterize(mu, logvar) if sample else mu  # [B, D, H_lat, W_lat]
 
-        # ---- z path: clean Gaussian, no tanh, no pe_content leak ----
-        # See docs/plans/2026-06-13-v0.10.0-redesign-design.md §2.1
+        # ---- z path: raw z (the KL-shaped N(0, I) signal) goes into the packed latent ----
+        # No PE, no LayerNorm, no tanh: the flow sees exactly what the KL term shapes.
+        # Position is carried by token order + the decoder's convs/padding.
         B, D, H, W = z.shape
-        pe_fixed = self._build_2d_sincos_pe(H, W, D, device=z.device, dtype=z.dtype)
-        z_raw = z.flatten(2).permute(0, 2, 1) + pe_fixed.unsqueeze(0)
-        # NB: pe_content REMOVED (was a deterministic skip around the bottleneck).
-        z_tokens = self.final_norm(z_raw)
-        # NB: tanh REMOVED. LayerNorm gives unit variance; squashing the tails
-        # is what limited sharpness in v0.10.0-pre.
+        z_tokens = z.flatten(2).permute(0, 2, 1)  # [B, T, D]
 
         # ---- context branch: conditional on z, no tanh ----
         def ctx_encode_block(img: torch.Tensor) -> torch.Tensor:
@@ -1055,14 +1089,13 @@ class FluxExpander_v100(nn.Module):
         legacy_markers = ["spade.mlp_beta.weight", "spade.mlp_beta.bias"]
         for key in state_dict:
             if any(marker in key for marker in legacy_markers):
-                from ...exceptions import IncompatibleCheckpointError
-
                 raise IncompatibleCheckpointError(
                     f"Found legacy SPADE key '{key}' from v0.10.0-bezier-coupled "
                     "predecessor. The redesigned multi-scale SPADE has different "
                     "parameters. Run scripts/migrate_v0.10.0_to_redesign.py to "
                     "produce a warm-start checkpoint."
                 )
+        check_decoder_layout({k: v for k, v in state_dict.items() if k.startswith(prefix)})
         super()._load_from_state_dict(
             state_dict,
             prefix,

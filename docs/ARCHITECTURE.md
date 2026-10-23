@@ -83,8 +83,7 @@ graph TB
         DS4 --> |5 to D| CEXP[Channel Expand<br/>vae_dim]
         CEXP --> REPARAM[Reparameterization<br/>mu, sigma to z]
         REPARAM --> FLAT[Flatten to Tokens<br/>B x T x D]
-        FLAT --> POSENC[Hybrid PE<br/>Fixed + Content]
-        POSENC --> SATTN[Self-Attention<br/>4 layers, 8 heads]
+        FLAT --> SATTN[Self-Attention<br/>4 layers, 8 heads]
         SATTN --> APPHW[Append HW Vector<br/>B x T+1 x D]
         APPHW --> LATENT[Latent Packet<br/>B x T+1 x D]
 
@@ -204,15 +203,17 @@ graph TB
    `ctx_proj` and `ctx_token_attn`, and finally the 4 self-attention layers
    run on the modulated ctx tokens.
 6. Flatten to tokens `[H_lat × W_lat, 2*vae_dim]` (z‖ctx)
-7. Hybrid positional encoding (fixed sinusoidal + content-based from latent;
-   the deterministic `+ pe_content` leak is removed)
-8. Self-attention (4 layers, 8 heads)
+7. Raw `z` is packed as-is: no positional encoding, no LayerNorm (the old
+   "hybrid PE + `final_norm`" stage is removed). `z = mu` when
+   `forward(..., sample=False)`; `sample` defaults to `training`.
+8. Self-attention (4 layers, 8 heads) on the z path and ctx path (before packing)
 9. Append HW token `[1, 2*vae_dim]` with normalized dimensions
 
 **Key Features:**
 - Bezier activations for nonlinearity
-- Clean Gaussian `z`: KL pressure pulls toward `N(0, I)`; no `tanh` squash
-  after LayerNorm on `z` / `ctx`
+- Clean Gaussian `z`: the packed z half is the raw reparameterized `z`, i.e. the
+  exact KL-shaped `N(0, I)` signal the flow models; no PE, LayerNorm or `tanh`
+  on `z` (ctx keeps its `ctx_final_norm`)
 - KL divergence with free-bits constraint
 - Gradient checkpointing for memory efficiency
 
@@ -268,7 +269,8 @@ graph TB
    spatial conditioning signal — no first-K-token pooling.
 3. Progressive upsampling (4 stages, 2× each = 16× total)
    - Multi-scale SPADE conditioning at each stage (`SPADE_v100b`) fed by `ctx`
-   - Transposed convolutions for upsampling
+   - Resize-conv upsampling: nearest `nn.Upsample(2x)` then two 3x3 convs
+     (no transposed convs, so no period-2 checkerboard)
 4. RGB projection (final upsample-stage width → 3 channels)
 5. Clamp to [-1, 1]
 
@@ -282,9 +284,10 @@ graph TB
 - Skip connections via residuals
 - **Tapered upsample-stage channel width** (memory + fidelity fix, targeting
   the `vae_dim=16` standard): each stage's width is
-  `max(floor_ch, vae_dim // 2**stage_i)` (`floor_ch=4`) instead of a constant
-  `vae_dim` throughout — e.g. `vae_dim=16` → `[8, 4, 4, 4]` — so a small
-  `vae_dim` no longer runs every full-resolution stage at its original width.
+  `max(floor_ch, vae_dim // 2**stage_i)` (`floor_ch=16`) instead of a constant
+  `vae_dim` throughout — e.g. `vae_dim=128` → `[64, 32, 16, 16]` — so a large
+  `vae_dim` no longer runs every full-resolution stage at its original width,
+  while the floor keeps full-resolution stages from being starved.
   The SPADE `context_nc` (the `ctx` signal) stays at full `vae_dim` for every
   stage regardless of this taper — only the feature-map width shrinks. Where
   a stage's `in_ch != out_ch`, the residual skip path gets a 1×1
@@ -591,9 +594,9 @@ a single component.
 
 **Compressor (z + ctx).** The compressor's z-path samples plain `N(0, I)`
 latents via a wide-range learnable logvar (`WideTrainableBezier`, defaults
-`p0=-8, p1=-2, p2=2, p3=4`); the `tanh` squash after LayerNorm on `z` and
-`ctx` is removed, and the deterministic `+ pe_content` leak around the
-bottleneck is removed so KL pressure pulls toward `N(0, I)`. The ctx-path is
+`p0=-8, p1=-2, p2=2, p3=4`); the packed z half is the raw sample (no
+LayerNorm/PE/`tanh`), so the flow models the same `N(0, I)`-shaped signal the
+KL term shapes; the deterministic `+ pe_content` leak is removed. The ctx-path is
 SPADE-injected with `z` before its 4 self-attention layers, so `ctx = f(img, z)`
 encodes the residual `z` could not capture. Packed token format
 `[B, T+1, 2*vae_dim]` (z‖ctx + HW token) is preserved.

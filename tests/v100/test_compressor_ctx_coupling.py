@@ -30,9 +30,9 @@ def test_ctx_depends_on_z():
     m.ctx_zinject_gamma_scale.data.fill_(0.5)
     img = torch.randn(1, 3, 128, 128)
     torch.manual_seed(1)
-    packed_a = m(img)
+    packed_a = m(img, sample=True)
     torch.manual_seed(2)
-    packed_b = m(img)
+    packed_b = m(img, sample=True)
     ctx_a = packed_a[:, :-1, 32:]
     ctx_b = packed_b[:, :-1, 32:]
     assert not torch.allclose(ctx_a, ctx_b, atol=1e-4)

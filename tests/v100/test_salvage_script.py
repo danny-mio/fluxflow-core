@@ -472,3 +472,26 @@ def test_salvage_warm_beta_mid_with_zero_scale_keeps_zero_scale(tmp_path):
     x, ctx = torch.randn(2, 32, 8, 8), torch.randn(2, 16, 8, 8)
     assert torch.allclose(layer(x, ctx), layer.bn(x), atol=1e-6)
     assert layer.scale_drift() == (0.0, 0.0)
+
+
+def test_salvage_drops_decoder_conv1_and_final_norm(tmp_path):
+    """Legacy ConvT conv1 weights and compressor.final_norm have no target; drop and report."""
+    src, dst = tmp_path / "old.safetensors", tmp_path / "new.safetensors"
+    keep = "diffuser.expander.upscale.layers.0.skip_proj.weight"
+    st.save_file(
+        {
+            "diffuser.expander.upscale.layers.0.conv1.0.weight": torch.randn(32, 160, 16, 16),
+            "diffuser.expander.upscale.layers.0.conv1.2.bias": torch.randn(80),
+            "diffuser.compressor.final_norm.weight": torch.ones(32),
+            "diffuser.compressor.final_norm.bias": torch.zeros(32),
+            "diffuser.compressor.ctx_final_norm.weight": torch.ones(32),
+            keep: torch.randn(16, 32, 1, 1),
+        },
+        str(src),
+    )
+    report = migrate_checkpoint(src, dst)
+    new = st.load_file(str(dst))
+    assert not any(".conv1." in k or "diffuser.compressor.final_norm" in k for k in new)
+    assert keep in new and "diffuser.compressor.ctx_final_norm.weight" in new
+    assert sum(".conv1." in k for k in report["dropped"]) == 2
+    assert sum("compressor.final_norm" in k for k in report["dropped"]) == 2

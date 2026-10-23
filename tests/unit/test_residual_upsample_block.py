@@ -79,7 +79,7 @@ def test_residual_upsample_block_conv1_scale_bounded_via_tanh():
     with torch.no_grad():
         out = block(x, context=None)
         identity_up = block.skip_upsample(x)
-        conv_out = block.conv1(x)
+        conv_out = block.conv1(block.upsample(x))
 
     assert torch.isfinite(out).all()
     effective_scale = torch.tanh(block.conv1_scale)
