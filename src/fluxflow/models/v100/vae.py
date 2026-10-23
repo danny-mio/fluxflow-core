@@ -13,7 +13,6 @@ Full retraining is required; no weight migration from v0.8.0 is supported.
 """
 
 import logging
-import math
 import re
 from typing import Any, Mapping, cast
 
@@ -25,6 +24,7 @@ from torch.func import functional_call
 from torch.utils.checkpoint import checkpoint
 
 from ..activations import make_activation, xavier_init
+from ..pade_activation import _soft_clamp
 from ...exceptions import IncompatibleCheckpointError
 from .conditioning import SPADE_v100b
 
@@ -119,58 +119,25 @@ def _smooth(conv: nn.Conv2d, x: torch.Tensor) -> torch.Tensor:
     return F.conv2d(F.pad(x, (1, 1, 1, 1), mode="replicate"), conv.weight, conv.bias)
 
 
-_CAL_PROBE_SEED = 1234
-_CAL_PROBE_SIDE = 128
-_CAL_PROBE_BATCH = 6
-_CAL_ITERS = 12
-_CAL_TOL = 0.05  # |log(rms/target)|
+MU_RANGE = (-10.0, 10.0)
+LOGVAR_RANGE = (-20.0, 4.0)
+# Gradient floor outside the identity region (see _bound).
+_BOUND_GRAD_FLOOR = 0.1
 
 
-def _mean_abs(t: torch.Tensor) -> float:
-    """Calibration scale: geometric mean over samples of per-sample mean|t|.
+def _bound(x: torch.Tensor, lo: float, hi: float) -> torch.Tensor:
+    """Smooth bound to (lo, hi) with a gradient floor.
 
-    Bezier/Padé outputs are heavy-tailed across samples; RMS or a pooled mean is
-    dominated by one outlier image and does not generalise to other inputs.
+    Value: Padé rational soft clamp (identity for the central 75% of the range,
+    saturating beyond). Gradient: (1-g)*f'(x) + g, g = _BOUND_GRAD_FLOOR, so it
+    is exactly 1 in range and never below g however far out x is. A KL term can
+    therefore always pull a runaway pre-activation back (tanh/hard clamp cannot).
     """
-    per_sample = t.float().abs().flatten(1).mean(1).clamp_min(1e-30)
-    return float(per_sample.log().mean().exp().item())
-
-
-def _calibrate_block(
-    block: nn.Module, conv: nn.Conv2d, x: torch.Tensor, target: float
-) -> torch.Tensor:
-    """Scale `conv.weight` (init only) until block(x) has scale (_mean_abs) ~= target; return block(x).
-
-    Bezier/Padé 5x-wide activations are strongly non-linear in conv scale, so a
-    fixed gain is unstable across seeds/widths; secant search in log-space is robust.
-    """
-    slope, prev, s_prev = 1.0, None, 1.0
-    with torch.no_grad():
-        y = cast(torch.Tensor, block(x))
-        for _ in range(_CAL_ITERS):
-            r = _mean_abs(y)
-            if not math.isfinite(r) or r <= 0:
-                break
-            err = math.log(target / r)
-            if abs(err) < _CAL_TOL:
-                break
-            if prev is not None and abs(math.log(s_prev)) > 1e-6:
-                slope = min(max(math.log(r / prev) / math.log(s_prev), 0.5), 6.0)
-            s_prev = math.exp(max(min(err / slope, 1.5), -1.5))
-            prev = r
-            conv.weight.mul_(s_prev)
-            y = cast(torch.Tensor, block(x))
-    return y
-
-
-def _calibrate_chain(
-    blocks: list[nn.Module], x: torch.Tensor, target: float | None = None
-) -> torch.Tensor:
-    """Calibrate Sequential(Conv2d, act) blocks in order, each to preserve the incoming RMS."""
-    for blk in blocks:
-        conv = next(m for m in blk.modules() if isinstance(m, nn.Conv2d))
-        x = _calibrate_block(blk, conv, x, target if target is not None else _mean_abs(x))
-    return x
+    x = torch.nan_to_num(x, nan=0.0, posinf=1e4, neginf=-1e4)  # inf-inf below
+    c, h = (lo + hi) / 2, (hi - lo) / 2
+    y = c + _soft_clamp(x - c, h)
+    g = _BOUND_GRAD_FLOOR
+    return (1 - g) * y + g * (x - x.detach() + y.detach())
 
 
 def _safe_group_norm(num_channels: int, max_groups: int = 8) -> nn.GroupNorm:
@@ -579,23 +546,23 @@ class FluxCompressor_v100(nn.Module):
                 "wide",
                 shape=(d_model,),
                 channel_only=True,
-                p0=-8.0,
-                p1=-2.0,
-                p2=2.0,
-                p3=4.0,
+                p0=-10.0,
+                p1=-7.0,
+                p2=-5.0,
+                p3=-2.0,
             )
         else:
             self.mu_activation = make_activation(
                 self.activation_type, "trainable", shape=(d_model,), channel_only=True
             )
-            # Bezier wide logvar init is ~-0.5 (Bernstein midpoint of -8,-2,2,4);
-            # match it (x - 0.5) instead of x - 8 (std~0.018, near-deterministic AE).
+            # Initial sigma small (logvar -6, as the Bezier head): a0=-0.5 made
+            # z mostly noise and plain-L1 training from scratch diverge.
             self.logvar_activation = make_activation(
                 self.activation_type,
                 "wide",
                 shape=(d_model,),
                 channel_only=True,
-                a0=-0.5,
+                a0=-6.0,
                 b1=1e-3,
             )
 
@@ -741,41 +708,6 @@ class FluxCompressor_v100(nn.Module):
         # bare Parameters (not Modules), so .apply() never visits them --
         # placement here is safe regardless of order.
         self.apply(xavier_init)
-        self._calibrate_init()
-
-    def _calibrate_init(self) -> None:
-        """Rescale conv inits so per-stage signal scale is preserved down both encoder paths (init only).
-
-        Without it Bezier shrinks RMS ~3.5x/layer (bottleneck ~1e-5, ctx_proj below
-        GroupNorm eps) and Padé ~2x/layer. Uses a local-generator probe so global RNG
-        and zero-inits (seam smoothers / zinject scales) are untouched.
-        """
-        side = _CAL_PROBE_SIDE
-        gen = torch.Generator().manual_seed(_CAL_PROBE_SEED)
-        probe = torch.randn(
-            _CAL_PROBE_BATCH, self.stage_channels[0] - 2, side, side, generator=gen
-        ).clamp(-1, 1)
-        x0 = self.add_coord_channels(probe)
-        z = _calibrate_chain(
-            [
-                m
-                for i in range(self.downscales)
-                for m in (self.encoder_first_step[i], self.encoder_z[i])
-            ],
-            x0,
-        )
-        lat = _calibrate_chain(list(self.latent_proj), z)
-        _calibrate_chain(list(self.mu_proj), lat)
-        _calibrate_chain(list(self.logvar_proj), lat)
-        cx = _calibrate_chain(
-            [
-                m
-                for i in range(self.downscales)
-                for m in (self.ctx_encoder_first_step[i], self.ctx_encoder_z[i])
-            ],
-            x0,
-        )
-        _calibrate_chain(list(self.ctx_proj), cx)
 
     @staticmethod
     def add_coord_channels(x: torch.Tensor) -> torch.Tensor:
@@ -880,16 +812,12 @@ class FluxCompressor_v100(nn.Module):
         latent = self.latent_proj(x)
         mu = self.mu_activation(self.mu_proj(latent))
         logvar = self.logvar_activation(self.logvar_proj(latent))
-        # Bezier's mu/logvar activations are inherently bounded (Bernstein convex
-        # combination of control points); Pade's are not (see
-        # docs/PADE-ACTIVATION-ANALYSIS.md's "Known trade-off, not yet resolved").
-        # Observed live: unclamped logvar reaching ~66, giving
-        # std=exp(0.5*66)=~2e14 in reparameterize() below -- overflows fp16's
-        # 65504 ceiling and poisons every downstream consumer of the sampled z.
-        # Clamp to the standard VAE-literature range (matches e.g. Stable
-        # Diffusion's AutoencoderKL) so std stays well inside fp16 range even
-        # with a several-sigma eps draw.
-        logvar = logvar.clamp(-30.0, 20.0)
+        # Padé heads are unbounded (logvar ~66 -> std 2e14 overflows fp16); bound
+        # smoothly with a gradient floor so KL can always restore them. Bezier heads
+        # are convex combos of control points: already range-limited, left as is.
+        if self.activation_type != "bezier":
+            mu = _bound(mu, *MU_RANGE)
+            logvar = _bound(logvar, *LOGVAR_RANGE)
         if sample is None:
             sample = training
         z = self.reparameterize(mu, logvar) if sample else mu  # [B, D, H_lat, W_lat]

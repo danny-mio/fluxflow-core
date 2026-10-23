@@ -593,8 +593,8 @@ This sub-section collects the cross-cutting details that don't fit cleanly into
 a single component.
 
 **Compressor (z + ctx).** The compressor's z-path samples plain `N(0, I)`
-latents via a wide-range learnable logvar (`WideTrainableBezier`, defaults
-`p0=-8, p1=-2, p2=2, p3=4`); the packed z half is the raw sample (no
+latents via a wide-range learnable logvar (`WideTrainableBezier`, init
+`p0=-10, p1=-7, p2=-5, p3=-2`, logvar ~-6)); the packed z half is the raw sample (no
 LayerNorm/PE/`tanh`), so the flow models the same `N(0, I)`-shaped signal the
 KL term shapes; the deterministic `+ pe_content` leak is removed. The ctx-path is
 SPADE-injected with `z` before its 4 self-attention layers, so `ctx = f(img, z)`

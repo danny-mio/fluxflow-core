@@ -32,7 +32,7 @@ def test_compressor_logvar_uses_wide_bezier():
     m = _model(D=32)
     assert isinstance(m.logvar_activation, WideTrainableBezier)
     assert m.logvar_activation.p0.min().item() <= -7.0
-    assert m.logvar_activation.p3.max().item() >= 3.5
+    assert m.logvar_activation.p3.max().item() >= -3.0
 
 
 def test_compressor_no_tanh_in_z_tokens():

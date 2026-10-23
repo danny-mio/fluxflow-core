@@ -142,10 +142,15 @@ for the upgrade path and salvage instructions. Not yet released.
 - **v0.10.0 VAE init** (fresh models only; checkpoints unaffected):
   Bezier `mu_activation` ±2/±0.6, decoder `rgb_activation` ±1.25/±0.4 (was
   ±0.5, data is ±1); Padé rgb head bounded softsign init (`a1=1.25, b1=1`),
-  Padé logvar `a0=-0.5` (was −8, near-deterministic);
-  `FluxCompressor_v100._calibrate_init()` rescales encoder z/ctx/mu/logvar
-  convs on a seeded 128px probe so signal no longer vanishes (bottleneck
-  RMS ~1e-5 → ~1; ctx_proj far above GroupNorm eps). Global RNG untouched.
+  Padé logvar `a0=-6` and Bezier logvar controls `-10/-7/-5/-2` (initial
+  sigma ~0.05, not saturated). `_calibrate_init()` was removed: it broke
+  plain-L1 training from scratch with Padé (grad norm 1e6+).
+- **Padé mu/logvar bound** (`vae.py::_bound`): mu to ±10, logvar to [-20, 4]
+  via the Padé rational soft clamp (identity in the central 75%) with a
+  gradient floor of 0.1, replacing `logvar.clamp(-30, 20)` whose zero gradient
+  let runaway entries (|mu| ~3000) never be pulled back by KL. Bezier heads
+  unchanged. No state-dict key changes; Padé checkpoints only differ where
+  |mu| > 7.5 or logvar outside [-17, 1].
 - `FluxFlowProcessor_v100` takes `use_gradient_checkpointing` (default
   `True`, unchanged behavior); previously the transformer block stack was
   always checkpointed in training with no way to opt out.

@@ -8,11 +8,6 @@ from fluxflow.models.v100.vae import FluxCompressor_v100, FluxExpander_v100
 FAMILIES = ["bezier", "pade"]
 
 
-def _rms(t: torch.Tensor) -> float:
-    """Typical magnitude (mean |t|); RMS is outlier-dominated for these activations."""
-    return t.float().abs().mean().item()
-
-
 def _comp(fam: str, d: int = 32) -> FluxCompressor_v100:
     torch.manual_seed(0)
     return FluxCompressor_v100(
@@ -27,35 +22,26 @@ def _exp(fam: str, d: int = 32) -> FluxExpander_v100:
     ).eval()
 
 
-@pytest.mark.parametrize("fam", FAMILIES)
-@pytest.mark.parametrize("d", [32, 64])
-def test_encoder_signal_preserved(fam, d):
-    c = _comp(fam, d)
-    img = torch.randn(4, 3, 128, 128).clamp(-1, 1)
-    with torch.no_grad():
-        x = c.add_coord_channels(img)
-        first = None
-        for i in range(c.downscales):
-            x = c.encoder_first_step[i](x)
-            first = _rms(x) if first is None else first
-            x = c.encoder_z[i](x)
-        cx = c.add_coord_channels(img)
-        for i in range(c.downscales):
-            cx = c.ctx_encoder_z[i](c.ctx_encoder_first_step[i](cx))
-        cp = _rms(c.ctx_proj(cx))
-        lat = _rms(c.latent_proj(x))
-    for name, v in (("z", _rms(x)), ("ctx_proj", cp), ("latent", lat)):
-        assert first / 30 < v < first * 30, (name, v, first)
-    assert cp > 1e-3
+def test_no_calibrate_init():
+    assert not hasattr(FluxCompressor_v100, "_calibrate_init")
 
 
 @pytest.mark.parametrize("fam", FAMILIES)
-def test_mu_logvar_not_degenerate(fam):
+def test_initial_sigma_small(fam):
     c = _comp(fam)
     with torch.no_grad():
         _, mu, lv = c(torch.randn(2, 3, 128, 128).clamp(-1, 1), training=True)
-    assert mu.std() > 0.05
-    assert -3.0 < lv.mean() < 3.0
+    assert torch.isfinite(lv).all() and mu.std() > 0.05
+    assert -8.0 < lv.mean() < -4.0
+    assert (0.5 * lv).exp().mean() < 0.2
+
+
+@pytest.mark.parametrize("fam", FAMILIES)
+def test_logvar_head_not_saturated_at_init(fam):
+    c = _comp(fam)
+    with torch.no_grad():
+        lv = c.logvar_activation(c.logvar_proj(c.latent_proj(torch.randn(2, 32, 8, 8))))
+    assert lv.min() > -9.5 and lv.max() < -3.0
 
 
 def test_bezier_heads_cover_data_range():
@@ -90,11 +76,11 @@ def test_pade_rgb_head_realistic_preactivations_bounded():
     assert out.abs().max() <= 1.3
 
 
-def test_pade_logvar_init_not_near_deterministic():
+def test_pade_logvar_init_near_minus_six():
     c = _comp("pade")
     with torch.no_grad():
         lv = c.logvar_activation(torch.zeros(1, 32, 4, 4))
-    assert -2.0 < lv.mean() < 1.0
+    assert -6.5 < lv.mean() < -5.5
 
 
 def test_pade_mu_head_identity_at_init():
